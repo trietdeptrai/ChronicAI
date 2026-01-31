@@ -2,25 +2,42 @@
  * Progress indicator for streaming chat
  */
 import { cn } from "@/lib/utils"
-import { Languages, Search, Brain, CheckCircle } from "lucide-react"
-import type { ChatStreamUpdate } from "@/types"
+import { Languages, Search, Brain, CheckCircle, Users } from "lucide-react"
+import type { ChatStreamUpdate, DoctorChatStreamUpdate } from "@/types"
+
+type StageType = ChatStreamUpdate["stage"] | DoctorChatStreamUpdate["stage"]
 
 interface StreamingProgressProps {
-    stage?: ChatStreamUpdate["stage"]
+    stage?: StageType
     progress: number
     message?: string
 }
 
-const stages = [
+// Patient-specific chat stages
+const patientStages = [
     { id: "translating_input", label: "Dịch sang tiếng Anh", icon: Languages },
     { id: "retrieving_context", label: "Tìm kiếm hồ sơ", icon: Search },
     { id: "medical_reasoning", label: "Phân tích y tế", icon: Brain },
     { id: "translating_output", label: "Dịch sang tiếng Việt", icon: Languages },
 ]
 
+// Doctor orchestrator stages
+const doctorStages = [
+    { id: "translating_input", label: "Dịch sang tiếng Anh", icon: Languages },
+    { id: "extracting_patients", label: "Xác định bệnh nhân", icon: Users },
+    { id: "resolving_patients", label: "Tìm hồ sơ bệnh nhân", icon: Search },
+    { id: "retrieving_context", label: "Tổng hợp thông tin", icon: Search },
+    { id: "medical_reasoning", label: "Phân tích y tế", icon: Brain },
+    { id: "translating_output", label: "Dịch sang tiếng Việt", icon: Languages },
+]
+
+
 export function StreamingProgress({ stage, progress, message }: StreamingProgressProps) {
     if (!stage || stage === "complete") return null
 
+    // Determine which stage set to use based on current stage
+    const isDoctorMode = stage === "extracting_patients" || stage === "resolving_patients"
+    const stages = isDoctorMode ? doctorStages : patientStages
     const currentStageIndex = stages.findIndex(s => s.id === stage)
 
     return (

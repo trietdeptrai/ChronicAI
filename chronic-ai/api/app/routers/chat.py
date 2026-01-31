@@ -9,9 +9,15 @@ from uuid import UUID
 import json
 
 from app.services.llm import process_medical_query
+from app.services.orchestrator import process_doctor_query
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+class DoctorChatRequest(BaseModel):
+    """Doctor orchestrator chat request - no patient_id required."""
+    message: str
 
 
 class ChatRequest(BaseModel):
@@ -154,3 +160,57 @@ async def get_chat_history(patient_id: str, limit: int = 20):
         "patient_id": patient_id,
         "consultations": result.data or []
     }
+
+
+@router.post("/doctor/stream")
+async def doctor_chat_stream(request: DoctorChatRequest):
+    """
+    Doctor orchestrator chat with streaming response.
+    
+    This endpoint allows doctors to ask about any patient without
+    pre-selecting them. The AI will:
+    1. Extract patient mentions from the query
+    2. Resolve patients from database
+    3. Retrieve relevant context
+    4. Generate comprehensive response
+    
+    Returns Server-Sent Events (SSE) with progress updates including:
+    - translating_input: Translating Vietnamese to English
+    - extracting_patients: Identifying mentioned patients
+    - resolving_patients: Finding patient records
+    - retrieving_context: Gathering medical context
+    - medical_reasoning: AI processing
+    - translating_output: Translating response to Vietnamese
+    - complete: Final response ready
+    
+    Each 'complete' event includes:
+    - response: Vietnamese response
+    - response_en: English response
+    - mentioned_patients: List of identified patients
+    """
+    async def event_generator():
+        """Generate SSE events."""
+        try:
+            async for update in process_doctor_query(
+                query_vi=request.message
+            ):
+                # Format as SSE
+                data = json.dumps(update, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+        except Exception as e:
+            error_data = json.dumps({
+                "stage": "error",
+                "message": f"Lỗi: {str(e)}",
+                "error": str(e)
+            }, ensure_ascii=False)
+            yield f"data: {error_data}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )

@@ -11,6 +11,7 @@ import type {
     ClinicalSummaryRequest,
     ClinicalSummaryResponse,
     UploadResponse,
+    DoctorChatStreamUpdate,
 } from "@/types"
 
 /**
@@ -90,4 +91,14 @@ export async function uploadTextRecord(
     if (title) formData.append("title", title)
 
     return uploadFile<UploadResponse>("/upload/text", formData)
+}
+
+/**
+ * Send doctor orchestrator message with streaming response.
+ * This allows doctors to ask about any patient without pre-selection.
+ */
+export async function* sendDoctorChatStreaming(
+    message: string
+): AsyncGenerator<DoctorChatStreamUpdate> {
+    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/stream", { message })
 }

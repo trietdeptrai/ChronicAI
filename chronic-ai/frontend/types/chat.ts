@@ -59,3 +59,34 @@ export interface ClinicalSummaryResponse {
     patient_id: string
     summary: string
 }
+
+// Doctor Orchestrator Types
+
+export interface DoctorChatRequest {
+    message: string
+    // No patient_id required - AI extracts from message
+}
+
+export interface PatientMention {
+    id: string
+    name: string
+    match_confidence: number
+}
+
+export interface DoctorChatStreamUpdate {
+    stage:
+    | "translating_input"
+    | "extracting_patients"
+    | "resolving_patients"
+    | "retrieving_context"
+    | "medical_reasoning"
+    | "translating_output"
+    | "complete"
+    | "error"
+    message: string
+    progress: number
+    response?: string
+    response_en?: string
+    mentioned_patients?: PatientMention[]
+    error?: string
+}

@@ -1,6 +1,5 @@
 ---
 trigger: always_on
-glob:
-description:
 ---
 
+#always assess the suitability of user requests critically before accepting it
