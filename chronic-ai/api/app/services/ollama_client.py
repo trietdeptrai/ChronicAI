@@ -52,16 +52,26 @@ class OllamaClient:
         if images:
             payload["images"] = images
         
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            if stream:
-                return self._stream_response(client, payload)
-            else:
-                response = await client.post(
-                    f"{self.host}/api/generate",
-                    json=payload
-                )
-                response.raise_for_status()
-                return response.json()["response"]
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                if stream:
+                    return self._stream_response(client, payload)
+                else:
+                    response = await client.post(
+                        f"{self.host}/api/generate",
+                        json=payload
+                    )
+                    response.raise_for_status()
+                    return response.json()["response"]
+        except httpx.ConnectError:
+            raise RuntimeError(f"Cannot connect to Ollama at {self.host}. Is Ollama running?")
+        except httpx.TimeoutException:
+            raise RuntimeError(f"Ollama request timed out for model '{model}'")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Ollama error ({e.response.status_code}): {e.response.text[:200] if e.response.text else 'No response'}")
+        except Exception as e:
+            raise RuntimeError(f"Ollama generation failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
     
     async def _stream_response(
         self,
@@ -95,16 +105,26 @@ class OllamaClient:
         """
         model = model or settings.embedding_model
         
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.host}/api/embeddings",
-                json={
-                    "model": model,
-                    "prompt": text
-                }
-            )
-            response.raise_for_status()
-            return response.json()["embedding"]
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.host}/api/embeddings",
+                    json={
+                        "model": model,
+                        "prompt": text
+                    }
+                )
+                response.raise_for_status()
+                return response.json()["embedding"]
+        except httpx.ConnectError:
+            raise RuntimeError(f"Cannot connect to Ollama at {self.host}. Is Ollama running?")
+        except httpx.TimeoutException:
+            raise RuntimeError(f"Ollama embedding request timed out for model '{model}'")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Ollama embedding error ({e.response.status_code}): {e.response.text[:200] if e.response.text else 'No response'}")
+        except Exception as e:
+            raise RuntimeError(f"Ollama embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
     
     async def embed_batch(
         self,
@@ -137,18 +157,23 @@ class OllamaClient:
         Returns:
             True if successful
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            # Setting keep_alive to 0 unloads the model
-            response = await client.post(
-                f"{self.host}/api/generate",
-                json={
-                    "model": model,
-                    "keep_alive": 0
-                }
-            )
-            response.raise_for_status()
-            self._loaded_model = None
-            return True
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # Setting keep_alive to 0 unloads the model
+                response = await client.post(
+                    f"{self.host}/api/generate",
+                    json={
+                        "model": model,
+                        "keep_alive": 0
+                    }
+                )
+                response.raise_for_status()
+                self._loaded_model = None
+                return True
+        except Exception:
+            # Unload failures are non-critical, just return False
+            return False
+
     
     async def list_models(self) -> List[dict]:
         """List available models."""
