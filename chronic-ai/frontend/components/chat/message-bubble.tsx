@@ -6,6 +6,7 @@ import type { ChatMessage } from "@/types"
 import { User, Bot, Copy, Check } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import ReactMarkdown from "react-markdown"
 
 interface MessageBubbleProps {
     message: ChatMessage
@@ -54,9 +55,9 @@ export function MessageBubble({ message, showEnglish = false }: MessageBubblePro
                         : "bg-muted text-foreground rounded-tl-sm"
                 )}
             >
-                <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                    {message.content}
-                </p>
+                <div className="text-sm leading-relaxed markdown-content">
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                </div>
 
                 {/* Show English translation if available */}
                 {showEnglish && message.content_en && (

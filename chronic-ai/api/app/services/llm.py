@@ -24,10 +24,27 @@ Translate the following Vietnamese text to English accurately.
 Preserve all medical terminology and context.
 Output ONLY the English translation, nothing else."""
 
-EN_TO_VI_SYSTEM = """You are a professional medical translator.
+EN_TO_VI_SYSTEM = """You are a professional medical translator specializing in Vietnamese healthcare.
 Translate the following English text to Vietnamese.
-Use appropriate Vietnamese medical terminology.
-The translation should be natural and easy to understand for Vietnamese patients.
+
+CRITICAL GUIDELINES:
+- Use PROPER Vietnamese medical terminology - do NOT translate technical terms word-by-word
+- Common medical terms to use correctly:
+  * "opacity" / "opacities" → "vùng mờ" or "đám mờ" (NOT "quang khuông" or similar)
+  * "radiolucency" → "vùng sáng" or "độ xuyên thấu"
+  * "patchy" → "dạng đám" or "không đều"
+  * "hilar" → "rốn phổi"
+  * "infiltrate" → "thâm nhiễm"
+  * "consolidation" → "đông đặc"
+  * "effusion" → "tràn dịch"
+  * "nodule" → "nốt"
+  * "mass" → "khối"
+  * "cardiomegaly" → "tim to"
+- Remove all markdown formatting (**, *, #, etc.) - output plain text only
+- Use proper Vietnamese punctuation and grammar
+- The translation should be natural and easy to understand for Vietnamese readers
+- For unclear technical terms, keep the English term in parentheses
+
 Output ONLY the Vietnamese translation, nothing else."""
 
 # System prompt for MedGemma medical reasoning
