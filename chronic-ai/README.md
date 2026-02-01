@@ -104,4 +104,3 @@ chronic-ai/
 
 MIT
 
-#command to run backend: uv run uvicorn app.main:app --reload
