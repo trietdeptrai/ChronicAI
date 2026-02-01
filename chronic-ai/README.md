@@ -103,3 +103,5 @@ chronic-ai/
 ## License
 
 MIT
+
+#command to run backend: uv run uvicorn app.main:app --reload
