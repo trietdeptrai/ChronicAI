@@ -40,7 +40,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError }: UseDoctor
     /**
      * Send a message with streaming response
      */
-    const sendMessage = useCallback(async (message: string) => {
+    const sendMessage = useCallback(async (message: string, imagePath?: string) => {
         // Add user message
         const userMessage: ChatMessage = {
             id: `user-${Date.now()}`,
@@ -63,7 +63,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError }: UseDoctor
             let finalResponse = ""
             let mentionedPatients: PatientMention[] = []
 
-            for await (const update of sendDoctorChatStreaming(message)) {
+            for await (const update of sendDoctorChatStreaming(message, imagePath)) {
                 onStreamUpdate?.(update)
 
                 setState(prev => ({

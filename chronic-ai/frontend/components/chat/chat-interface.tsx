@@ -56,8 +56,21 @@ export function ChatInterface({ patientId, patientName }: ChatInterfaceProps) {
     }, [messages.length])
 
     const handleSend = async (message: string, file?: File) => {
-        // TODO: Handle file upload separately
-        await sendMessage(message)
+        let imagePath: string | undefined
+
+        // Upload image first if provided
+        if (file) {
+            try {
+                const { uploadChatImage } = await import("@/lib/api")
+                const result = await uploadChatImage(file)
+                imagePath = result.file_path
+            } catch (error) {
+                console.error("Failed to upload image:", error)
+                // Continue without image if upload fails
+            }
+        }
+
+        await sendMessage(message, imagePath)
     }
 
     return (

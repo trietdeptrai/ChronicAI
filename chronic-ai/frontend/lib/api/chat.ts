@@ -94,11 +94,25 @@ export async function uploadTextRecord(
 }
 
 /**
+ * Upload an image temporarily for chat use.
+ * Returns the file path that can be used with chat endpoints.
+ */
+export async function uploadChatImage(file: File): Promise<{ file_path: string }> {
+    const formData = new FormData()
+    formData.append("file", file)
+    return uploadFile<{ file_path: string; status: string; message: string }>("/upload/chat-image", formData)
+}
+
+/**
  * Send doctor orchestrator message with streaming response.
  * This allows doctors to ask about any patient without pre-selection.
  */
 export async function* sendDoctorChatStreaming(
-    message: string
+    message: string,
+    imagePath?: string
 ): AsyncGenerator<DoctorChatStreamUpdate> {
-    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/stream", { message })
+    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/stream", {
+        message,
+        image_path: imagePath
+    })
 }

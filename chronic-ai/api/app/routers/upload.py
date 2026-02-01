@@ -16,6 +16,56 @@ from app.services.rag import ingest_document, ingest_image
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
+# Directory for storing chat images temporarily
+CHAT_IMAGES_DIR = Path(tempfile.gettempdir()) / "chronic_ai_chat_images"
+CHAT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@router.post("/chat-image")
+async def upload_chat_image(
+    file: UploadFile = File(...)
+):
+    """
+    Upload an image temporarily for use in chat.
+    
+    The image will be saved and the file path returned for use
+    with the /chat/stream or /chat/doctor/stream endpoints.
+    
+    Args:
+        file: Image file (PNG, JPG, JPEG, etc.)
+    
+    Returns:
+        JSON with the file path to use in chat requests
+    """
+    # Validate file type
+    allowed_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+    file_ext = Path(file.filename).suffix.lower() if file.filename else ""
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+        )
+    
+    # Generate unique filename
+    import uuid
+    unique_name = f"{uuid.uuid4()}{file_ext}"
+    file_path = CHAT_IMAGES_DIR / unique_name
+    
+    # Save file
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    return JSONResponse(
+        status_code=201,
+        content={
+            "status": "success",
+            "file_path": str(file_path),
+            "message": "Image uploaded successfully for chat use"
+        }
+    )
+
 
 @router.post("/document")
 async def upload_document(

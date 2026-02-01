@@ -221,7 +221,8 @@ async def get_aggregate_patient_overview() -> str:
 
 
 async def process_doctor_query(
-    query_vi: str
+    query_vi: str,
+    image_path: Optional[str] = None
 ) -> AsyncGenerator[dict, None]:
     """
     Full doctor orchestrator pipeline with streaming.
@@ -239,7 +240,18 @@ async def process_doctor_query(
         
     Args:
         query_vi: Doctor's question in Vietnamese
+        image_path: Optional path to an image file to analyze
     """
+    import base64
+    from pathlib import Path
+    
+    # Load image if provided
+    image_base64 = None
+    if image_path:
+        path = Path(image_path)
+        if path.exists():
+            with open(path, "rb") as f:
+                image_base64 = base64.b64encode(f.read()).decode("utf-8")
     # ========== STEP 1: Vietnamese → English ==========
     yield {
         "stage": "translating_input",
@@ -334,6 +346,7 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
         model=settings.medical_model,
         prompt=reasoning_prompt,
         system=DOCTOR_REASONING_SYSTEM,
+        images=[image_base64] if image_base64 else None,
         stream=False
     )
     

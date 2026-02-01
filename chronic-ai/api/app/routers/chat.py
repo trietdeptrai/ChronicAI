@@ -18,6 +18,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 class DoctorChatRequest(BaseModel):
     """Doctor orchestrator chat request - no patient_id required."""
     message: str
+    image_path: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
@@ -192,7 +193,8 @@ async def doctor_chat_stream(request: DoctorChatRequest):
         """Generate SSE events."""
         try:
             async for update in process_doctor_query(
-                query_vi=request.message
+                query_vi=request.message,
+                image_path=request.image_path
             ):
                 # Format as SSE
                 data = json.dumps(update, ensure_ascii=False)
