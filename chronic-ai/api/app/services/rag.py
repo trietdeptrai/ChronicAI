@@ -187,13 +187,16 @@ async def get_patient_context(
     
     context_parts = []
     
-    # 1. Get basic patient info
-    patient_result = supabase.table("patients").select(
-        "full_name, date_of_birth, gender, chronic_conditions, "
-        "current_medications, allergies, primary_diagnosis"
-    ).eq("id", str(patient_id)).single().execute()
+    # 1. Get basic patient info (handle non-existent patients gracefully)
+    try:
+        patient_result = supabase.table("patients").select(
+            "full_name, date_of_birth, gender, chronic_conditions, "
+            "current_medications, allergies, primary_diagnosis"
+        ).eq("id", str(patient_id)).maybe_single().execute()
+    except Exception:
+        patient_result = None
     
-    if patient_result.data:
+    if patient_result and patient_result.data:
         patient = patient_result.data
         context_parts.append(f"""
 ## Thông tin bệnh nhân (Patient Information)

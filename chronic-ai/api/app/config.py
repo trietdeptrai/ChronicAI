@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     cors_origins: List[str] = ["http://localhost:3000"]
     
     # Model Configuration
-    medical_model: str = "alibayram/medgemma:4b"
+    medical_model: str = "thiagomoraes/medgemma-1.5-4b-it:Q8_0"
     translation_model: str = "qwen2.5:1.5b"
     embedding_model: str = "nomic-embed-text"
     
