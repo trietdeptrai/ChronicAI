@@ -14,6 +14,7 @@ import base64
 from pathlib import Path
 
 from app.services.ollama_client import ollama_client
+from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.config import settings
 
@@ -65,7 +66,7 @@ Remember: You are a support tool, not a replacement for professional medical adv
 
 async def translate_vi_to_en(text: str) -> str:
     """
-    Translate Vietnamese to English using Qwen 2.5.
+    Translate Vietnamese to English using VietAI EnviT5.
     
     Args:
         text: Vietnamese text to translate
@@ -73,18 +74,12 @@ async def translate_vi_to_en(text: str) -> str:
     Returns:
         English translation
     """
-    response = await ollama_client.generate(
-        model=settings.translation_model,
-        prompt=text,
-        system=VI_TO_EN_SYSTEM,
-        stream=False
-    )
-    return response
+    return await transformers_client.translate_vi_to_en(text)
 
 
 async def translate_en_to_vi(text: str) -> str:
     """
-    Translate English to Vietnamese using Qwen 2.5.
+    Translate English to Vietnamese using VietAI EnviT5.
     
     Args:
         text: English text to translate
@@ -92,13 +87,7 @@ async def translate_en_to_vi(text: str) -> str:
     Returns:
         Vietnamese translation
     """
-    response = await ollama_client.generate(
-        model=settings.translation_model,
-        prompt=text,
-        system=EN_TO_VI_SYSTEM,
-        stream=False
-    )
-    return response
+    return await transformers_client.translate_en_to_vi(text)
 
 
 async def medical_reasoning(
@@ -184,7 +173,7 @@ async def process_medical_query(
     }
     
     # ========== Memory Optimization: Unload translator ==========
-    await ollama_client.unload(settings.translation_model)
+    await transformers_client.unload_model()
     
     # ========== STEP B: Medical Reasoning with RAG ==========
     yield {
@@ -302,7 +291,7 @@ Format the summary professionally for medical records."""
     # Translate prompt to English
     prompt_en = await translate_vi_to_en(summary_prompt)
     
-    await ollama_client.unload(settings.translation_model)
+    await transformers_client.unload_model()
     
     # Generate summary with MedGemma
     summary_en = await ollama_client.generate(
@@ -337,9 +326,7 @@ async def check_system_health() -> dict:
         }
     
     models_status = {
-        "translation_model": await ollama_client.check_model_available(
-            settings.translation_model
-        ),
+        "envit5_model": transformers_client.is_loaded(),
         "medical_model": await ollama_client.check_model_available(
             settings.medical_model
         ),

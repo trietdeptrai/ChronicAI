@@ -69,7 +69,7 @@ async def extract_patient_mentions(query_en: str) -> List[str]:
         List of patient names mentioned in the query
     """
     response = await ollama_client.generate(
-        model=settings.translation_model,  # Use Qwen for extraction
+        model=settings.medical_model,  # Use MedGemma for structured extraction
         prompt=f"Query: {query_en}",
         system=PATIENT_EXTRACTION_SYSTEM,
         stream=False
@@ -304,8 +304,8 @@ async def process_doctor_query(
         "mentioned_patients": mentioned_patients
     }
     
-    # Unload translation model to free memory
-    await ollama_client.unload(settings.translation_model)
+    # Unload medical model to free memory
+    await ollama_client.unload(settings.medical_model)
     
     # ========== STEP 4: Get Context ==========
     yield {

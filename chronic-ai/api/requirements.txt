@@ -12,6 +12,12 @@ psycopg2-binary==2.9.9
 # ollama package not needed - using httpx directly to call Ollama API
 # langchain and langchain-community are optional
 
+# HuggingFace Transformers for EnviT5 Translation
+transformers>=4.35.0
+torch>=2.1.0
+sentencepiece>=0.1.99
+accelerate>=0.25.0
+
 # OCR - Optional, install separately if needed:
 # pip install paddleocr pdf2image
 # PaddleOCR requires native dependencies that may fail on some systems
