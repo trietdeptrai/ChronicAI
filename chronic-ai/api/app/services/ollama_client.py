@@ -16,7 +16,7 @@ class OllamaClient:
     
     def __init__(self, host: str = None):
         self.host = host or settings.ollama_host
-        self.timeout = httpx.Timeout(120.0, connect=30.0)
+        self.timeout = httpx.Timeout(300.0, connect=60.0)
         self._loaded_model: Optional[str] = None
     
     async def generate(
