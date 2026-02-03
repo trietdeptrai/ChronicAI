@@ -1,15 +1,19 @@
 """
 Chat Router - AI-powered medical chat endpoints.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, Literal
 from uuid import UUID
 import json
 
 from app.services.llm import process_medical_query
 from app.services.orchestrator import process_doctor_query
+# LangGraph-based orchestration (NEW)
+from app.services.doctor_graph import process_doctor_query_graph
+from app.services.patient_graph import process_patient_chat_graph
+from app.services.output_formatter import format_as_plain_text
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -21,11 +25,55 @@ class DoctorChatRequest(BaseModel):
     image_path: Optional[str] = None
 
 
+class DoctorChatRequestV2(BaseModel):
+    """
+    Enhanced doctor chat request with LangGraph orchestration.
+    
+    Supports human-in-the-loop (HITL) and formatted output.
+    """
+    message: str
+    image_path: Optional[str] = None
+    enable_hitl: bool = Field(
+        default=True,
+        description="Enable human-in-the-loop for ambiguous queries and safety checks"
+    )
+    output_format: Literal["plain", "structured", "markdown"] = Field(
+        default="structured",
+        description="Output format: plain text, structured JSON, or markdown"
+    )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="Thread ID for conversation state persistence"
+    )
+
+
+class HITLResumeRequest(BaseModel):
+    """Request to resume HITL-paused conversation."""
+    thread_id: str
+    response: dict = Field(
+        ...,
+        description="Human response to HITL request (e.g., {'action': 'approve'})"
+    )
+
+
 class ChatRequest(BaseModel):
     """Chat request model."""
     patient_id: str
     message: str
     image_path: Optional[str] = None
+
+
+class ChatRequestV2(BaseModel):
+    """
+    Enhanced patient chat request with LangGraph.
+    """
+    patient_id: str
+    message: str
+    image_path: Optional[str] = None
+    output_format: Literal["plain", "structured", "markdown"] = Field(
+        default="structured",
+        description="Output format: plain text, structured JSON, or markdown"
+    )
 
 
 class ChatResponse(BaseModel):
@@ -216,3 +264,233 @@ async def doctor_chat_stream(request: DoctorChatRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+# ============================================================================
+# NEW: LangGraph-based Orchestration with HITL
+# ============================================================================
+
+@router.post("/doctor/v2/stream")
+async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
+    """
+    **NEW** Enhanced doctor orchestrator with LangGraph.
+    
+    Features:
+    - **Human-in-the-Loop (HITL)**: Pauses for human approval on ambiguous 
+      queries or high-risk responses
+    - **Input Verification**: Uses Gemma 2B to validate query clarity
+    - **Safety Checks**: Reviews responses for medical safety
+    - **Structured Output**: Returns formatted sections (assessment, 
+      recommendations, warnings)
+    
+    When HITL is triggered, the stream will emit:
+    ```json
+    {
+        "stage": "hitl_required",
+        "hitl_request": {
+            "type": "clarification_needed|approval_required|patient_confirmation",
+            "message": "Vietnamese message for UI",
+            "details": {...},
+            "options": ["option1", "option2"]
+        }
+    }
+    ```
+    
+    To resume after HITL, use `/chat/doctor/v2/resume`.
+    
+    Args:
+        message: Doctor's query in Vietnamese
+        image_path: Optional path to medical image
+        enable_hitl: Enable human-in-the-loop (default: true)
+        output_format: "plain", "structured", or "markdown"
+        thread_id: Optional ID for conversation state persistence
+    """
+    import uuid as uuid_lib
+    from app.config import settings
+    
+    # Temporarily override HITL setting if specified
+    original_hitl = settings.enable_hitl
+    settings.enable_hitl = request.enable_hitl
+    
+    # Generate thread ID if not provided
+    thread_id = request.thread_id or str(uuid_lib.uuid4())
+    
+    async def event_generator():
+        """Generate SSE events from LangGraph."""
+        try:
+            async for update in process_doctor_query_graph(
+                query_vi=request.message,
+                image_path=request.image_path,
+                thread_id=thread_id
+            ):
+                # Add thread_id to updates for HITL resume
+                update["thread_id"] = thread_id
+                
+                # Transform output based on requested format
+                if update.get("stage") == "complete" and request.output_format == "plain":
+                    formatted = update.get("formatted_response")
+                    if formatted:
+                        update["response_formatted"] = format_as_plain_text(formatted)
+                
+                # Format as SSE
+                data = json.dumps(update, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+                
+        except Exception as e:
+            error_data = json.dumps({
+                "stage": "error",
+                "message": f"Lỗi: {str(e)}",
+                "error": str(e),
+                "thread_id": thread_id
+            }, ensure_ascii=False)
+            yield f"data: {error_data}\n\n"
+        finally:
+            # Restore original HITL setting
+            settings.enable_hitl = original_hitl
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.post("/doctor/v2/resume")
+async def doctor_chat_resume_hitl(request: HITLResumeRequest):
+    """
+    Resume a HITL-paused conversation.
+    
+    After receiving a `hitl_required` event, call this endpoint with:
+    - thread_id: The thread_id from the HITL event
+    - response: Human decision (e.g., `{"action": "approve"}` or 
+      `{"query": "clarified query text"}`)
+    
+    The conversation will resume from where it paused and complete
+    processing with the human input.
+    """
+    from langgraph.types import Command
+    from app.services.doctor_graph import get_doctor_graph
+    
+    graph = get_doctor_graph()
+    config = {"configurable": {"thread_id": request.thread_id}}
+    
+    async def event_generator():
+        """Generate SSE events after HITL resume."""
+        try:
+            # Resume graph with human response
+            async for event in graph.astream(
+                Command(resume=request.response),
+                config=config
+            ):
+                for node_name, node_output in event.items():
+                    if node_name == "__interrupt__":
+                        # Another HITL interrupt
+                        yield f"data: {json.dumps({'stage': 'hitl_required', 'hitl_request': node_output[0].value, 'thread_id': request.thread_id}, ensure_ascii=False)}\n\n"
+                        continue
+                    
+                    if isinstance(node_output, dict):
+                        stage_messages = node_output.get("stage_messages", [])
+                        for msg in stage_messages:
+                            msg["thread_id"] = request.thread_id
+                            yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
+            
+            # Get final state
+            final_state = graph.get_state(config).values
+            
+            completion = {
+                "stage": "complete",
+                "message": "Hoàn thành",
+                "progress": 1.0,
+                "response": final_state.get("response_vi", ""),
+                "response_en": final_state.get("reasoning_en", ""),
+                "formatted_response": final_state.get("formatted_response"),
+                "mentioned_patients": [
+                    {"id": m["id"], "name": m["name"]}
+                    for m in final_state.get("matched_patients", [])
+                ],
+                "thread_id": request.thread_id
+            }
+            yield f"data: {json.dumps(completion, ensure_ascii=False)}\n\n"
+            
+        except Exception as e:
+            error_data = json.dumps({
+                "stage": "error",
+                "message": f"Lỗi khi tiếp tục: {str(e)}",
+                "error": str(e),
+                "thread_id": request.thread_id
+            }, ensure_ascii=False)
+            yield f"data: {error_data}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
+@router.post("/patient/v2/stream")
+async def patient_chat_stream_v2(request: ChatRequestV2):
+    """
+    **NEW** Enhanced patient chat with LangGraph.
+    
+    Features:
+    - **Symptom Triage**: Auto-detects emergency/urgent cases
+    - **Safety Escalation**: Redirects high-risk cases to hospital
+    - **Context Awareness**: Retains patient history
+    - **Structured Output**: Clear formatting
+    
+    Args:
+        patient_id: Patient UUID
+        message: Patient's query in Vietnamese
+        image_path: Optional path to medical image
+        output_format: "plain", "structured", or "markdown"
+    """
+    try:
+        patient_uuid = UUID(request.patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    async def event_generator():
+        """Generate SSE events from LangGraph."""
+        try:
+            async for update in process_patient_chat_graph(
+                patient_id=request.patient_id,
+                query_vi=request.message,
+                image_path=request.image_path
+            ):
+                # Transform output based on requested format
+                if update.get("stage") == "complete" and request.output_format == "plain":
+                    formatted = update.get("formatted_response")
+                    if formatted:
+                        update["response_formatted"] = format_as_plain_text(formatted)
+                
+                # Format as SSE
+                data = json.dumps(update, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+                
+        except Exception as e:
+            error_data = json.dumps({
+                "stage": "error",
+                "message": f"Lỗi: {str(e)}",
+                "error": str(e)
+            }, ensure_ascii=False)
+            yield f"data: {error_data}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+

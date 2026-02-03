@@ -1,13 +1,41 @@
 """
-Doctor Orchestrator Service.
+Doctor Orchestrator Service (DEPRECATED).
+
+⚠️ DEPRECATION WARNING ⚠️
+This module is deprecated and will be removed in a future version.
+
+Please use the new LangGraph-based orchestration instead:
+- app.services.doctor_graph.process_doctor_query_graph() for doctor queries
+- app.services.patient_graph.process_patient_chat_graph() for patient chat
+
+The new implementation provides:
+- Human-in-the-loop (HITL) support for clarifications and approvals
+- Retry logic with circuit breakers for reliability
+- Fuzzy patient name matching for better accuracy
+- Response caching for performance
+- Safety audit logging
+- Better Vietnamese error messages
+
+Migration Guide:
+    # Old (deprecated):
+    from app.services.orchestrator import process_doctor_query
+    async for update in process_doctor_query(query_vi):
+        ...
+
+    # New (recommended):
+    from app.services.doctor_graph import process_doctor_query_graph
+    async for update in process_doctor_query_graph(query_vi):
+        ...
 
 Handles doctor queries that can reference any patient without pre-selection.
 Extracts patient mentions from queries and aggregates multi-patient context.
 """
+import warnings
 from typing import AsyncGenerator, List, Optional
 from uuid import UUID
 from dataclasses import dataclass
 import json
+import logging
 
 from app.services.ollama_client import ollama_client
 from app.services.rag import get_patient_context
@@ -18,6 +46,16 @@ from app.services.llm import (
 )
 from app.db.database import get_supabase
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Emit deprecation warning when module is imported
+warnings.warn(
+    "app.services.orchestrator is deprecated. "
+    "Use app.services.doctor_graph.process_doctor_query_graph() instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 @dataclass
@@ -46,14 +84,24 @@ Examples:
 # System prompt for doctor orchestrator reasoning
 DOCTOR_REASONING_SYSTEM = """You are a medical AI assistant helping doctors manage multiple patients.
 You have access to patient records and can answer questions about specific patients or aggregate across patients.
+You are assisting: {doctor_name}
 
 IMPORTANT GUIDELINES:
+- Address the user as "{doctor_name}" or "Bác sĩ" (Doctor).
 - When asked about specific patients, provide detailed analysis based on their records
 - When asked aggregate questions (e.g., "which patients need attention"), analyze all relevant data
 - Always identify patients by name in your responses
 - Flag urgent cases that require immediate attention
 - Provide evidence-based recommendations
 - Be concise but thorough
+
+CRITICAL - HANDLING MISSING DATA:
+- NEVER output placeholder text like [Insert...], [TODO], [N/A], [Date unknown], etc.
+- NEVER output placeholders for names like [Doctor Name], [Dr. Name], etc.
+- If specific data is not available in the provided context, state it naturally in your response
+- Example: Instead of "[Insert Last Checkup Date]", say "I don't have the last checkup date for this patient on record"
+- Only answer based on information actually present in the patient context
+- If important data is missing, suggest the doctor add it to the patient record
 
 Remember: You are supporting a doctor's decision-making, not replacing their clinical judgment."""
 
@@ -226,7 +274,9 @@ async def process_doctor_query(
 ) -> AsyncGenerator[dict, None]:
     """
     Full doctor orchestrator pipeline with streaming.
-    
+
+    ⚠️ DEPRECATED: Use process_doctor_query_graph() from doctor_graph module instead.
+
     Steps:
         1. Vietnamese → English translation
         2. Extract patient mentions from query
@@ -234,14 +284,20 @@ async def process_doctor_query(
         4. Get multi-patient or aggregate context
         5. Medical reasoning with MedGemma
         6. English → Vietnamese translation
-    
+
     Yields:
         Dict with stage info and content for real-time UI updates
-        
+
     Args:
         query_vi: Doctor's question in Vietnamese
         image_path: Optional path to an image file to analyze
     """
+    warnings.warn(
+        "process_doctor_query() is deprecated. "
+        "Use process_doctor_query_graph() from app.services.doctor_graph instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     import base64
     from pathlib import Path
     
@@ -259,7 +315,9 @@ async def process_doctor_query(
         "progress": 0.1
     }
     
+    logger.info(f"[Orchestrator] Step 1: Input query (Vi): {query_vi}")
     query_en = await translate_vi_to_en(query_vi)
+    logger.info(f"[Orchestrator] Step 1: Translated query (En): {query_en}")
     
     yield {
         "stage": "translating_input",
@@ -342,13 +400,24 @@ async def process_doctor_query(
 
 Please provide a helpful, accurate response to assist the doctor with patient management."""
 
+    # Default to demo doctor for now since we don't have auth context
+    doctor_name = "BS. Nguyễn Văn An"
+    
+    # Format system prompt with doctor name
+    system_prompt = DOCTOR_REASONING_SYSTEM.format(doctor_name=doctor_name)
+
+    logger.info(f"[Orchestrator] Step 5: MedGemma prompt length: {len(reasoning_prompt)} chars")
+    logger.debug(f"[Orchestrator] Step 5: MedGemma prompt: {reasoning_prompt[:500]}...")
+    
     response_en = await ollama_client.generate(
         model=settings.medical_model,
         prompt=reasoning_prompt,
-        system=DOCTOR_REASONING_SYSTEM,
+        system=system_prompt,
         images=[image_base64] if image_base64 else None,
         stream=False
     )
+    
+    logger.info(f"[Orchestrator] Step 5: MedGemma response (En): {response_en[:300]}..." if len(response_en) > 300 else f"[Orchestrator] Step 5: MedGemma response (En): {response_en}")
     
     yield {
         "stage": "medical_reasoning",
@@ -367,7 +436,9 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
         "progress": 0.85
     }
     
+    logger.info(f"[Orchestrator] Step 6: Translating MedGemma response to Vietnamese")
     response_vi = await translate_en_to_vi(response_en)
+    logger.info(f"[Orchestrator] Step 6: Final response (Vi): {response_vi[:300]}..." if len(response_vi) > 300 else f"[Orchestrator] Step 6: Final response (Vi): {response_vi}")
     
     yield {
         "stage": "complete",

@@ -5,10 +5,214 @@ Provides async interface for Vietnamese-English bidirectional translation
 with automatic text chunking for context length limitations (512 tokens).
 """
 import asyncio
+import re
 from typing import List, Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def strip_markdown_inline(text: str) -> str:
+    """
+    Remove ONLY inline markdown formatting from text, preserving line breaks.
+    
+    This removes bold/italic markers but keeps the text structure intact.
+    
+    Args:
+        text: Text potentially containing markdown
+        
+    Returns:
+        Text with inline formatting removed but structure preserved
+    """
+    if not text:
+        return text
+    
+    # Remove bold/italic markers (**text**, *text*, __text__, _text_)
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+    text = re.sub(r'__([^_]+)__', r'\1', text)
+    text = re.sub(r'_([^_]+)_', r'\1', text)
+    
+    # Remove inline code backticks
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    
+    return text
+
+
+def strip_markdown(text: str) -> str:
+    """
+    Remove markdown formatting from text before translation.
+    
+    EnviT5 is trained on natural language, not markdown, so
+    structured formatting can confuse it.
+    
+    Args:
+        text: Text potentially containing markdown
+        
+    Returns:
+        Clean text without markdown formatting
+    """
+    if not text:
+        return text
+    
+    # Remove headers (# ## ### etc.)
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    
+    # Remove bold/italic markers
+    text = strip_markdown_inline(text)
+    
+    # Remove bullet points (- or *)
+    text = re.sub(r'^[\-\*]\s+', '', text, flags=re.MULTILINE)
+    
+    # Remove numbered lists (1. 2. etc.)
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+    
+    # Remove horizontal rules
+    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+    
+    # Remove multiple newlines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # Remove leading/trailing whitespace per line
+    lines = [line.strip() for line in text.split('\n')]
+    text = '\n'.join(lines)
+    
+    return text.strip()
+
+
+def clean_translation_output(text: str) -> str:
+    """
+    Clean EnviT5 output by removing any language prefixes.
+    
+    Sometimes the model echoes its prompt prefix (vi:/en:) in the output.
+    
+    Args:
+        text: Raw translation output
+        
+    Returns:
+        Cleaned translation
+    """
+    if not text:
+        return text
+    
+    # Remove vi: or en: prefix at start (with optional whitespace and punctuation)
+    text = re.sub(r'^(vi|en):\s*[?!.]*\s*', '', text, flags=re.IGNORECASE)
+    
+    # Also check for prefix after any leading whitespace
+    text = text.strip()
+    text = re.sub(r'^(vi|en):\s*[?!.]*\s*', '', text, flags=re.IGNORECASE)
+    
+    return text.strip()
+
+
+def parse_structured_text(text: str) -> list:
+    """
+    Parse text into structured segments preserving headers, bullets, etc.
+    
+    Args:
+        text: Text potentially containing markdown formatting
+        
+    Returns:
+        List of (segment_type, marker, content) tuples
+        segment_type: 'header', 'bullet', 'numbered', 'paragraph'
+        marker: The original prefix (e.g., '## ', '- ', '1. ')
+        content: The text content to translate
+    """
+    if not text:
+        return []
+    
+    segments = []
+    lines = text.split('\n')
+    current_paragraph = []
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        if not stripped:
+            # Empty line - flush current paragraph
+            if current_paragraph:
+                segments.append(('paragraph', '', ' '.join(current_paragraph)))
+                current_paragraph = []
+            segments.append(('break', '', ''))
+            continue
+        
+        # Check for header (# ## ### etc.)
+        header_match = re.match(r'^(#{1,6})\s+(.+)$', stripped)
+        if header_match:
+            if current_paragraph:
+                segments.append(('paragraph', '', ' '.join(current_paragraph)))
+                current_paragraph = []
+            segments.append(('header', header_match.group(1) + ' ', header_match.group(2)))
+            continue
+        
+        # Check for bullet points (- or *)
+        bullet_match = re.match(r'^([\-\*])\s+(.+)$', stripped)
+        if bullet_match:
+            if current_paragraph:
+                segments.append(('paragraph', '', ' '.join(current_paragraph)))
+                current_paragraph = []
+            segments.append(('bullet', '- ', bullet_match.group(2)))
+            continue
+        
+        # Check for numbered list (1. 2. etc.)
+        numbered_match = re.match(r'^(\d+\.)\s+(.+)$', stripped)
+        if numbered_match:
+            if current_paragraph:
+                segments.append(('paragraph', '', ' '.join(current_paragraph)))
+                current_paragraph = []
+            segments.append(('numbered', numbered_match.group(1) + ' ', numbered_match.group(2)))
+            continue
+        
+        # Regular line - add to current paragraph
+        current_paragraph.append(stripped)
+    
+    # Flush any remaining paragraph
+    if current_paragraph:
+        segments.append(('paragraph', '', ' '.join(current_paragraph)))
+    
+    return segments
+
+
+def reconstruct_formatted_text(translated_segments: list) -> str:
+    """
+    Reconstruct formatted text from translated segments.
+    
+    Args:
+        translated_segments: List of (segment_type, marker, translated_content) tuples
+        
+    Returns:
+        Formatted text with proper markdown structure
+    """
+    lines = []
+    last_was_break = False
+    
+    for seg_type, marker, content in translated_segments:
+        if seg_type == 'break':
+            if not last_was_break:
+                lines.append('')
+            last_was_break = True
+            continue
+        
+        last_was_break = False
+        
+        if seg_type == 'header':
+            # Add extra newline before header for spacing
+            if lines and lines[-1] != '':
+                lines.append('')
+            lines.append(f"**{content}**")  # Use bold instead of # for better rendering
+            lines.append('')
+        elif seg_type == 'bullet':
+            lines.append(f"• {content}")
+        elif seg_type == 'numbered':
+            lines.append(f"{marker}{content}")
+        else:  # paragraph
+            lines.append(content)
+    
+    # Clean up multiple empty lines
+    result = '\n'.join(lines)
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    
+    return result.strip()
 
 
 class TransformersClient:
@@ -155,6 +359,8 @@ class TransformersClient:
         """
         await self._ensure_loaded()
         
+        logger.debug(f"[EnviT5] Input: {prefixed_text[:200]}..." if len(prefixed_text) > 200 else f"[EnviT5] Input: {prefixed_text}")
+        
         try:
             import torch
             
@@ -179,8 +385,14 @@ class TransformersClient:
                 )
             
             # Decode
-            translation = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            return translation.strip()
+            raw_translation = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            logger.debug(f"[EnviT5] Raw output: {raw_translation[:200]}..." if len(raw_translation) > 200 else f"[EnviT5] Raw output: {raw_translation}")
+            
+            # Clean the output (remove any echoed prefix)
+            translation = clean_translation_output(raw_translation)
+            logger.debug(f"[EnviT5] Cleaned output: {translation[:200]}..." if len(translation) > 200 else f"[EnviT5] Cleaned output: {translation}")
+            
+            return translation
             
         except Exception as e:
             logger.error(f"Translation failed: {e}")
@@ -191,6 +403,7 @@ class TransformersClient:
         Translate Vietnamese to English.
         
         Automatically chunks long texts to handle 512 token limit.
+        Strips markdown before translation for better results.
         
         Args:
             text: Vietnamese text to translate
@@ -201,14 +414,22 @@ class TransformersClient:
         if not text.strip():
             return ""
         
+        logger.info(f"[Vi→En] Original input ({len(text)} chars): {text[:100]}..." if len(text) > 100 else f"[Vi→En] Original input: {text}")
+        
+        # Strip markdown before translation
+        clean_text = strip_markdown(text)
+        logger.info(f"[Vi→En] After markdown strip ({len(clean_text)} chars): {clean_text[:100]}..." if len(clean_text) > 100 else f"[Vi→En] After markdown strip: {clean_text}")
+        
         await self._ensure_loaded()
         
         # Check if chunking needed
-        chunks = self._chunk_text(text)
+        chunks = self._chunk_text(clean_text)
         
         if len(chunks) == 1:
             logger.debug("Translating single chunk (Vi→En)")
-            return await self._translate_single(f"vi: {text}")
+            result = await self._translate_single(f"vi: {clean_text}")
+            logger.info(f"[Vi→En] Final result: {result[:100]}..." if len(result) > 100 else f"[Vi→En] Final result: {result}")
+            return result
         
         # Translate multiple chunks
         logger.info(f"Translating {len(chunks)} chunks (Vi→En)")
@@ -220,43 +441,71 @@ class TransformersClient:
             translated_chunks.append(translation)
         
         # Reassemble with proper spacing
-        return ' '.join(translated_chunks)
+        result = ' '.join(translated_chunks)
+        logger.info(f"[Vi→En] Final result ({len(result)} chars): {result[:100]}..." if len(result) > 100 else f"[Vi→En] Final result: {result}")
+        return result
     
     async def translate_en_to_vi(self, text: str) -> str:
         """
-        Translate English to Vietnamese.
+        Translate English to Vietnamese with structure preservation.
         
-        Automatically chunks long texts to handle 512 token limit.
+        Parses text into segments (headers, bullets, paragraphs), translates
+        each segment, then reconstructs with proper formatting for readability.
         
         Args:
             text: English text to translate
             
         Returns:
-            Vietnamese translation
+            Vietnamese translation with preserved formatting
         """
         if not text.strip():
             return ""
         
+        logger.info(f"[En→Vi] Original input ({len(text)} chars): {text[:100]}..." if len(text) > 100 else f"[En→Vi] Original input: {text}")
+        
         await self._ensure_loaded()
         
-        # Check if chunking needed
-        chunks = self._chunk_text(text)
+        # Parse into structured segments
+        segments = parse_structured_text(text)
         
-        if len(chunks) == 1:
-            logger.debug("Translating single chunk (En→Vi)")
-            return await self._translate_single(f"en: {text}")
+        if not segments:
+            # Fallback to simple translation
+            clean_text = strip_markdown(text)
+            result = await self._translate_single(f"en: {clean_text}")
+            return result
         
-        # Translate multiple chunks
-        logger.info(f"Translating {len(chunks)} chunks (En→Vi)")
-        translated_chunks = []
+        logger.info(f"[En→Vi] Parsed into {len(segments)} segments")
         
-        for i, chunk in enumerate(chunks):
-            logger.debug(f"Translating chunk {i+1}/{len(chunks)}")
-            translation = await self._translate_single(f"en: {chunk}")
-            translated_chunks.append(translation)
+        # Translate each content segment
+        translated_segments = []
+        for seg_type, marker, content in segments:
+            if seg_type == 'break' or not content.strip():
+                translated_segments.append((seg_type, marker, content))
+                continue
+            
+            # Clean inline markdown before translating
+            clean_content = strip_markdown_inline(content)
+            
+            # Chunk if needed
+            chunks = self._chunk_text(clean_content)
+            
+            if len(chunks) == 1:
+                translated_content = await self._translate_single(f"en: {clean_content}")
+            else:
+                # Translate and reassemble chunks
+                translated_chunks = []
+                for chunk in chunks:
+                    translated_chunk = await self._translate_single(f"en: {chunk}")
+                    translated_chunks.append(translated_chunk)
+                translated_content = ' '.join(translated_chunks)
+            
+            translated_segments.append((seg_type, marker, translated_content))
         
-        # Reassemble with proper spacing
-        return ' '.join(translated_chunks)
+        # Reconstruct formatted text
+        result = reconstruct_formatted_text(translated_segments)
+        
+        logger.info(f"[En→Vi] Final result ({len(result)} chars): {result[:100]}..." if len(result) > 100 else f"[En→Vi] Final result: {result}")
+        return result
     
     async def translate_batch(
         self,

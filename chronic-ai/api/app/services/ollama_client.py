@@ -25,7 +25,8 @@ class OllamaClient:
         prompt: str,
         system: Optional[str] = None,
         images: Optional[List[str]] = None,
-        stream: bool = False
+        stream: bool = False,
+        num_predict: int = 2048
     ) -> Union[str, AsyncGenerator[str, None]]:
         """
         Generate text using specified model.
@@ -36,6 +37,7 @@ class OllamaClient:
             system: Optional system prompt
             images: Optional list of base64-encoded images for multimodal models
             stream: Whether to stream the response
+            num_predict: Maximum number of tokens to generate (default: 2048)
             
         Returns:
             Full response text if stream=False, else async generator of tokens
@@ -43,7 +45,10 @@ class OllamaClient:
         payload = {
             "model": model,
             "prompt": prompt,
-            "stream": stream
+            "stream": stream,
+            "options": {
+                "num_predict": num_predict
+            }
         }
         
         if system:

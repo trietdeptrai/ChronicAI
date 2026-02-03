@@ -61,6 +61,14 @@ IMPORTANT GUIDELINES:
 - Explain medical concepts in simple terms when addressing patients
 - Include relevant warnings about symptoms that require urgent care
 
+CRITICAL - HANDLING MISSING DATA:
+- NEVER output placeholder text like [Insert...], [TODO], [N/A], [Date unknown], etc.
+- NEVER use bracket notation to indicate missing information
+- If specific data is not available in the provided context, state it naturally
+- Example: Instead of "[Insert Last Checkup Date]", say "This information is not available in your records"
+- Only answer based on information actually present in the patient context
+- If important data is missing, suggest checking with the healthcare provider
+
 Remember: You are a support tool, not a replacement for professional medical advice."""
 
 
@@ -135,9 +143,9 @@ async def process_medical_query(
     Full Translation Sandwich Pipeline with streaming.
     
     Steps:
-        A. Vietnamese → English (Qwen 2.5)
+        A. Vietnamese → English (VietAI EnviT5)
         B. Medical Reasoning (MedGemma 4B) + RAG Context
-        C. English → Vietnamese (Qwen 2.5)
+        C. English → Vietnamese (VietAI EnviT5)
     
     Yields:
         Dict with stage info and content for real-time UI updates

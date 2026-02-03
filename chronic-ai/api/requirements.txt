@@ -10,7 +10,11 @@ psycopg2-binary==2.9.9
 
 # AI/ML
 # ollama package not needed - using httpx directly to call Ollama API
-# langchain and langchain-community are optional
+
+# LangGraph for orchestration with HITL
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-community>=0.3.0
 
 # HuggingFace Transformers for EnviT5 Translation
 transformers>=4.35.0
