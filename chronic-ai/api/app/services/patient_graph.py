@@ -162,7 +162,8 @@ async def get_patient_history_node(state: PatientChatState) -> dict:
     # Get relevant medical context via RAG
     context = await get_patient_context(
         patient_id=UUID(state["patient_id"]),
-        query=state["query_en"],
+        # Use original Vietnamese query for better retrieval
+        query=state["query_vi"],
         max_chunks=3  # Less context for patient to reduce latency
     )
     

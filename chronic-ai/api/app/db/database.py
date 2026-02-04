@@ -16,14 +16,16 @@ def get_supabase() -> Client:
     global _supabase_client
     
     if _supabase_client is None:
-        if not settings.supabase_url or not settings.supabase_anon_key:
+        # Prefer service role key for backend access (bypasses RLS).
+        key = settings.supabase_service_role_key or settings.supabase_anon_key
+        if not settings.supabase_url or not key:
             raise ValueError(
                 "Supabase credentials not configured. "
                 "Set SUPABASE_URL and SUPABASE_ANON_KEY in .env"
             )
         _supabase_client = create_client(
             settings.supabase_url,
-            settings.supabase_anon_key
+            key
         )
     
     return _supabase_client

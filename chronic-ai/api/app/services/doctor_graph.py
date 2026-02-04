@@ -14,6 +14,7 @@ Best Practices Applied (2025-2026):
 import base64
 import json
 import logging
+import time
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import AsyncGenerator, Literal, Optional, List, Tuple
@@ -141,29 +142,33 @@ async def translate_input_node(state: DoctorOrchestratorState) -> dict:
     Uses EnviT5 for translation.
     """
     logger.info(f"[Graph] translate_input: {state['query_vi'][:50]}...")
-    
-    query_en = await transformers_client.translate_vi_to_en(state["query_vi"])
-    
-    # Load image if provided
-    image_base64 = None
-    if state.get("image_path"):
-        path = Path(state["image_path"])
-        if path.exists():
-            with open(path, "rb") as f:
-                image_base64 = base64.b64encode(f.read()).decode("utf-8")
-    
-    return {
-        "query_en": query_en,
-        "image_base64": image_base64,
-        "current_stage": "translated_input",
-        "progress": 0.15,
-        "stage_messages": [create_stage_message(
-            "translating_input",
-            "Hoàn thành dịch sang tiếng Anh",
-            0.15,
-            translation=query_en
-        )]
-    }
+    start_time = time.perf_counter()
+    try:
+        query_en = await transformers_client.translate_vi_to_en(state["query_vi"])
+
+        # Load image if provided
+        image_base64 = None
+        if state.get("image_path"):
+            path = Path(state["image_path"])
+            if path.exists():
+                with open(path, "rb") as f:
+                    image_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+        return {
+            "query_en": query_en,
+            "image_base64": image_base64,
+            "current_stage": "translated_input",
+            "progress": 0.15,
+            "stage_messages": [create_stage_message(
+                "translating_input",
+                "Hoàn thành dịch sang tiếng Anh",
+                0.15,
+                translation=query_en
+            )]
+        }
+    finally:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"[Graph] translate_input: Took {elapsed_ms:.1f} ms")
 
 
 async def verify_input_node(state: DoctorOrchestratorState) -> dict:
@@ -174,49 +179,52 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
     May trigger HITL interrupt if clarification needed.
     """
     logger.info("[Graph] verify_input: Checking query clarity...")
-    
-    verification = await verify_input(state["query_en"])
-    
-    result = {
-        "verification_result": verification,
-        "input_confidence": verification["confidence"],
-        "current_stage": "verified_input",
-        "progress": 0.25,
-        "stage_messages": [create_stage_message(
-            "verifying_input",
-            f"Kiểm tra độ rõ ràng: {verification['confidence']:.0%}",
-            0.25
-        )]
-    }
-    
-    # Check if HITL is enabled and clarification is needed
-    if settings.enable_hitl and should_request_clarification(verification):
-        logger.info("[Graph] verify_input: Requesting clarification via HITL")
-        
-        # Create HITL request
-        hitl_request = HITLRequest(
-            type="clarification_needed",
-            message="Câu hỏi cần được làm rõ",
-            details={
-                "original_query": state["query_vi"],
-                "issues": verification["issues"],
-                "suggestions": verification["suggested_rewrites"],
-            },
-            options=verification["suggested_rewrites"] if verification["suggested_rewrites"] else None
-        )
-        
-        # Interrupt for human input
-        clarified = interrupt(hitl_request)
-        
-        if clarified:
-            # Human provided clarification
-            result["query_vi"] = clarified.get("query", state["query_vi"])
-            result["human_approved_input"] = True
-            # Re-translate if query changed
-            if result["query_vi"] != state["query_vi"]:
-                result["query_en"] = await transformers_client.translate_vi_to_en(result["query_vi"])
-    
-    return result
+    start_time = time.perf_counter()
+    try:
+        verification = await verify_input(state["query_en"])
+
+        result = {
+            "verification_result": verification,
+            "input_confidence": verification["confidence"],
+            "current_stage": "verified_input",
+            "progress": 0.25,
+            "stage_messages": [create_stage_message(
+                "verifying_input",
+                f"Kiểm tra độ rõ ràng: {verification['confidence']:.0%}",
+                0.25
+            )]
+        }
+        # Check if HITL is enabled and clarification is needed
+        if settings.enable_hitl and should_request_clarification(verification):
+            logger.info("[Graph] verify_input: Requesting clarification via HITL")
+
+            # Create HITL request
+            hitl_request = HITLRequest(
+                type="clarification_needed",
+                message="Câu hỏi cần được làm rõ",
+                details={
+                    "original_query": state["query_vi"],
+                    "issues": verification["issues"],
+                    "suggestions": verification["suggested_rewrites"],
+                },
+                options=verification["suggested_rewrites"] if verification["suggested_rewrites"] else None
+            )
+
+            # Interrupt for human input
+            clarified = interrupt(hitl_request)
+
+            if clarified:
+                # Human provided clarification
+                result["query_vi"] = clarified.get("query", state["query_vi"])
+                result["human_approved_input"] = True
+                # Re-translate if query changed
+                if result["query_vi"] != state["query_vi"]:
+                    result["query_en"] = await transformers_client.translate_vi_to_en(result["query_vi"])
+
+        return result
+    finally:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"[Graph] verify_input: Took {elapsed_ms:.1f} ms")
 
 
 async def extract_patients_node(state: DoctorOrchestratorState) -> dict:
@@ -226,6 +234,7 @@ async def extract_patients_node(state: DoctorOrchestratorState) -> dict:
     Uses MedGemma to identify patient names with retry logic.
     """
     logger.info("[Graph] extract_patients: Identifying patients...")
+    start_time = time.perf_counter()
 
     extraction_prompt = f"Query: {state['query_en']}"
     extraction_system = """Extract patient names from the query.
@@ -284,7 +293,7 @@ Do not include any other text."""
 
     logger.info(f"[Graph] extract_patients: Found {len(mentioned_names)} patients, type={query_type}")
 
-    return {
+    result = {
         "mentioned_patient_names": mentioned_names,
         "query_type": query_type,
         "current_stage": "extracted_patients",
@@ -296,6 +305,9 @@ Do not include any other text."""
             patient_names=mentioned_names
         )]
     }
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] extract_patients: Took {elapsed_ms:.1f} ms")
+    return result
 
 
 async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
@@ -306,9 +318,10 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
     May trigger HITL for confirmation if multiple matches.
     """
     logger.info("[Graph] resolve_patients: Looking up patients...")
+    start_time = time.perf_counter()
 
     if not state["mentioned_patient_names"]:
-        return {
+        result = {
             "matched_patients": [],
             "current_stage": "resolved_patients",
             "progress": 0.40,
@@ -318,6 +331,9 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
                 0.40
             )]
         }
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
+        return result
 
     try:
         supabase = get_supabase()
@@ -419,7 +435,7 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
 
         logger.info(f"[Graph] resolve_patients: Resolved {len(matched_patients)} patients")
 
-        return {
+        result = {
             "matched_patients": matched_patients,
             "current_stage": "resolved_patients",
             "progress": 0.45,
@@ -430,10 +446,13 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
                 mentioned_patients=[{"id": m["id"], "name": m["name"], "confidence": m["match_confidence"]} for m in matched_patients]
             )]
         }
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
+        return result
 
     except Exception as e:
         logger.error(f"[Graph] resolve_patients: Database error: {e}")
-        return {
+        result = {
             "matched_patients": [],
             "current_stage": "resolved_patients",
             "progress": 0.45,
@@ -444,6 +463,9 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
                 0.45
             )]
         }
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
+        return result
 
 
 async def get_context_node(state: DoctorOrchestratorState) -> dict:
@@ -453,6 +475,7 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
     Gets relevant medical records for identified patients.
     """
     logger.info("[Graph] get_context: Retrieving medical context...")
+    start_time = time.perf_counter()
     
     if state["query_type"] == QueryType.AGGREGATE:
         # Get overview of all patients
@@ -463,7 +486,8 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
         for patient in state["matched_patients"]:
             patient_context = await get_patient_context(
                 patient_id=UUID(patient["id"]),
-                query=state["query_en"],
+                # Use original Vietnamese query for better retrieval
+                query=state["query_vi"],
                 max_chunks=5
             )
             context_parts.append(patient_context)
@@ -475,7 +499,7 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
     # Unload medical model to free memory for next step
     await ollama_client.unload(settings.medical_model)
     
-    return {
+    result = {
         "patient_context": context,
         "current_stage": "retrieved_context",
         "progress": 0.55,
@@ -485,6 +509,9 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
             0.55
         )]
     }
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] get_context: Took {elapsed_ms:.1f} ms")
+    return result
 
 
 async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
@@ -494,6 +521,7 @@ async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
     Core reasoning step with patient context, retry logic, and defensive responses.
     """
     logger.info("[Graph] medical_reasoning: Generating response...")
+    start_time = time.perf_counter()
 
     # Check if we have sufficient context
     has_context = bool(state['patient_context'] and state['patient_context'].strip() != "No specific patient context available.")
@@ -593,7 +621,7 @@ The following response is based on limited patient information. Please verify wi
             ]
         )
 
-    return {
+    result = {
         "reasoning_en": response_en,
         "current_stage": "reasoned",
         "progress": 0.70,
@@ -604,6 +632,9 @@ The following response is based on limited patient information. Please verify wi
             response_en=response_en[:200] + "..." if len(response_en) > 200 else response_en
         )]
     }
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] medical_reasoning: Took {elapsed_ms:.1f} ms")
+    return result
 
 
 async def safety_check_node(state: DoctorOrchestratorState) -> dict:
@@ -614,6 +645,7 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
     Includes comprehensive audit logging for all safety decisions.
     """
     logger.info("[Graph] safety_check: Reviewing response safety...")
+    start_time = time.perf_counter()
 
     # Unload MedGemma, load verification model
     try:
@@ -698,6 +730,8 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
             else:
                 result["human_approved_output"] = True
 
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] safety_check: Took {elapsed_ms:.1f} ms")
     return result
 
 
@@ -708,6 +742,7 @@ async def format_output_node(state: DoctorOrchestratorState) -> dict:
     Creates structured sections from raw response.
     """
     logger.info("[Graph] format_output: Structuring response...")
+    start_time = time.perf_counter()
     
     formatted = format_response(
         response_text=state["reasoning_en"],
@@ -716,7 +751,7 @@ async def format_output_node(state: DoctorOrchestratorState) -> dict:
         sources=["patient_records"]
     )
     
-    return {
+    result = {
         "formatted_response": formatted,
         "current_stage": "formatted",
         "progress": 0.85,
@@ -726,6 +761,9 @@ async def format_output_node(state: DoctorOrchestratorState) -> dict:
             0.85
         )]
     }
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] format_output: Took {elapsed_ms:.1f} ms")
+    return result
 
 
 async def translate_output_node(state: DoctorOrchestratorState) -> dict:
@@ -735,6 +773,7 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
     Uses EnviT5 for translation.
     """
     logger.info("[Graph] translate_output: Translating to Vietnamese...")
+    start_time = time.perf_counter()
     
     # Unload verification model before translation
     await ollama_client.unload(settings.verification_model)
@@ -756,7 +795,7 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
     else:
         formatted = None
     
-    return {
+    result = {
         "response_vi": response_vi,
         "formatted_response": formatted,
         "current_stage": "complete",
@@ -768,6 +807,9 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
             response=response_vi
         )]
     }
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] translate_output: Took {elapsed_ms:.1f} ms")
+    return result
 
 
 # ============================================================================
@@ -909,6 +951,7 @@ async def process_doctor_query_graph(
         0.0
     )
 
+    start_total = time.perf_counter()
     try:
         # Run graph and stream updates
         async for event in graph.astream(initial_state, config=config):
@@ -1001,6 +1044,9 @@ async def process_doctor_query_graph(
             "progress": 0.0,
             "error": str(e)
         }
+    finally:
+        elapsed_ms = (time.perf_counter() - start_total) * 1000
+        logger.info(f"[Graph] pipeline_total: Took {elapsed_ms:.1f} ms")
 
 
 # ============================================================================

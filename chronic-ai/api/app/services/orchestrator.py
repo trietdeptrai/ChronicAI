@@ -36,6 +36,7 @@ from uuid import UUID
 from dataclasses import dataclass
 import json
 import logging
+import time
 
 from app.services.ollama_client import ollama_client
 from app.services.rag import get_patient_context
@@ -308,6 +309,7 @@ async def process_doctor_query(
         if path.exists():
             with open(path, "rb") as f:
                 image_base64 = base64.b64encode(f.read()).decode("utf-8")
+    start_total = time.perf_counter()
     # ========== STEP 1: Vietnamese → English ==========
     yield {
         "stage": "translating_input",
@@ -316,7 +318,10 @@ async def process_doctor_query(
     }
     
     logger.info(f"[Orchestrator] Step 1: Input query (Vi): {query_vi}")
+    start_step_1 = time.perf_counter()
     query_en = await translate_vi_to_en(query_vi)
+    elapsed_1 = (time.perf_counter() - start_step_1) * 1000
+    logger.info(f"[Orchestrator] Step 1: Took {elapsed_1:.1f} ms")
     logger.info(f"[Orchestrator] Step 1: Translated query (En): {query_en}")
     
     yield {
@@ -333,7 +338,10 @@ async def process_doctor_query(
         "progress": 0.2
     }
     
+    start_step_2 = time.perf_counter()
     mentioned_names = await extract_patient_mentions(query_en)
+    elapsed_2 = (time.perf_counter() - start_step_2) * 1000
+    logger.info(f"[Orchestrator] Step 2: Took {elapsed_2:.1f} ms")
     
     # ========== STEP 3: Resolve Patients ==========
     yield {
@@ -342,7 +350,10 @@ async def process_doctor_query(
         "progress": 0.3
     }
     
+    start_step_3 = time.perf_counter()
     matched_patients = await resolve_patients(mentioned_names)
+    elapsed_3 = (time.perf_counter() - start_step_3) * 1000
+    logger.info(f"[Orchestrator] Step 3: Took {elapsed_3:.1f} ms")
     patient_ids = [UUID(p.id) for p in matched_patients]
     
     # Format patient info for response
@@ -372,12 +383,15 @@ async def process_doctor_query(
         "progress": 0.4
     }
     
+    start_step_4 = time.perf_counter()
     if patient_ids:
         # Get context for specific patients
-        patient_context = await get_multi_patient_context(patient_ids, query_en)
+        patient_context = await get_multi_patient_context(patient_ids, query_vi)
     else:
         # Get aggregate overview for general queries
         patient_context = await get_aggregate_patient_overview()
+    elapsed_4 = (time.perf_counter() - start_step_4) * 1000
+    logger.info(f"[Orchestrator] Step 4: Took {elapsed_4:.1f} ms")
     
     yield {
         "stage": "retrieving_context",
@@ -409,6 +423,7 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
     logger.info(f"[Orchestrator] Step 5: MedGemma prompt length: {len(reasoning_prompt)} chars")
     logger.debug(f"[Orchestrator] Step 5: MedGemma prompt: {reasoning_prompt[:500]}...")
     
+    start_step_5 = time.perf_counter()
     response_en = await ollama_client.generate(
         model=settings.medical_model,
         prompt=reasoning_prompt,
@@ -416,6 +431,8 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
         images=[image_base64] if image_base64 else None,
         stream=False
     )
+    elapsed_5 = (time.perf_counter() - start_step_5) * 1000
+    logger.info(f"[Orchestrator] Step 5: Took {elapsed_5:.1f} ms")
     
     logger.info(f"[Orchestrator] Step 5: MedGemma response (En): {response_en[:300]}..." if len(response_en) > 300 else f"[Orchestrator] Step 5: MedGemma response (En): {response_en}")
     
@@ -437,7 +454,10 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
     }
     
     logger.info(f"[Orchestrator] Step 6: Translating MedGemma response to Vietnamese")
+    start_step_6 = time.perf_counter()
     response_vi = await translate_en_to_vi(response_en)
+    elapsed_6 = (time.perf_counter() - start_step_6) * 1000
+    logger.info(f"[Orchestrator] Step 6: Took {elapsed_6:.1f} ms")
     logger.info(f"[Orchestrator] Step 6: Final response (Vi): {response_vi[:300]}..." if len(response_vi) > 300 else f"[Orchestrator] Step 6: Final response (Vi): {response_vi}")
     
     yield {
@@ -448,3 +468,5 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
         "response_en": response_en,
         "mentioned_patients": mentioned_patients
     }
+    elapsed_total = (time.perf_counter() - start_total) * 1000
+    logger.info(f"[Orchestrator] Pipeline total: Took {elapsed_total:.1f} ms")

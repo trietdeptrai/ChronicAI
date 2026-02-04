@@ -11,6 +11,8 @@ Includes memory optimization through model unloading.
 from typing import AsyncGenerator, Optional
 from uuid import UUID
 import base64
+import logging
+import time
 from pathlib import Path
 
 from app.services.ollama_client import ollama_client
@@ -18,6 +20,7 @@ from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
 # System prompts for translation
 VI_TO_EN_SYSTEM = """You are a professional medical translator. 
@@ -155,6 +158,7 @@ async def process_medical_query(
         patient_id: Patient UUID for context retrieval
         image_path: Optional path to medical image
     """
+    start_total = time.perf_counter()
     image_base64 = None
     
     # Load image if provided
@@ -170,8 +174,10 @@ async def process_medical_query(
         "message": "Đang dịch câu hỏi...",
         "progress": 0.1
     }
-    
+    start_step_a = time.perf_counter()
     query_en = await translate_vi_to_en(user_input_vi)
+    elapsed_a = (time.perf_counter() - start_step_a) * 1000
+    logger.info(f"[LLM] step_a_translate_input: Took {elapsed_a:.1f} ms")
     
     yield {
         "stage": "translating_input",
@@ -189,13 +195,16 @@ async def process_medical_query(
         "message": "Đang tìm kiếm hồ sơ y tế liên quan...",
         "progress": 0.35
     }
-    
+    start_step_b_context = time.perf_counter()
     # Get patient context via RAG
+    # Use original Vietnamese query for retrieval (records are primarily Vietnamese)
     patient_context = await get_patient_context(
         patient_id=patient_id,
-        query=query_en,
+        query=user_input_vi,
         max_chunks=10
     )
+    elapsed_b_context = (time.perf_counter() - start_step_b_context) * 1000
+    logger.info(f"[LLM] step_b_context: Took {elapsed_b_context:.1f} ms")
     
     yield {
         "stage": "medical_reasoning",
@@ -204,11 +213,14 @@ async def process_medical_query(
     }
     
     # Medical reasoning with MedGemma
+    start_step_b_reasoning = time.perf_counter()
     response_en = await medical_reasoning(
         query_en=query_en,
         patient_context=patient_context,
         image_base64=image_base64
     )
+    elapsed_b_reasoning = (time.perf_counter() - start_step_b_reasoning) * 1000
+    logger.info(f"[LLM] step_b_medical_reasoning: Took {elapsed_b_reasoning:.1f} ms")
     
     yield {
         "stage": "medical_reasoning",
@@ -226,8 +238,10 @@ async def process_medical_query(
         "message": "Đang dịch phản hồi sang tiếng Việt...",
         "progress": 0.85
     }
-    
+    start_step_c = time.perf_counter()
     response_vi = await translate_en_to_vi(response_en)
+    elapsed_c = (time.perf_counter() - start_step_c) * 1000
+    logger.info(f"[LLM] step_c_translate_output: Took {elapsed_c:.1f} ms")
     
     yield {
         "stage": "complete",
@@ -236,6 +250,8 @@ async def process_medical_query(
         "response": response_vi,
         "response_en": response_en  # Include English for doctor reference
     }
+    elapsed_total = (time.perf_counter() - start_total) * 1000
+    logger.info(f"[LLM] pipeline_total: Took {elapsed_total:.1f} ms")
 
 
 async def generate_clinical_summary(
