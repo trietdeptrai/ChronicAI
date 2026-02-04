@@ -4,12 +4,17 @@ RAG (Retrieval-Augmented Generation) Pipeline.
 Provides document ingestion, embedding storage, and similarity search
 for patient medical records using pgvector.
 """
-from typing import List, Optional
+import base64
+import logging
+from typing import List, Optional, Tuple
 from uuid import UUID
 import json
 
 from app.services.ollama_client import ollama_client
 from app.db.database import get_supabase
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def chunk_text(
@@ -301,3 +306,156 @@ async def delete_record_embeddings(record_id: UUID) -> bool:
         "record_id", str(record_id)
     ).execute()
     return True
+
+
+def _extract_signed_url(signed: object) -> Optional[str]:
+    if isinstance(signed, dict):
+        return (
+            signed.get("signedURL")
+            or signed.get("signed_url")
+            or (signed.get("data") or {}).get("signedURL")
+            or (signed.get("data") or {}).get("signed_url")
+        )
+    return None
+
+
+async def get_patient_record_image_attachments(
+    patient_id: UUID,
+    patient_name: Optional[str] = None,
+    limit: int = 3
+) -> List[dict]:
+    """
+    Fetch signed URLs for recent medical record images for a patient.
+
+    Returns attachment objects suitable for chat UI rendering.
+    """
+    supabase = get_supabase()
+
+    try:
+        result = supabase.table("medical_records").select(
+            "id, record_type, title, image_path, created_at"
+        ).eq("patient_id", str(patient_id)).order(
+            "created_at", desc=True
+        ).limit(limit * 3).execute()
+    except Exception:
+        return []
+
+    attachments: List[dict] = []
+    for record in result.data or []:
+        image_path = record.get("image_path")
+        if not image_path:
+            continue
+
+        try:
+            signed = supabase.storage.from_(settings.patient_photo_bucket).create_signed_url(
+                image_path,
+                settings.patient_photo_signed_url_ttl_seconds
+            )
+        except Exception:
+            continue
+        signed_url = _extract_signed_url(signed)
+        if not signed_url:
+            continue
+
+        attachments.append({
+            "type": "image",
+            "url": signed_url,
+            "record_id": record.get("id"),
+            "record_type": record.get("record_type"),
+            "title": record.get("title"),
+            "created_at": record.get("created_at"),
+            "patient_id": str(patient_id),
+            "patient_name": patient_name,
+        })
+
+        if len(attachments) >= limit:
+            break
+
+    return attachments
+
+
+async def get_patient_record_images_base64(
+    patient_id: UUID,
+    limit: int = 3
+) -> Tuple[List[str], List[dict]]:
+    """
+    Fetch and base64 encode patient medical record images from storage.
+
+    This function downloads actual image content for LLM analysis,
+    unlike get_patient_record_image_attachments which only returns URLs.
+
+    Args:
+        patient_id: Patient UUID
+        limit: Maximum number of images to return
+
+    Returns:
+        Tuple of (list of base64 encoded images, list of attachment metadata)
+    """
+    supabase = get_supabase()
+
+    try:
+        result = supabase.table("medical_records").select(
+            "id, record_type, title, image_path, created_at"
+        ).eq("patient_id", str(patient_id)).not_.is_(
+            "image_path", "null"
+        ).order(
+            "created_at", desc=True
+        ).limit(limit * 2).execute()
+    except Exception as e:
+        logger.warning(f"Failed to fetch patient records: {e}")
+        return [], []
+
+    images_base64: List[str] = []
+    attachments: List[dict] = []
+
+    for record in result.data or []:
+        image_path = record.get("image_path")
+        if not image_path:
+            continue
+
+        try:
+            # Download actual image bytes from Supabase storage
+            image_bytes = supabase.storage.from_(
+                settings.patient_photo_bucket
+            ).download(image_path)
+
+            if image_bytes:
+                # Encode to base64
+                encoded = base64.b64encode(image_bytes).decode("utf-8")
+                images_base64.append(encoded)
+
+                # Create signed URL for UI display
+                signed = supabase.storage.from_(
+                    settings.patient_photo_bucket
+                ).create_signed_url(
+                    image_path,
+                    settings.patient_photo_signed_url_ttl_seconds
+                )
+                signed_url = _extract_signed_url(signed)
+
+                attachments.append({
+                    "type": "image",
+                    "url": signed_url,
+                    "record_id": record.get("id"),
+                    "record_type": record.get("record_type"),
+                    "title": record.get("title"),
+                    "created_at": record.get("created_at"),
+                    "patient_id": str(patient_id),
+                })
+
+                logger.info(
+                    f"Loaded image for analysis: {record.get('title')} "
+                    f"({len(image_bytes)} bytes)"
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to download image {image_path}: {e}")
+            continue
+
+        if len(images_base64) >= limit:
+            break
+
+    logger.info(
+        f"Loaded {len(images_base64)} patient record images for LLM analysis"
+    )
+    return images_base64, attachments

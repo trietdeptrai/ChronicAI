@@ -10,6 +10,7 @@ import {
     getPatientRecords,
     getDashboardStats,
     uploadPatientPhoto,
+    uploadPatientRecordImage,
 } from "@/lib/api"
 import type { PatientListResponse, PatientDetailResponse, MedicalRecordsResponse, DashboardStats } from "@/types"
 
@@ -89,6 +90,35 @@ export function useUploadPatientPhoto() {
             uploadPatientPhoto(patientId, file),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+        },
+    })
+}
+
+/**
+ * Hook for uploading patient ECG/X-ray images
+ */
+export function useUploadPatientRecordImage() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: ({
+            patientId,
+            recordType,
+            file,
+            title,
+        }: {
+            patientId: string
+            recordType:
+                | "xray"
+                | "ecg"
+                | "ct"
+                | "mri"
+            file: File
+            title?: string
+        }) => uploadPatientRecordImage(patientId, recordType, file, title),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
         },
     })

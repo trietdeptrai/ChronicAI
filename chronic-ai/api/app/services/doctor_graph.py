@@ -36,7 +36,11 @@ from app.services.graph_state import (
 )
 from app.services.ollama_client import ollama_client
 from app.services.transformers_client import transformers_client
-from app.services.rag import get_patient_context
+from app.services.rag import (
+    get_patient_context,
+    get_patient_record_image_attachments,
+    get_patient_record_images_base64,
+)
 from app.services.verification_service import (
     verify_input,
     check_response_safety,
@@ -578,12 +582,16 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
 async def get_context_node(state: DoctorOrchestratorState) -> dict:
     """
     Node: Retrieve patient context via RAG.
-    
+
     Gets relevant medical records for identified patients.
+    Also fetches and encodes patient record images for LLM analysis.
     """
     logger.info("[Graph] get_context: Retrieving medical context...")
     start_time = time.perf_counter()
-    
+
+    record_attachments: List[dict] = []
+    patient_record_images_base64: List[str] = []
+
     if state["query_type"] == QueryType.AGGREGATE:
         # Get overview of all patients
         context = await _get_aggregate_overview()
@@ -599,20 +607,37 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
             )
             context_parts.append(patient_context)
             context_parts.append("\n---\n")
+
+            # Fetch actual patient record images for LLM analysis
+            images_b64, attachments = await get_patient_record_images_base64(
+                patient_id=UUID(patient["id"]),
+                limit=2
+            )
+            if images_b64:
+                patient_record_images_base64.extend(images_b64)
+            if attachments:
+                record_attachments.extend(attachments)
+
         context = "\n".join(context_parts)
+        logger.info(
+            f"[Graph] get_context: Loaded {len(patient_record_images_base64)} "
+            "patient record images for analysis"
+        )
     else:
         context = "No specific patient context available."
-    
+
     # Unload medical model to free memory for next step
     await ollama_client.unload(settings.medical_model)
-    
+
     result = {
         "patient_context": context,
+        "record_attachments": record_attachments[:6],
+        "patient_record_images_base64": patient_record_images_base64[:4],  # Limit to 4 images
         "current_stage": "retrieved_context",
         "progress": 0.55,
         "stage_messages": [create_stage_message(
             "retrieving_context",
-            "Hoàn thành tổng hợp thông tin y tế",
+            f"Hoàn thành tổng hợp thông tin y tế ({len(patient_record_images_base64)} hình ảnh)",
             0.55
         )]
     }
@@ -626,6 +651,7 @@ async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
     Node: Generate medical response using MedGemma.
 
     Core reasoning step with patient context, retry logic, and defensive responses.
+    Supports analysis of both user-uploaded images and patient record images.
     """
     logger.info("[Graph] medical_reasoning: Generating response...")
     start_time = time.perf_counter()
@@ -633,8 +659,27 @@ async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
     # Check if we have sufficient context
     has_context = bool(state['patient_context'] and state['patient_context'].strip() != "No specific patient context available.")
 
+    # Combine all available images for analysis
+    all_images: List[str] = []
+
+    # Add user-uploaded image first (if any)
+    if state.get("image_base64"):
+        all_images.append(state["image_base64"])
+
+    # Add patient record images from database
+    if state.get("patient_record_images_base64"):
+        all_images.extend(state["patient_record_images_base64"])
+
+    has_images = len(all_images) > 0
+    logger.info(f"[Graph] medical_reasoning: {len(all_images)} images available for analysis")
+
+    # Build prompt with image context
+    image_context = ""
+    if has_images:
+        image_context = f"\n\n## Hình ảnh y tế (Medical Images)\n{len(all_images)} image(s) attached for analysis. Please analyze these images as part of your assessment."
+
     reasoning_prompt = f"""## Patient Context
-{state['patient_context']}
+{state['patient_context']}{image_context}
 
 ## Doctor's Query
 {state['query_en']}
@@ -649,13 +694,14 @@ CRITICAL GUIDELINES:
 3. NO FABRICATION: NEVER make up patient information, test results, or medical history
 4. NO PLACEHOLDERS: NEVER output [Insert...], [TODO], [N/A], or similar
 5. FLAG MISSING DATA: If critical information is missing, explicitly mention what's needed
+6. IMAGE ANALYSIS: If medical images are provided, analyze them carefully and include findings in your assessment. Describe what you observe in the images.
 
 RESPONSE STRUCTURE:
 ## Đánh giá (Assessment)
 Current patient status based on available data
 
 ## Phân tích (Analysis)
-Key findings from records - note any data gaps
+Key findings from records and images - note any data gaps
 
 ## Đề xuất (Recommendations)
 Evidence-based suggested actions
@@ -674,7 +720,7 @@ Remember: It's better to say "I don't have enough information" than to provide p
                 model=settings.medical_model,
                 prompt=reasoning_prompt,
                 system=system_prompt,
-                images=[state["image_base64"]] if state.get("image_base64") else None,
+                images=all_images if all_images else None,
                 stream=False
             )
 
@@ -902,6 +948,7 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
     else:
         formatted = None
     
+    attachments = state.get("record_attachments", [])
     result = {
         "response_vi": response_vi,
         "formatted_response": formatted,
@@ -911,7 +958,8 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
             "complete",
             "Hoàn thành",
             1.0,
-            response=response_vi
+            response=response_vi,
+            attachments=attachments
         )]
     }
     elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -1120,6 +1168,7 @@ async def process_doctor_query_graph(
                 for m in final_state.get("matched_patients", [])
             ],
             "safety_score": final_state.get("safety_score"),
+            "attachments": final_state.get("record_attachments", []),
         }
         
     except CircuitBreakerOpen as e:

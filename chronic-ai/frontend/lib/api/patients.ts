@@ -10,6 +10,7 @@ import type {
     MedicalRecordsResponse,
     DashboardStats,
     PatientPhotoUploadResponse,
+    UploadResponse,
 } from "@/types"
 
 interface ListPatientsParams {
@@ -87,4 +88,26 @@ export async function uploadPatientPhoto(
     formData.append("file", file)
 
     return uploadFile<PatientPhotoUploadResponse>("/upload/patient-photo", formData)
+}
+
+/**
+ * Upload a patient ECG/X-ray image as a medical record
+ */
+export async function uploadPatientRecordImage(
+    patientId: string,
+    recordType:
+        | "xray"
+        | "ecg"
+        | "ct"
+        | "mri",
+    file: File,
+    title?: string
+): Promise<UploadResponse> {
+    const formData = new FormData()
+    formData.append("patient_id", patientId)
+    formData.append("record_type", recordType)
+    formData.append("file", file)
+    if (title) formData.append("title", title)
+
+    return uploadFile<UploadResponse>("/upload/patient-record-image", formData)
 }

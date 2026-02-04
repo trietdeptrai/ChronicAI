@@ -8,6 +8,18 @@ export interface ChatMessage {
     content: string
     content_en?: string
     timestamp: string
+    attachments?: ChatAttachment[]
+}
+
+export interface ChatAttachment {
+    type: "image"
+    url: string
+    title?: string
+    record_type?: string
+    created_at?: string
+    patient_id?: string
+    patient_name?: string
+    record_id?: string
 }
 
 export interface ChatRequest {
@@ -29,6 +41,7 @@ export interface ChatStreamUpdate {
     response?: string
     response_en?: string
     error?: string
+    attachments?: ChatAttachment[]
 }
 
 export interface Consultation {
@@ -89,4 +102,5 @@ export interface DoctorChatStreamUpdate {
     response_en?: string
     mentioned_patients?: PatientMention[]
     error?: string
+    attachments?: ChatAttachment[]
 }

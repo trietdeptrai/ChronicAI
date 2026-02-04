@@ -34,12 +34,21 @@ export interface PatientPhotoUploadResponse {
 
 export interface MedicalRecord {
     id: string
-    record_type: "prescription" | "lab" | "xray" | "ecg" | "notes" | "referral"
+    record_type:
+        | "prescription"
+        | "lab"
+        | "xray"
+        | "ecg"
+        | "ct"
+        | "mri"
+        | "notes"
+        | "referral"
     title: string
     content_text?: string
     analysis_result?: string
     is_verified?: boolean
     created_at: string
+    image_url?: string
 }
 
 export interface MedicalRecordsResponse {

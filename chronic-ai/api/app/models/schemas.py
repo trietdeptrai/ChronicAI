@@ -135,6 +135,8 @@ class RecordType(str, Enum):
     lab = "lab"
     xray = "xray"
     ecg = "ecg"
+    ct = "ct"
+    mri = "mri"
     notes = "notes"
     referral = "referral"
 
