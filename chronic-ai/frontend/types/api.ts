@@ -25,6 +25,13 @@ export interface UploadResponse {
     message: string
 }
 
+export interface PatientPhotoUploadResponse {
+    status: string
+    patient_id: string
+    profile_photo_url: string
+    message: string
+}
+
 export interface MedicalRecord {
     id: string
     record_type: "prescription" | "lab" | "xray" | "ecg" | "notes" | "referral"

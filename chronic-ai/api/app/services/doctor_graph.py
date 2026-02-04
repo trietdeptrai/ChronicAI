@@ -14,7 +14,9 @@ Best Practices Applied (2025-2026):
 import base64
 import json
 import logging
+import re
 import time
+import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import AsyncGenerator, Literal, Optional, List, Tuple
@@ -77,57 +79,154 @@ LLM_RETRY_CONFIG = RetryConfig(
 
 
 # ============================================================================
-# FUZZY MATCHING UTILITIES
+# FUZZY MATCHING UTILITIES (Vietnamese-optimized)
 # ============================================================================
+
+def normalize_vietnamese_name(name: str) -> str:
+    """
+    Normalize Vietnamese name for comparison.
+
+    Removes diacritics and converts to lowercase for fuzzy matching.
+    Vietnamese: Nguyễn Thị Lan → nguyen thi lan
+    """
+    # Lowercase and strip
+    name = name.lower().strip()
+
+    # Normalize unicode (NFD decomposes characters)
+    name = unicodedata.normalize('NFD', name)
+
+    # Remove combining diacritical marks
+    name = ''.join(c for c in name if not unicodedata.combining(c))
+
+    # Additional Vietnamese-specific replacements
+    replacements = {
+        'đ': 'd', 'Đ': 'D',
+    }
+    for old, new in replacements.items():
+        name = name.replace(old, new)
+
+    # Normalize whitespace
+    name = re.sub(r'\s+', ' ', name)
+
+    return name
+
+
+def extract_vietnamese_given_name(full_name: str) -> str:
+    """
+    Extract the given name (last word) from a Vietnamese full name.
+
+    Vietnamese names: Family + Middle + Given (e.g., "Nguyễn Thị Lan" → "Lan")
+    The given name is the most unique identifier.
+    """
+    parts = full_name.strip().split()
+    return parts[-1] if parts else ""
+
 
 def fuzzy_match_score(name1: str, name2: str) -> float:
     """
-    Calculate fuzzy match score between two names.
+    Calculate fuzzy match score between two Vietnamese names.
 
-    Uses SequenceMatcher for similarity scoring with Vietnamese name handling.
+    Uses multiple strategies for accurate Vietnamese name matching:
+    1. Exact match (with diacritics)
+    2. Normalized match (without diacritics)
+    3. Given name match (last word - most unique in Vietnamese)
+    4. SequenceMatcher for partial matches
     """
-    # Normalize names
+    # Normalize names (keep diacritics for exact match)
     n1 = name1.lower().strip()
     n2 = name2.lower().strip()
 
-    # Direct match
+    # 1. Exact match with diacritics
     if n1 == n2:
         return 1.0
 
-    # Substring match (common for partial names)
-    if n1 in n2 or n2 in n1:
-        return 0.9
+    # Normalize without diacritics
+    n1_normalized = normalize_vietnamese_name(name1)
+    n2_normalized = normalize_vietnamese_name(name2)
 
-    # SequenceMatcher for fuzzy matching
-    return SequenceMatcher(None, n1, n2).ratio()
+    # 2. Exact match without diacritics
+    if n1_normalized == n2_normalized:
+        return 0.98
+
+    # 3. Given name (last word) matching - critical for Vietnamese
+    given1 = extract_vietnamese_given_name(n1)
+    given2 = extract_vietnamese_given_name(n2)
+    given1_norm = normalize_vietnamese_name(given1)
+    given2_norm = normalize_vietnamese_name(given2)
+
+    # If given names don't match, significantly penalize
+    given_names_match = (given1 == given2 or given1_norm == given2_norm)
+
+    # 4. Full substring match (one name contains the other entirely)
+    if n1 in n2 or n2 in n1:
+        return 0.95 if given_names_match else 0.5
+
+    # 5. Normalized substring match
+    if n1_normalized in n2_normalized or n2_normalized in n1_normalized:
+        return 0.92 if given_names_match else 0.45
+
+    # 6. SequenceMatcher for fuzzy matching on normalized names
+    base_score = SequenceMatcher(None, n1_normalized, n2_normalized).ratio()
+
+    # Heavily penalize if given names don't match (they should be unique)
+    if not given_names_match:
+        base_score *= 0.4  # Reduce to 40% if given names differ
+
+    return base_score
 
 
 def find_best_patient_matches(
     search_name: str,
     patients: List[dict],
-    min_score: float = 0.6
+    min_score: float = 0.8
 ) -> List[Tuple[dict, float]]:
     """
-    Find best matching patients using fuzzy matching.
+    Find best matching patients using Vietnamese-optimized fuzzy matching.
 
     Args:
-        search_name: Name to search for
+        search_name: Name to search for (Vietnamese or partial)
         patients: List of patient records from database
-        min_score: Minimum match score threshold
+        min_score: Minimum match score threshold (default 0.8 for stricter matching)
 
     Returns:
         List of (patient, score) tuples sorted by score descending
     """
     matches = []
+    exact_match = None
+
+    search_normalized = normalize_vietnamese_name(search_name)
+    search_given = normalize_vietnamese_name(extract_vietnamese_given_name(search_name))
+
     for patient in patients:
         full_name = patient.get("full_name", "")
+        patient_normalized = normalize_vietnamese_name(full_name)
+        patient_given = normalize_vietnamese_name(extract_vietnamese_given_name(full_name))
+
+        # Check for exact match first (prioritize)
+        if search_normalized == patient_normalized:
+            exact_match = (patient, 1.0)
+            continue
+
         score = fuzzy_match_score(search_name, full_name)
 
+        # Only include if score meets threshold
         if score >= min_score:
             matches.append((patient, score))
 
+    # If exact match found, return only that
+    if exact_match:
+        return [exact_match]
+
     # Sort by score descending
     matches.sort(key=lambda x: x[1], reverse=True)
+
+    # If multiple matches have very close scores (within 0.1),
+    # they're considered ambiguous - keep all for HITL
+    if len(matches) > 1:
+        top_score = matches[0][1]
+        # Keep matches within 0.1 of top score for HITL review
+        matches = [(p, s) for p, s in matches if s >= top_score - 0.1]
+
     return matches
 
 
@@ -349,8 +448,9 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
             ).limit(10).execute()
 
             if result.data:
-                # Apply fuzzy matching to database results
-                fuzzy_results = find_best_patient_matches(name, result.data, min_score=0.6)
+                # Apply Vietnamese-optimized fuzzy matching to database results
+                # Threshold 0.8 = strict matching to prevent false positives
+                fuzzy_results = find_best_patient_matches(name, result.data, min_score=0.8)
 
                 for patient, score in fuzzy_results:
                     match = PatientMatch(
@@ -361,8 +461,8 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
                     )
                     matches.append(match)
 
-                    # Track ambiguous matches for HITL
-                    if score < 0.9:
+                    # Track ambiguous matches for HITL (stricter: < 0.95)
+                    if score < 0.95:
                         ambiguous_matches.append({
                             "name": patient["full_name"],
                             "score": score,
@@ -378,7 +478,8 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
                 ).limit(50).execute()
 
                 if all_patients.data:
-                    fuzzy_results = find_best_patient_matches(name, all_patients.data, min_score=0.5)
+                    # Threshold 0.7 for broader search (still stricter than before)
+                    fuzzy_results = find_best_patient_matches(name, all_patients.data, min_score=0.7)
                     for patient, score in fuzzy_results[:3]:  # Top 3 fuzzy matches
                         matches.append(PatientMatch(
                             id=patient["id"],
@@ -411,9 +512,15 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
             human_review_required=bool(ambiguous_matches),
         )
 
-        # HITL: Confirm if ambiguous or multiple low-confidence matches
-        if settings.enable_hitl and ambiguous_matches:
-            logger.info("[Graph] resolve_patients: Requesting patient confirmation due to ambiguous matches")
+        # HITL: Confirm if ambiguous, multiple matches, or any low-confidence match
+        # More aggressive triggering to prevent wrong patient selection
+        has_low_confidence = any(m["match_confidence"] < 0.95 for m in matched_patients)
+        has_multiple_matches = len(matched_patients) > 1
+        needs_confirmation = ambiguous_matches or has_low_confidence or has_multiple_matches
+
+        if settings.enable_hitl and needs_confirmation:
+            logger.info(f"[Graph] resolve_patients: Requesting patient confirmation "
+                       f"(ambiguous={bool(ambiguous_matches)}, low_conf={has_low_confidence}, multiple={has_multiple_matches})")
 
             # Provide helpful context for confirmation
             confirmation_details = {

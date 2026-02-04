@@ -4,7 +4,13 @@
 "use client"
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getPatients, getPatientDetail, getPatientRecords, getDashboardStats } from "@/lib/api"
+import {
+    getPatients,
+    getPatientDetail,
+    getPatientRecords,
+    getDashboardStats,
+    uploadPatientPhoto,
+} from "@/lib/api"
 import type { PatientListResponse, PatientDetailResponse, MedicalRecordsResponse, DashboardStats } from "@/types"
 
 interface UsePatientParams {
@@ -70,4 +76,20 @@ export function useInvalidatePatients() {
             queryClient.invalidateQueries({ queryKey: ["patients", patientId] }),
         invalidateAll: () => queryClient.invalidateQueries({ queryKey: ["patients"] }),
     }
+}
+
+/**
+ * Hook for uploading patient profile photo
+ */
+export function useUploadPatientPhoto() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: ({ patientId, file }: { patientId: string; file: File }) =>
+            uploadPatientPhoto(patientId, file),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+        },
+    })
 }

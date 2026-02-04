@@ -7,6 +7,7 @@ from typing import Optional, List
 from uuid import UUID
 
 from app.db.database import get_supabase
+from app.config import settings
 from app.services.llm import generate_clinical_summary
 
 
@@ -83,6 +84,7 @@ async def list_patients(
         "id, full_name, date_of_birth, gender, phone_primary, "
         "chronic_conditions, primary_diagnosis, triage_priority, "
         "profile_status, last_checkup_date, next_appointment_date, "
+        "profile_photo_url, "
         "assigned_doctor_id"
     )
     
@@ -102,6 +104,24 @@ async def list_patients(
     
     result = query.execute()
     
+    patients = result.data or []
+    bucket = settings.patient_photo_bucket
+    ttl = settings.patient_photo_signed_url_ttl_seconds
+    for patient in patients:
+        photo_path = patient.get("profile_photo_url")
+        if photo_path and not str(photo_path).startswith("http"):
+            signed = supabase.storage.from_(bucket).create_signed_url(photo_path, ttl)
+            signed_url = None
+            if isinstance(signed, dict):
+                signed_url = (
+                    signed.get("signedURL")
+                    or signed.get("signed_url")
+                    or (signed.get("data") or {}).get("signedURL")
+                    or (signed.get("data") or {}).get("signed_url")
+                )
+            if signed_url:
+                patient["profile_photo_url"] = signed_url
+    
     # Get total count
     count_result = supabase.table("patients").select(
         "id", count="exact"
@@ -110,7 +130,7 @@ async def list_patients(
     total = count_result.count if hasattr(count_result, 'count') else len(result.data)
     
     return {
-        "patients": result.data or [],
+        "patients": patients,
         "page": page,
         "page_size": page_size,
         "total": total,
@@ -157,8 +177,27 @@ async def get_patient_detail(patient_id: str):
         "patient_id", str(patient_uuid)
     ).order("started_at", desc=True).limit(5).execute()
     
+    patient_data = patient.data
+    if patient_data:
+        photo_path = patient_data.get("profile_photo_url")
+        if photo_path and not str(photo_path).startswith("http"):
+            signed = supabase.storage.from_(settings.patient_photo_bucket).create_signed_url(
+                photo_path,
+                settings.patient_photo_signed_url_ttl_seconds
+            )
+            signed_url = None
+            if isinstance(signed, dict):
+                signed_url = (
+                    signed.get("signedURL")
+                    or signed.get("signed_url")
+                    or (signed.get("data") or {}).get("signedURL")
+                    or (signed.get("data") or {}).get("signed_url")
+                )
+            if signed_url:
+                patient_data["profile_photo_url"] = signed_url
+    
     return {
-        "patient": patient.data,
+        "patient": patient_data,
         "recent_vitals": vitals.data or [],
         "recent_consultations": consultations.data or []
     }

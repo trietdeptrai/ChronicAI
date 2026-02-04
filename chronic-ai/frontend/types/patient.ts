@@ -12,6 +12,7 @@ export interface Patient {
   phone_primary: string
   phone_secondary?: string
   email?: string
+  profile_photo_url?: string
 
   // Address
   address_street?: string

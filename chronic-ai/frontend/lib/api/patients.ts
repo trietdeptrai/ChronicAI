@@ -2,13 +2,14 @@
  * Patient API functions
  */
 
-import { apiClient } from "./client"
+import { apiClient, uploadFile } from "./client"
 import type {
     Patient,
     PatientListResponse,
     PatientDetailResponse,
     MedicalRecordsResponse,
     DashboardStats,
+    PatientPhotoUploadResponse,
 } from "@/types"
 
 interface ListPatientsParams {
@@ -72,4 +73,18 @@ export async function getDashboardStats(doctorId?: string): Promise<DashboardSta
         : "/doctor/stats"
 
     return apiClient<DashboardStats>(endpoint)
+}
+
+/**
+ * Upload a patient profile photo
+ */
+export async function uploadPatientPhoto(
+    patientId: string,
+    file: File
+): Promise<PatientPhotoUploadResponse> {
+    const formData = new FormData()
+    formData.append("patient_id", patientId)
+    formData.append("file", file)
+
+    return uploadFile<PatientPhotoUploadResponse>("/upload/patient-photo", formData)
 }

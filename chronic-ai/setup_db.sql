@@ -135,6 +135,7 @@ CREATE TABLE patients (
     phone_primary VARCHAR(20) NOT NULL,
     phone_secondary VARCHAR(20),
     email VARCHAR(255),
+    profile_photo_url VARCHAR(500),
     
     -- Address & Location
     address_street TEXT,

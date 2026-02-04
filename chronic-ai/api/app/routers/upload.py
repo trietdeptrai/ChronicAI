@@ -8,7 +8,9 @@ from uuid import UUID
 import tempfile
 import os
 from pathlib import Path
+import uuid
 
+from app.config import settings
 from app.db.database import get_supabase
 from app.services.ocr import extract_text
 from app.services.rag import ingest_document, ingest_image
@@ -180,6 +182,113 @@ async def upload_document(
         # Clean up temp file
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+@router.post("/patient-photo")
+async def upload_patient_photo(
+    patient_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    """
+    Upload a patient profile photo and update the patient record.
+    
+    Process:
+    1. Validate patient UUID and image type
+    2. Upload image to Supabase Storage
+    3. Update patients.profile_photo_url
+    """
+    # Validate file type
+    allowed_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+    file_ext = Path(file.filename).suffix.lower() if file.filename else ""
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+        )
+    
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+    
+    supabase = get_supabase()
+    
+    # Ensure patient exists
+    patient = supabase.table("patients").select("id").eq(
+        "id", str(patient_uuid)
+    ).single().execute()
+    
+    if not patient.data:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Upload to Supabase Storage
+    bucket = settings.patient_photo_bucket
+    unique_name = f"{uuid.uuid4()}{file_ext}"
+    storage_path = f"patients/{patient_uuid}/{unique_name}"
+    
+    content = await file.read()
+    content_type = file.content_type or "application/octet-stream"
+    
+    try:
+        upload_result = supabase.storage.from_(bucket).upload(
+            storage_path,
+            content,
+            file_options={
+                "content-type": content_type,
+                "upsert": "true"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+    
+    if isinstance(upload_result, dict) and upload_result.get("error"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload image: {upload_result['error']}"
+        )
+    
+    update_result = supabase.table("patients").update({
+        "profile_photo_url": storage_path
+    }).eq("id", str(patient_uuid)).execute()
+    
+    if not update_result.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update patient profile photo"
+        )
+
+    signed = supabase.storage.from_(bucket).create_signed_url(
+        storage_path,
+        settings.patient_photo_signed_url_ttl_seconds
+    )
+    signed_url = None
+    if isinstance(signed, dict):
+        signed_url = (
+            signed.get("signedURL")
+            or signed.get("signed_url")
+            or (signed.get("data") or {}).get("signedURL")
+            or (signed.get("data") or {}).get("signed_url")
+        )
+    
+    if not signed_url:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate signed URL for uploaded image"
+        )
+    
+    return JSONResponse(
+        status_code=201,
+        content={
+            "status": "success",
+            "patient_id": patient_id,
+            "profile_photo_url": signed_url,
+            "message": "Patient photo uploaded successfully"
+        }
+    )
 
 
 @router.post("/text")

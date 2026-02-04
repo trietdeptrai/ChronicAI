@@ -27,6 +27,7 @@ This document defines the comprehensive data fields for users (patients and doct
 | `phone_primary` | VARCHAR(20) | Yes | Primary contact number |
 | `phone_secondary` | VARCHAR(20) | No | Backup contact number |
 | `email` | VARCHAR(255) | No | Email address (optional for elderly) |
+| `profile_photo_url` | VARCHAR(500) | No | Storage path for profile photo (API returns signed URL) |
 
 ### Address & Location
 | Field | Type | Required | Description |
