@@ -135,6 +135,8 @@ class RecordType(str, Enum):
     lab = "lab"
     xray = "xray"
     ecg = "ecg"
+    ct = "ct"
+    mri = "mri"
     notes = "notes"
     referral = "referral"
 
@@ -249,6 +251,7 @@ class PatientBase(BaseModel):
     phone_primary: str = Field(..., max_length=20)
     phone_secondary: Optional[str] = Field(None, max_length=20)
     email: Optional[EmailStr] = None
+    profile_photo_url: Optional[str] = Field(None, max_length=500)
     
     # Address
     address_street: Optional[str] = None
@@ -306,6 +309,7 @@ class PatientUpdate(BaseModel):
     phone_primary: Optional[str] = Field(None, max_length=20)
     phone_secondary: Optional[str] = Field(None, max_length=20)
     email: Optional[EmailStr] = None
+    profile_photo_url: Optional[str] = Field(None, max_length=500)
     address_street: Optional[str] = None
     address_ward: Optional[str] = Field(None, max_length=100)
     address_district: Optional[str] = Field(None, max_length=100)

@@ -39,7 +39,7 @@ import logging
 import time
 
 from app.services.ollama_client import ollama_client
-from app.services.rag import get_patient_context
+from app.services.rag import get_patient_context, get_patient_record_image_attachments
 from app.services.llm import (
     translate_vi_to_en,
     translate_en_to_vi,
@@ -459,6 +459,18 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
     elapsed_6 = (time.perf_counter() - start_step_6) * 1000
     logger.info(f"[Orchestrator] Step 6: Took {elapsed_6:.1f} ms")
     logger.info(f"[Orchestrator] Step 6: Final response (Vi): {response_vi[:300]}..." if len(response_vi) > 300 else f"[Orchestrator] Step 6: Final response (Vi): {response_vi}")
+
+    attachments = []
+    if matched_patients:
+        for patient in matched_patients:
+            patient_attachments = await get_patient_record_image_attachments(
+                patient_id=UUID(patient.id),
+                patient_name=patient.name,
+                limit=2
+            )
+            if patient_attachments:
+                attachments.extend(patient_attachments)
+        attachments = attachments[:6]
     
     yield {
         "stage": "complete",
@@ -466,7 +478,8 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
         "progress": 1.0,
         "response": response_vi,
         "response_en": response_en,
-        "mentioned_patients": mentioned_patients
+        "mentioned_patients": mentioned_patients,
+        "attachments": attachments
     }
     elapsed_total = (time.perf_counter() - start_total) * 1000
     logger.info(f"[Orchestrator] Pipeline total: Took {elapsed_total:.1f} ms")

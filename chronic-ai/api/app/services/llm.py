@@ -2,11 +2,11 @@
 Translation Sandwich Pipeline (LLM Service).
 
 Implements the three-step translation process:
-1. Vietnamese → English (Qwen 2.5)
+1. Vietnamese → English (VinAI Translate)
 2. Medical Reasoning (MedGemma 4B) with RAG context
-3. English → Vietnamese (Qwen 2.5)
+3. English → Vietnamese (VinAI Translate)
 
-Includes memory optimization through model unloading.
+VinAI Translate models are kept persistent for performance.
 """
 from typing import AsyncGenerator, Optional
 from uuid import UUID
@@ -77,11 +77,13 @@ Remember: You are a support tool, not a replacement for professional medical adv
 
 async def translate_vi_to_en(text: str) -> str:
     """
-    Translate Vietnamese to English using VietAI EnviT5.
-    
+    Translate Vietnamese to English using VinAI Translate.
+
+    Uses vinai/vinai-translate-vi2en model with caching and batch optimization.
+
     Args:
         text: Vietnamese text to translate
-        
+
     Returns:
         English translation
     """
@@ -90,11 +92,13 @@ async def translate_vi_to_en(text: str) -> str:
 
 async def translate_en_to_vi(text: str) -> str:
     """
-    Translate English to Vietnamese using VietAI EnviT5.
-    
+    Translate English to Vietnamese using VinAI Translate.
+
+    Uses vinai/vinai-translate-en2vi model with structure preservation.
+
     Args:
         text: English text to translate
-        
+
     Returns:
         Vietnamese translation
     """
@@ -185,10 +189,9 @@ async def process_medical_query(
         "progress": 0.25,
         "translation": query_en
     }
-    
-    # ========== Memory Optimization: Unload translator ==========
-    await transformers_client.unload_model()
-    
+
+    # Note: Translation models are kept persistent for performance
+
     # ========== STEP B: Medical Reasoning with RAG ==========
     yield {
         "stage": "retrieving_context",
@@ -314,9 +317,9 @@ Format the summary professionally for medical records."""
 
     # Translate prompt to English
     prompt_en = await translate_vi_to_en(summary_prompt)
-    
-    await transformers_client.unload_model()
-    
+
+    # Note: Translation models are kept persistent for performance
+
     # Generate summary with MedGemma
     summary_en = await ollama_client.generate(
         model=settings.medical_model,
@@ -350,7 +353,8 @@ async def check_system_health() -> dict:
         }
     
     models_status = {
-        "envit5_model": transformers_client.is_loaded(),
+        "vinai_vi2en": transformers_client.is_vi2en_loaded(),
+        "vinai_en2vi": transformers_client.is_en2vi_loaded(),
         "medical_model": await ollama_client.check_model_available(
             settings.medical_model
         ),

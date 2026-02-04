@@ -4,7 +4,7 @@
 import { cn } from "@/lib/utils"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Calendar, Phone, AlertCircle } from "lucide-react"
 import type { Patient } from "@/types"
 
@@ -48,6 +48,12 @@ export function PatientCard({ patient, onClick }: PatientCardProps) {
             <CardHeader className="pb-3">
                 <div className="flex items-start gap-3">
                     <Avatar className="h-12 w-12">
+                        {patient.profile_photo_url && (
+                            <AvatarImage
+                                src={patient.profile_photo_url}
+                                alt={patient.full_name}
+                            />
+                        )}
                         <AvatarFallback className="bg-primary/10 text-primary font-medium">
                             {initials}
                         </AvatarFallback>

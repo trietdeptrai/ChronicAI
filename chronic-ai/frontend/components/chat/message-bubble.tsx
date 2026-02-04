@@ -17,6 +17,8 @@ export function MessageBubble({ message, showEnglish = false }: MessageBubblePro
     const [copied, setCopied] = useState(false)
     const isUser = message.role === "user"
 
+    const attachments = message.attachments || []
+
     const handleCopy = async () => {
         await navigator.clipboard.writeText(message.content)
         setCopied(true)
@@ -58,6 +60,43 @@ export function MessageBubble({ message, showEnglish = false }: MessageBubblePro
                 <div className="text-sm leading-relaxed markdown-content">
                     <ReactMarkdown>{message.content}</ReactMarkdown>
                 </div>
+
+                {/* Attachments */}
+                {attachments.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                        {attachments.map((attachment, index) => {
+                            if (attachment.type !== "image") return null
+                            const captionParts = [
+                                attachment.title,
+                                attachment.record_type,
+                                attachment.patient_name,
+                                attachment.created_at ? formatDate(attachment.created_at) : undefined,
+                            ].filter(Boolean)
+                            const caption = captionParts.join(" • ")
+
+                            return (
+                                <div key={`${attachment.url}-${index}`} className="space-y-1">
+                                    <img
+                                        src={attachment.url}
+                                        alt={attachment.title || "Medical image"}
+                                        className="w-full max-w-[360px] rounded-lg border border-border/60 object-contain"
+                                        loading="lazy"
+                                    />
+                                    {caption && (
+                                        <p
+                                            className={cn(
+                                                "text-xs",
+                                                isUser ? "text-primary-foreground/70" : "text-muted-foreground"
+                                            )}
+                                        >
+                                            {caption}
+                                        </p>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
 
                 {/* Show English translation if available */}
                 {showEnglish && message.content_en && (
@@ -102,5 +141,17 @@ function formatTime(timestamp: string): string {
     return new Date(timestamp).toLocaleTimeString("vi-VN", {
         hour: "2-digit",
         minute: "2-digit",
+    })
+}
+
+function formatDate(timestamp: string): string {
+    const date = new Date(timestamp)
+    if (Number.isNaN(date.getTime())) {
+        return timestamp
+    }
+    return date.toLocaleDateString("vi-VN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
     })
 }
