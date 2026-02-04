@@ -15,7 +15,10 @@ A local-first telemedicine application for chronic patients and grassroots/distr
 - **Backend**: FastAPI + Python 3.11+
 - **Frontend**: Next.js 14 + Shadcn/UI
 - **Database**: Supabase (PostgreSQL + pgvector)
-- **AI Models**: MedGemma 4B, Qwen 2.5 1.5B, nomic-embed-text
+- **AI Models**: 
+  - Medical Reasoning: MedGemma 4B (Ollama)
+  - Translation: VietAI EnviT5 (HuggingFace Transformers)
+  - Embeddings: nomic-embed-text (Ollama)
 - **OCR**: PaddleOCR
 
 ## Setup
@@ -24,8 +27,9 @@ A local-first telemedicine application for chronic patients and grassroots/distr
 
 - Python 3.11+
 - Node.js 18+
-- Ollama installed
+- Ollama installed (for MedGemma and embeddings)
 - Supabase account
+- CUDA-compatible GPU recommended (or CPU fallback)
 
 ### 1. Set up Ollama Models
 

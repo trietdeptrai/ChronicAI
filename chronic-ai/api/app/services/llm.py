@@ -11,12 +11,16 @@ Includes memory optimization through model unloading.
 from typing import AsyncGenerator, Optional
 from uuid import UUID
 import base64
+import logging
+import time
 from pathlib import Path
 
 from app.services.ollama_client import ollama_client
+from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.config import settings
 
+logger = logging.getLogger(__name__)
 
 # System prompts for translation
 VI_TO_EN_SYSTEM = """You are a professional medical translator. 
@@ -60,12 +64,20 @@ IMPORTANT GUIDELINES:
 - Explain medical concepts in simple terms when addressing patients
 - Include relevant warnings about symptoms that require urgent care
 
+CRITICAL - HANDLING MISSING DATA:
+- NEVER output placeholder text like [Insert...], [TODO], [N/A], [Date unknown], etc.
+- NEVER use bracket notation to indicate missing information
+- If specific data is not available in the provided context, state it naturally
+- Example: Instead of "[Insert Last Checkup Date]", say "This information is not available in your records"
+- Only answer based on information actually present in the patient context
+- If important data is missing, suggest checking with the healthcare provider
+
 Remember: You are a support tool, not a replacement for professional medical advice."""
 
 
 async def translate_vi_to_en(text: str) -> str:
     """
-    Translate Vietnamese to English using Qwen 2.5.
+    Translate Vietnamese to English using VietAI EnviT5.
     
     Args:
         text: Vietnamese text to translate
@@ -73,18 +85,12 @@ async def translate_vi_to_en(text: str) -> str:
     Returns:
         English translation
     """
-    response = await ollama_client.generate(
-        model=settings.translation_model,
-        prompt=text,
-        system=VI_TO_EN_SYSTEM,
-        stream=False
-    )
-    return response
+    return await transformers_client.translate_vi_to_en(text)
 
 
 async def translate_en_to_vi(text: str) -> str:
     """
-    Translate English to Vietnamese using Qwen 2.5.
+    Translate English to Vietnamese using VietAI EnviT5.
     
     Args:
         text: English text to translate
@@ -92,13 +98,7 @@ async def translate_en_to_vi(text: str) -> str:
     Returns:
         Vietnamese translation
     """
-    response = await ollama_client.generate(
-        model=settings.translation_model,
-        prompt=text,
-        system=EN_TO_VI_SYSTEM,
-        stream=False
-    )
-    return response
+    return await transformers_client.translate_en_to_vi(text)
 
 
 async def medical_reasoning(
@@ -146,9 +146,9 @@ async def process_medical_query(
     Full Translation Sandwich Pipeline with streaming.
     
     Steps:
-        A. Vietnamese → English (Qwen 2.5)
+        A. Vietnamese → English (VietAI EnviT5)
         B. Medical Reasoning (MedGemma 4B) + RAG Context
-        C. English → Vietnamese (Qwen 2.5)
+        C. English → Vietnamese (VietAI EnviT5)
     
     Yields:
         Dict with stage info and content for real-time UI updates
@@ -158,6 +158,7 @@ async def process_medical_query(
         patient_id: Patient UUID for context retrieval
         image_path: Optional path to medical image
     """
+    start_total = time.perf_counter()
     image_base64 = None
     
     # Load image if provided
@@ -173,8 +174,10 @@ async def process_medical_query(
         "message": "Đang dịch câu hỏi...",
         "progress": 0.1
     }
-    
+    start_step_a = time.perf_counter()
     query_en = await translate_vi_to_en(user_input_vi)
+    elapsed_a = (time.perf_counter() - start_step_a) * 1000
+    logger.info(f"[LLM] step_a_translate_input: Took {elapsed_a:.1f} ms")
     
     yield {
         "stage": "translating_input",
@@ -184,7 +187,7 @@ async def process_medical_query(
     }
     
     # ========== Memory Optimization: Unload translator ==========
-    await ollama_client.unload(settings.translation_model)
+    await transformers_client.unload_model()
     
     # ========== STEP B: Medical Reasoning with RAG ==========
     yield {
@@ -192,13 +195,16 @@ async def process_medical_query(
         "message": "Đang tìm kiếm hồ sơ y tế liên quan...",
         "progress": 0.35
     }
-    
+    start_step_b_context = time.perf_counter()
     # Get patient context via RAG
+    # Use original Vietnamese query for retrieval (records are primarily Vietnamese)
     patient_context = await get_patient_context(
         patient_id=patient_id,
-        query=query_en,
+        query=user_input_vi,
         max_chunks=10
     )
+    elapsed_b_context = (time.perf_counter() - start_step_b_context) * 1000
+    logger.info(f"[LLM] step_b_context: Took {elapsed_b_context:.1f} ms")
     
     yield {
         "stage": "medical_reasoning",
@@ -207,11 +213,14 @@ async def process_medical_query(
     }
     
     # Medical reasoning with MedGemma
+    start_step_b_reasoning = time.perf_counter()
     response_en = await medical_reasoning(
         query_en=query_en,
         patient_context=patient_context,
         image_base64=image_base64
     )
+    elapsed_b_reasoning = (time.perf_counter() - start_step_b_reasoning) * 1000
+    logger.info(f"[LLM] step_b_medical_reasoning: Took {elapsed_b_reasoning:.1f} ms")
     
     yield {
         "stage": "medical_reasoning",
@@ -229,8 +238,10 @@ async def process_medical_query(
         "message": "Đang dịch phản hồi sang tiếng Việt...",
         "progress": 0.85
     }
-    
+    start_step_c = time.perf_counter()
     response_vi = await translate_en_to_vi(response_en)
+    elapsed_c = (time.perf_counter() - start_step_c) * 1000
+    logger.info(f"[LLM] step_c_translate_output: Took {elapsed_c:.1f} ms")
     
     yield {
         "stage": "complete",
@@ -239,6 +250,8 @@ async def process_medical_query(
         "response": response_vi,
         "response_en": response_en  # Include English for doctor reference
     }
+    elapsed_total = (time.perf_counter() - start_total) * 1000
+    logger.info(f"[LLM] pipeline_total: Took {elapsed_total:.1f} ms")
 
 
 async def generate_clinical_summary(
@@ -302,7 +315,7 @@ Format the summary professionally for medical records."""
     # Translate prompt to English
     prompt_en = await translate_vi_to_en(summary_prompt)
     
-    await ollama_client.unload(settings.translation_model)
+    await transformers_client.unload_model()
     
     # Generate summary with MedGemma
     summary_en = await ollama_client.generate(
@@ -337,9 +350,7 @@ async def check_system_health() -> dict:
         }
     
     models_status = {
-        "translation_model": await ollama_client.check_model_available(
-            settings.translation_model
-        ),
+        "envit5_model": transformers_client.is_loaded(),
         "medical_model": await ollama_client.check_model_available(
             settings.medical_model
         ),

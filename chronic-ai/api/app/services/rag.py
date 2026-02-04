@@ -206,7 +206,7 @@ async def get_patient_context(
 - **Chẩn đoán chính**: {patient.get('primary_diagnosis', 'N/A')}
 - **Bệnh mãn tính**: {json.dumps(patient.get('chronic_conditions', []), ensure_ascii=False)}
 - **Thuốc đang dùng**: {json.dumps(patient.get('current_medications', []), ensure_ascii=False)}
-- **Dị ứng**: {', '.join(patient.get('allergies', []))}
+- **Dị ứng**: {', '.join(patient.get('allergies') or [])}
 """)
     
     # 2. Get recent vital signs
@@ -233,13 +233,39 @@ async def get_patient_context(
         similar_records = await search_similar_records(
             query=query,
             patient_id=patient_id,
-            top_k=max_chunks
+            top_k=max_chunks,
+            similarity_threshold=0.7
         )
-        
+
+        # Fallback: lower threshold if nothing matched
+        if not similar_records:
+            similar_records = await search_similar_records(
+                query=query,
+                patient_id=patient_id,
+                top_k=max_chunks,
+                similarity_threshold=0.5
+            )
+
         if similar_records:
             context_parts.append("\n## Hồ sơ y tế liên quan (Relevant Medical Records)")
             for record in similar_records:
                 context_parts.append(f"- {record.get('chunk_content', '')}")
+        else:
+            # Fallback to recent records if vector search yields nothing
+            records_result = supabase.table("medical_records").select(
+                "record_type, title, content_text, created_at"
+            ).eq("patient_id", str(patient_id)).order(
+                "created_at", desc=True
+            ).limit(5).execute()
+
+            if records_result.data:
+                context_parts.append("\n## Hồ sơ y tế gần đây (Recent Medical Records)")
+                for record in records_result.data:
+                    context_parts.append(
+                        f"- [{record.get('record_type', 'N/A')}] "
+                        f"{record.get('title', 'N/A')}: "
+                        f"{record.get('content_text', '')[:200]}..."
+                    )
     else:
         # Get recent records without query
         records_result = supabase.table("medical_records").select(
