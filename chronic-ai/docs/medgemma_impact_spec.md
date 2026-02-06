@@ -55,6 +55,7 @@ directly and the case is escalated to the doctor with an AI-generated summary.
 - Upload of PDFs/images/text to create medical records + embeddings.
 - Doctor patient list, patient detail, and record history.
 - Basic triage and escalation logic for urgent symptoms.
+- Imaging support in MVP: X-ray, ECG, CT, MRI.
 
 ## 6. What Is Implemented (Current App)
 Backend
@@ -104,6 +105,31 @@ Models:
 - HAI-DEF model for verification/safety (Gemma 2B instruct)
 - VinAI Translate (Vi<->En)
 - Nomic embed text for embeddings (Ollama)
+
+## 8.1 Image Understanding Pipeline
+Goal: Use MedSigLIP for image evaluation, then MedGemma for thorough analysis.
+
+Proposed flow:
+1. Image -> MedSigLIP -> embeddings/similarity against a curated findings taxonomy.
+2. Convert top-k findings into a structured "image findings" object.
+3. Merge image findings + RAG patient context + vitals.
+4. MedGemma generates the final analysis and patient-friendly explanation.
+
+Output artifacts:
+- Structured findings stored with the medical record.
+- Final narrative stored in consultation/analysis results.
+
+## 8.2 Deployment Strategy (Local-First + Optional API)
+- Default: local-first inference for privacy and offline capability.
+- Optional: remote API inference for heavy models when local compute is insufficient.
+- Guardrails: PHI handling, explicit consent, and clear labeling of when data leaves
+  the device/clinic.
+
+## 8.3 Phased Deployment Plan
+Phase 1: Local-only MVP for competition alignment and rapid iteration.
+Phase 2: Measure latency and resource usage; identify bottlenecks.
+Phase 3: Add optional API fallback for heavy models behind a feature flag.
+Phase 4: Keep local as default; require explicit consent when remote inference is used.
 
 ## 9. Success Metrics (Proposed)
 - Time saved per consultation (doctor note drafting).
