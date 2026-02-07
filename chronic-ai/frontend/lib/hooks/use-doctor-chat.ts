@@ -188,6 +188,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                         content: update.response,
                         content_en: update.response_en,
                         timestamp: new Date().toISOString(),
+                        attachments: update.attachments,
                     }
 
                     setState(prev => ({

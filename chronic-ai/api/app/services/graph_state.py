@@ -81,7 +81,10 @@ class DoctorOrchestratorState(TypedDict):
     query_vi: str  # Original Vietnamese query
     query_en: str  # Translated English query
     image_path: Optional[str]  # Path to uploaded image (if any)
-    image_base64: Optional[str]  # Base64 encoded image
+    image_base64: Optional[str]  # Base64 encoded image (user-uploaded)
+
+    # === Patient Record Images ===
+    patient_record_images_base64: List[str]  # Base64 encoded patient record images from DB
     
     # === Verification Stage ===
     verification_result: Optional[VerificationResult]
@@ -93,6 +96,7 @@ class DoctorOrchestratorState(TypedDict):
     matched_patients: List[PatientMatch]  # Resolved from database
     patient_context: str  # Aggregated context from RAG
     query_type: QueryType
+    record_attachments: List[dict]  # Signed image attachments for UI
     
     # === Medical Reasoning Stage ===
     reasoning_en: str  # Raw English response from MedGemma
@@ -172,7 +176,10 @@ def create_initial_doctor_state(
         query_en="",
         image_path=image_path,
         image_base64=None,
-        
+
+        # Patient record images
+        patient_record_images_base64=[],
+
         # Verification
         verification_result=None,
         input_confidence=0.0,
@@ -204,7 +211,10 @@ def create_initial_doctor_state(
         
         # HITL
         hitl_request=None,
-        hitl_response=None
+        hitl_response=None,
+
+        # Attachments
+        record_attachments=[]
     )
 
 

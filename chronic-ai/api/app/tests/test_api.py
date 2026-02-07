@@ -56,6 +56,14 @@ class TestUploadEndpoints:
         })
         assert response.status_code == 422
 
+    def test_upload_patient_record_image_requires_file(self, client):
+        """Upload patient record image endpoint requires file."""
+        response = client.post("/upload/patient-record-image", data={
+            "patient_id": "test",
+            "record_type": "xray"
+        })
+        assert response.status_code == 422
+
 
 class TestChatEndpoints:
     """Tests for chat endpoints."""
