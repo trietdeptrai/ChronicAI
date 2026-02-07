@@ -1,0 +1,40 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Database
+supabase>=2.10.0
+psycopg2-binary==2.9.9
+
+# AI/ML
+# ollama package not needed - using httpx directly to call Ollama API
+
+# LangGraph for orchestration with HITL
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-community>=0.3.0
+
+# HuggingFace Transformers for EnviT5 Translation
+transformers>=4.35.0
+torch>=2.1.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+accelerate>=0.25.0
+
+# OCR - Optional, install separately if needed:
+# pip install paddleocr pdf2image
+# PaddleOCR requires native dependencies that may fail on some systems
+pdf2image==1.17.0
+pillow==10.2.0
+
+# Utilities
+# httpx version managed by supabase dependency
+python-multipart==0.0.6
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.4
+numpy==1.26.3
+email-validator>=2.0.0
