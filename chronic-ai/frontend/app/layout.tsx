@@ -1,33 +1,27 @@
-import type { Metadata } from "next"
-import { Inter } from "next/font/google"
-import "./globals.css"
-import { QueryProvider, AuthProvider } from "@/contexts"
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+import { QueryProvider } from "@/contexts/query-provider";
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin", "vietnamese"],
-})
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ChronicAI - Hệ thống Y tế Từ xa",
-  description: "Ứng dụng telemedicine hỗ trợ quản lý bệnh mãn tính cho bệnh nhân và bác sĩ tuyến cơ sở tại Việt Nam",
-  keywords: ["telemedicine", "chronic disease", "Vietnam", "healthcare", "AI"],
-}
+  title: "MediCare Pro - Chronic Care Management",
+  description: "Remote Chronic Disease Management System",
+};
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode
+  children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" suppressHydrationWarning>
-      <body className={`${inter.variable} font-sans antialiased`}>
+    <html lang="en">
+      <body className={inter.className}>
         <QueryProvider>
-          <AuthProvider>
-            {children}
-          </AuthProvider>
+          {children}
         </QueryProvider>
       </body>
     </html>
-  )
+  );
 }
