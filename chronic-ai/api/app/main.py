@@ -6,17 +6,51 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import upload_router, chat_router, doctor_router
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle - preload translation models once."""
+    # Startup: preload translation models
+    logger.info("=" * 50)
+    logger.info("SERVER STARTING - Preloading translation models...")
+    logger.info("=" * 50)
+
+    try:
+        from app.services.transformers_client import transformers_client
+
+        # Preload both models at startup (not on first request)
+        await transformers_client._ensure_vi2en_loaded()
+        await transformers_client._ensure_en2vi_loaded()
+
+        logger.info("=" * 50)
+        logger.info("Translation models loaded successfully!")
+        logger.info("=" * 50)
+    except Exception as e:
+        logger.warning(f"Failed to preload translation models: {e}")
+        logger.warning("Models will load on first request instead")
+
+    yield  # Server runs here
+
+    # Shutdown
+    logger.info("Server shutting down...")
+
 
 app = FastAPI(
     title="ChronicAI API",
     description="Local-first telemedicine application for chronic patients and doctors in Vietnam",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # Configure CORS

@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
+    patient_photo_bucket: str = "patient-photos"
+    patient_photo_signed_url_ttl_seconds: int = 3600
 
     # Ollama Configuration
     ollama_host: str = "http://localhost:11434"
@@ -27,9 +29,24 @@ class Settings(BaseSettings):
     hitl_confidence_threshold: float = 0.7  # Below this, request clarification
     hitl_safety_threshold: float = 0.8  # Below (1.0 - this), require safety review
 
-    # EnviT5 Translation Model (HuggingFace)
-    envit5_model: str = "VietAI/envit5-translation"
-    envit5_device: str = "cuda"  # or "cpu" if no GPU available
+    # VinAI Translate Models (HuggingFace) - State-of-the-art Vi-En translation
+    # Higher BLEU scores than EnviT5, especially for medical domain
+    vinai_vi2en_model: str = "vinai/vinai-translate-vi2en"
+    vinai_en2vi_model: str = "vinai/vinai-translate-en2vi"
+    # Device options: "auto" (recommended), "mps" (Apple Silicon), "cuda" (NVIDIA), "cpu"
+    translation_device: str = "auto"
+
+    # Translation Performance Settings
+    translation_cache_enabled: bool = True
+    translation_cache_max_size: int = 2000  # LRU cache entries
+    translation_cache_ttl: float = 7200.0  # 2 hours TTL
+    translation_batch_size: int = 8  # Max texts per batch
+    translation_adaptive_beams: bool = True  # Use fewer beams for short texts
+    translation_short_text_threshold: int = 50  # tokens - below this use 3 beams
+
+    # Deprecated: EnviT5 settings (kept for backward compatibility)
+    envit5_model: str = "VietAI/envit5-translation"  # deprecated
+    envit5_device: str = "auto"  # deprecated
 
     embedding_model: str = "nomic-embed-text"
 

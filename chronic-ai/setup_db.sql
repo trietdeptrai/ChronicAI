@@ -67,7 +67,16 @@ CREATE TYPE glucose_timing AS ENUM ('fasting', 'before_meal', 'after_meal', 'ran
 CREATE TYPE vital_source AS ENUM ('self_reported', 'clinic', 'hospital', 'device');
 
 -- Medical record types
-CREATE TYPE record_type AS ENUM ('prescription', 'lab', 'xray', 'ecg', 'notes', 'referral');
+CREATE TYPE record_type AS ENUM (
+    'prescription',
+    'lab',
+    'xray',
+    'ecg',
+    'ct',
+    'mri',
+    'notes',
+    'referral'
+);
 
 -- Consultation status
 CREATE TYPE consultation_status AS ENUM ('triage', 'urgent', 'stable', 'resolved', 'cancelled');
@@ -135,6 +144,7 @@ CREATE TABLE patients (
     phone_primary VARCHAR(20) NOT NULL,
     phone_secondary VARCHAR(20),
     email VARCHAR(255),
+    profile_photo_url VARCHAR(500),
     
     -- Address & Location
     address_street TEXT,
