@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
 import { User, Bot, Copy, Check } from "lucide-react"
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/button"
 import ReactMarkdown from "react-markdown"
 
 interface MessageBubbleProps {
