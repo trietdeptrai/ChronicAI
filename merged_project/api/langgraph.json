@@ -1,8 +1,0 @@
-{
-  "dependencies": ["."],
-  "graphs": {
-    "doctor_graph": "./app/services/doctor_graph.py:get_doctor_graph"
-  },
-  "env": ".env",
-  "python_version": "3.11"
-}
