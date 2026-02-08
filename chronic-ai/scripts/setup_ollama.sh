@@ -5,9 +5,9 @@ echo "🏥 Setting up Ollama models for ChronicAI..."
 echo "📥 Pulling MedGemma 4B..."
 ollama pull alibayram/medgemma:4b
 
-# Translation model
-echo "📥 Pulling Qwen 2.5 1.5B for translation..."
-ollama pull qwen2.5:1.5b
+# Verification model
+echo "📥 Pulling Gemma 2B (instruct) for verification..."
+ollama pull gemma:2b-instruct
 
 # Embedding model
 echo "📥 Pulling nomic-embed-text..."

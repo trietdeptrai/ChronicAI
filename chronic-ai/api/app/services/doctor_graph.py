@@ -1056,6 +1056,94 @@ def get_doctor_graph():
     return _doctor_graph
 
 
+# ============================================================================
+# VISUALIZATION UTILITIES (LangChain Graph API)
+# ============================================================================
+
+def get_doctor_graph_mermaid(
+    *,
+    with_styles: bool = True,
+    wrap_label_n_words: int = 9,
+    curve_style=None,
+    node_colors=None,
+    frontmatter_config: Optional[dict] = None,
+) -> str:
+    """
+    Return a Mermaid diagram for the doctor graph.
+
+    Args:
+        with_styles: Include default styles in Mermaid output.
+        wrap_label_n_words: Wrap long labels every N words.
+        curve_style: Optional CurveStyle enum from langchain_core.runnables.graph.
+        node_colors: Optional NodeStyles from langchain_core.runnables.graph.
+        frontmatter_config: Optional Mermaid frontmatter config dict.
+    """
+    graph = get_doctor_graph()
+    graph_view = graph.get_graph()
+
+    draw_kwargs = {
+        "with_styles": with_styles,
+        "wrap_label_n_words": wrap_label_n_words,
+    }
+    if curve_style is not None:
+        draw_kwargs["curve_style"] = curve_style
+    if node_colors is not None:
+        draw_kwargs["node_colors"] = node_colors
+    if frontmatter_config is not None:
+        draw_kwargs["frontmatter_config"] = frontmatter_config
+
+    return graph_view.draw_mermaid(**draw_kwargs)
+
+
+def save_doctor_graph_png(
+    output_path: Path,
+    *,
+    with_styles: bool = True,
+    wrap_label_n_words: int = 9,
+    curve_style=None,
+    node_colors=None,
+    frontmatter_config: Optional[dict] = None,
+    draw_method=None,
+    background_color: str = "white",
+    padding: int = 10,
+) -> Path:
+    """
+    Render the doctor graph to a PNG file using Mermaid rendering.
+
+    Args:
+        output_path: Where to write the PNG.
+        with_styles: Include default styles in Mermaid output.
+        wrap_label_n_words: Wrap long labels every N words.
+        curve_style: Optional CurveStyle enum from langchain_core.runnables.graph.
+        node_colors: Optional NodeStyles from langchain_core.runnables.graph.
+        frontmatter_config: Optional Mermaid frontmatter config dict.
+        draw_method: Optional MermaidDrawMethod enum (API/PYPPETEER).
+        background_color: PNG background color.
+        padding: PNG padding in pixels.
+    """
+    graph = get_doctor_graph()
+    graph_view = graph.get_graph()
+
+    draw_kwargs = {
+        "output_file_path": str(output_path),
+        "with_styles": with_styles,
+        "wrap_label_n_words": wrap_label_n_words,
+        "background_color": background_color,
+        "padding": padding,
+    }
+    if curve_style is not None:
+        draw_kwargs["curve_style"] = curve_style
+    if node_colors is not None:
+        draw_kwargs["node_colors"] = node_colors
+    if frontmatter_config is not None:
+        draw_kwargs["frontmatter_config"] = frontmatter_config
+    if draw_method is not None:
+        draw_kwargs["draw_method"] = draw_method
+
+    graph_view.draw_mermaid_png(**draw_kwargs)
+    return output_path
+
+
 async def process_doctor_query_graph(
     query_vi: str,
     image_path: Optional[str] = None,

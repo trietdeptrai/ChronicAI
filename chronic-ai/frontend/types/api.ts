@@ -2,6 +2,8 @@
  * API response types
  */
 
+import type { VitalSign } from "./patient"
+
 export interface ApiError {
     code: string
     message: string
@@ -49,9 +51,16 @@ export interface MedicalRecord {
     is_verified?: boolean
     created_at: string
     image_url?: string
+    file_url?: string
+    file_kind?: "image" | "pdf"
 }
 
 export interface MedicalRecordsResponse {
     patient_id: string
     records: MedicalRecord[]
+}
+
+export interface VitalSignCreateResponse {
+    status: string
+    vital: VitalSign
 }

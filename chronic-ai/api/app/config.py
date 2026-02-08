@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     # Model Configuration
     medical_model: str = "thiagomoraes/medgemma-1.5-4b-it:Q8_0"
 
-    # Verification Model (Gemma 2B quantized for input validation)
-    verification_model: str = "gemma:2b-instruct-q4_K_M"
+    # Verification Model (Gemma 2B instruct for input validation + safety checks)
+    verification_model: str = "gemma:2b-instruct"
 
     # Human-in-the-Loop Configuration
     enable_hitl: bool = True
