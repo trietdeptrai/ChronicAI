@@ -11,8 +11,18 @@ import {
     getDashboardStats,
     uploadPatientPhoto,
     uploadPatientRecordImage,
+    getPatientVitals,
+    createPatientVital,
 } from "@/lib/api"
-import type { PatientListResponse, PatientDetailResponse, MedicalRecordsResponse, DashboardStats } from "@/types"
+import type {
+    PatientListResponse,
+    PatientDetailResponse,
+    MedicalRecordsResponse,
+    DashboardStats,
+    VitalSignsResponse,
+    VitalSignCreateResponse,
+    VitalSignInput,
+} from "@/types"
 
 interface UsePatientParams {
     page?: number
@@ -50,6 +60,17 @@ export function usePatientRecords(patientId: string, recordType?: string, limit?
     return useQuery<MedicalRecordsResponse>({
         queryKey: ["patients", patientId, "records", recordType, limit],
         queryFn: () => getPatientRecords(patientId, recordType, limit),
+        enabled: !!patientId,
+    })
+}
+
+/**
+ * Hook for fetching patient vital signs
+ */
+export function usePatientVitals(patientId: string, limit = 30) {
+    return useQuery<VitalSignsResponse>({
+        queryKey: ["patients", patientId, "vitals", limit],
+        queryFn: () => getPatientVitals(patientId, limit),
         enabled: !!patientId,
     })
 }
@@ -120,6 +141,21 @@ export function useUploadPatientRecordImage() {
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+        },
+    })
+}
+
+/**
+ * Hook for creating a new vital sign entry
+ */
+export function useCreateVitalSign() {
+    const queryClient = useQueryClient()
+
+    return useMutation<VitalSignCreateResponse, Error, { patientId: string; data: VitalSignInput }>({
+        mutationFn: ({ patientId, data }) => createPatientVital(patientId, data),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
         },
     })
 }

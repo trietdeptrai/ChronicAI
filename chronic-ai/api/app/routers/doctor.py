@@ -1,6 +1,8 @@
 """
 Doctor Router - Endpoints for doctor-specific functionality.
 """
+from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
@@ -8,7 +10,7 @@ from uuid import UUID
 
 from app.db.database import get_supabase
 from app.config import settings
-from app.models.schemas import RecordType
+from app.models.schemas import RecordType, VitalSource, GlucoseTiming
 from app.services.llm import generate_clinical_summary
 
 
@@ -26,6 +28,22 @@ class ClinicalSummaryResponse(BaseModel):
     consultation_id: str
     patient_id: str
     summary: str
+
+
+class VitalSignCreateRequest(BaseModel):
+    """Request to create a new vital sign entry."""
+    recorded_at: Optional[datetime] = None
+    recorded_by: Optional[str] = None
+    blood_pressure_systolic: Optional[int] = None
+    blood_pressure_diastolic: Optional[int] = None
+    heart_rate: Optional[int] = None
+    blood_glucose: Optional[float] = None
+    blood_glucose_timing: Optional[GlucoseTiming] = None
+    temperature: Optional[float] = None
+    oxygen_saturation: Optional[int] = None
+    weight_kg: Optional[float] = None
+    notes: Optional[str] = None
+    source: Optional[VitalSource] = None
 
 
 @router.post("/summary", response_model=ClinicalSummaryResponse)
@@ -204,6 +222,94 @@ async def get_patient_detail(patient_id: str):
     }
 
 
+@router.get("/patients/{patient_id}/vitals")
+async def get_patient_vitals(
+    patient_id: str,
+    limit: int = Query(30, ge=1, le=200)
+):
+    """
+    Get recent vital signs for a patient.
+    
+    Args:
+        patient_id: Patient UUID
+        limit: Maximum number of vitals to return
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+    
+    supabase = get_supabase()
+    
+    vitals = supabase.table("vital_signs").select("*").eq(
+        "patient_id", str(patient_uuid)
+    ).order("recorded_at", desc=True).limit(limit).execute()
+    
+    return {
+        "patient_id": patient_id,
+        "vitals": vitals.data or []
+    }
+
+
+@router.post("/patients/{patient_id}/vitals")
+async def create_patient_vital(
+    patient_id: str,
+    request: VitalSignCreateRequest
+):
+    """
+    Create a new vital sign entry for a patient.
+    
+    Validates that at least one measurement is provided.
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+    
+    # Ensure at least one measurement is present
+    measurements = [
+        request.blood_pressure_systolic,
+        request.blood_pressure_diastolic,
+        request.heart_rate,
+        request.blood_glucose,
+        request.temperature,
+        request.oxygen_saturation,
+        request.weight_kg
+    ]
+    if all(value is None for value in measurements):
+        raise HTTPException(
+            status_code=400,
+            detail="At least one vital measurement is required"
+        )
+    
+    supabase = get_supabase()
+    
+    data = request.model_dump(exclude_none=True)
+    data["patient_id"] = str(patient_uuid)
+    data.setdefault("source", VitalSource.self_reported.value)
+
+    if isinstance(data.get("source"), VitalSource):
+        data["source"] = data["source"].value
+    if isinstance(data.get("blood_glucose_timing"), GlucoseTiming):
+        data["blood_glucose_timing"] = data["blood_glucose_timing"].value
+    
+    if isinstance(data.get("recorded_at"), datetime):
+        data["recorded_at"] = data["recorded_at"].isoformat()
+    
+    result = supabase.table("vital_signs").insert(data).execute()
+    
+    if not result.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create vital sign entry"
+        )
+    
+    return {
+        "status": "success",
+        "vital": result.data[0]
+    }
+
+
 @router.get("/patients/{patient_id}/records")
 async def get_patient_records(
     patient_id: str,
@@ -261,7 +367,12 @@ async def get_patient_records(
                     or (signed.get("data") or {}).get("signed_url")
                 )
             if signed_url:
-                record["image_url"] = signed_url
+                ext = Path(image_path).suffix.lower()
+                file_kind = "pdf" if ext == ".pdf" else "image"
+                record["file_url"] = signed_url
+                record["file_kind"] = file_kind
+                if file_kind == "image":
+                    record["image_url"] = signed_url
         record.pop("image_path", None)
     
     return {

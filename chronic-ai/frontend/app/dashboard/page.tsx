@@ -254,7 +254,7 @@ export default function DashboardPage() {
                                 }
                             </p>
                             <p className="text-sm text-gray-400">
-                                Được hỗ trợ bởi MedGemma & Qwen 2.5
+                                Được hỗ trợ bởi MedGemma
                             </p>
                         </div>
                     </div>

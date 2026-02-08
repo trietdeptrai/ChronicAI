@@ -17,6 +17,7 @@ A local-first telemedicine application for chronic patients and grassroots/distr
 - **Database**: Supabase (PostgreSQL + pgvector)
 - **AI Models**: 
   - Medical Reasoning: MedGemma 4B (Ollama)
+  - Verification: Gemma 2B Instruct (Ollama)
   - Translation: VietAI EnviT5 (HuggingFace Transformers)
   - Embeddings: nomic-embed-text (Ollama)
 - **OCR**: PaddleOCR

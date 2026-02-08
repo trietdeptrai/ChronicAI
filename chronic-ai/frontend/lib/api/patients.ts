@@ -11,6 +11,9 @@ import type {
     DashboardStats,
     PatientPhotoUploadResponse,
     UploadResponse,
+    VitalSignCreateResponse,
+    VitalSignInput,
+    VitalSignsResponse,
 } from "@/types"
 
 interface ListPatientsParams {
@@ -63,6 +66,30 @@ export async function getPatientRecords(
     const endpoint = `/doctor/patients/${patientId}/records${queryString ? `?${queryString}` : ""}`
 
     return apiClient<MedicalRecordsResponse>(endpoint)
+}
+
+/**
+ * Get vital signs for a patient
+ */
+export async function getPatientVitals(
+    patientId: string,
+    limit = 30
+): Promise<VitalSignsResponse> {
+    const endpoint = `/doctor/patients/${patientId}/vitals?limit=${limit}`
+    return apiClient<VitalSignsResponse>(endpoint)
+}
+
+/**
+ * Create a new vital sign entry
+ */
+export async function createPatientVital(
+    patientId: string,
+    payload: VitalSignInput
+): Promise<VitalSignCreateResponse> {
+    return apiClient<VitalSignCreateResponse>(`/doctor/patients/${patientId}/vitals`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+    })
 }
 
 /**

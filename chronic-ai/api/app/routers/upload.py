@@ -137,36 +137,35 @@ async def upload_document(
         
         supabase = get_supabase()
         
-        # Upload image files to Supabase Storage
+        # Upload files (PDFs and images) to Supabase Storage for record viewing
         image_path = None
-        if file_ext != ".pdf":
-            bucket = settings.patient_photo_bucket
-            unique_name = f"{uuid.uuid4()}{file_ext}"
-            storage_path = f"records/{patient_uuid}/{unique_name}"
-            content_type = file.content_type or "application/octet-stream"
-            
-            try:
-                upload_result = supabase.storage.from_(bucket).upload(
-                    storage_path,
-                    content,
-                    file_options={
-                        "content-type": content_type,
-                        "upsert": "true"
-                    }
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to upload image: {str(e)}"
-                )
-            
-            if isinstance(upload_result, dict) and upload_result.get("error"):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to upload image: {upload_result['error']}"
-                )
-            
-            image_path = storage_path
+        bucket = settings.patient_photo_bucket
+        unique_name = f"{uuid.uuid4()}{file_ext}"
+        storage_path = f"records/{patient_uuid}/{unique_name}"
+        content_type = file.content_type or ("application/pdf" if file_ext == ".pdf" else "application/octet-stream")
+        
+        try:
+            upload_result = supabase.storage.from_(bucket).upload(
+                storage_path,
+                content,
+                file_options={
+                    "content-type": content_type,
+                    "upsert": "true"
+                }
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file: {str(e)}"
+            )
+        
+        if isinstance(upload_result, dict) and upload_result.get("error"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file: {upload_result['error']}"
+            )
+        
+        image_path = storage_path
         
         # Create medical record entry
         record_data = {

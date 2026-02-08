@@ -8,7 +8,7 @@ class TestTranslationSandwich:
     """Tests for translation sandwich pipeline - requires Ollama running."""
     
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Requires Ollama with qwen2.5:1.5b")
+    @pytest.mark.skip(reason="Requires translation models")
     async def test_vi_to_en_translation(self):
         """Vietnamese to English translation works."""
         from app.services.llm import translate_vi_to_en
@@ -19,7 +19,7 @@ class TestTranslationSandwich:
         assert any(word in result.lower() for word in ["hello", "headache", "head", "pain"])
     
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Requires Ollama with qwen2.5:1.5b")
+    @pytest.mark.skip(reason="Requires translation models")
     async def test_en_to_vi_translation(self):
         """English to Vietnamese translation works."""
         from app.services.llm import translate_en_to_vi

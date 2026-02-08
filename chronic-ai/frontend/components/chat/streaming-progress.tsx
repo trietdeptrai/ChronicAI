@@ -15,19 +15,26 @@ interface StreamingProgressProps {
 
 // Patient-specific chat stages
 const patientStages = [
+    { id: "starting", label: "Bắt đầu", icon: CheckCircle },
     { id: "translating_input", label: "Dịch sang tiếng Anh", icon: Languages },
+    { id: "verifying_input", label: "Kiểm tra câu hỏi", icon: Search },
     { id: "retrieving_context", label: "Tìm kiếm hồ sơ", icon: Search },
     { id: "medical_reasoning", label: "Phân tích y tế", icon: Brain },
+    { id: "formatting_output", label: "Định dạng kết quả", icon: CheckCircle },
     { id: "translating_output", label: "Dịch sang tiếng Việt", icon: Languages },
 ]
 
 // Doctor orchestrator stages
 const doctorStages = [
+    { id: "starting", label: "Bắt đầu", icon: CheckCircle },
     { id: "translating_input", label: "Dịch sang tiếng Anh", icon: Languages },
+    { id: "verifying_input", label: "Kiểm tra câu hỏi", icon: Search },
     { id: "extracting_patients", label: "Xác định bệnh nhân", icon: Users },
     { id: "resolving_patients", label: "Tìm hồ sơ bệnh nhân", icon: Search },
     { id: "retrieving_context", label: "Tổng hợp thông tin", icon: Search },
     { id: "medical_reasoning", label: "Phân tích y tế", icon: Brain },
+    { id: "safety_check", label: "Kiểm tra an toàn", icon: CheckCircle },
+    { id: "formatting_output", label: "Định dạng kết quả", icon: CheckCircle },
     { id: "translating_output", label: "Dịch sang tiếng Việt", icon: Languages },
 ]
 
@@ -35,10 +42,23 @@ const doctorStages = [
 export function StreamingProgress({ stage, progress, message }: StreamingProgressProps) {
     if (!stage || stage === "complete") return null
 
+    const stageAlias: Record<string, string> = {
+        translated_input: "translating_input",
+        verified_input: "verifying_input",
+        extracted_patients: "extracting_patients",
+        resolved_patients: "resolving_patients",
+        retrieved_context: "retrieving_context",
+        reasoned: "medical_reasoning",
+        safety_checked: "safety_check",
+        formatted: "formatting_output",
+    }
+
+    const normalizedStage = stageAlias[stage] || stage
+
     // Determine which stage set to use based on current stage
-    const isDoctorMode = stage === "extracting_patients" || stage === "resolving_patients"
+    const isDoctorMode = doctorStages.some(s => s.id === normalizedStage)
     const stages = isDoctorMode ? doctorStages : patientStages
-    const currentStageIndex = stages.findIndex(s => s.id === stage)
+    const currentStageIndex = stages.findIndex(s => s.id === normalizedStage)
 
     return (
         <div className="p-4 bg-muted/50 rounded-lg border border-border/50 animate-in fade-in duration-300">
@@ -52,7 +72,7 @@ export function StreamingProgress({ stage, progress, message }: StreamingProgres
             {/* Progress Steps */}
             <div className="space-y-2">
                 {stages.map((s, index) => {
-                    const isActive = s.id === stage
+                    const isActive = s.id === normalizedStage
                     const isCompleted = index < currentStageIndex
                     const isPending = index > currentStageIndex
 

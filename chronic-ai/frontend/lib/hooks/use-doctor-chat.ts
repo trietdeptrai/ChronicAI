@@ -126,6 +126,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
         try {
             let finalResponse = ""
             let mentionedPatients: PatientMention[] = []
+            let didComplete = false
 
             for await (const update of sendDoctorChatStreaming(message, imagePath)) {
                 onStreamUpdate?.(update)
@@ -151,6 +152,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                 const extendedUpdate = update as DoctorChatStreamUpdate & {
                     safety_score?: number
                     hitl_request?: HITLRequest
+                    thread_id?: string
                 }
 
                 if (extendedUpdate.safety_score !== undefined) {
@@ -162,6 +164,12 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                         ...prev,
                         safetyScore: score,
                         safetyLevel,
+                    }))
+                }
+                if (extendedUpdate.thread_id) {
+                    setState(prev => ({
+                        ...prev,
+                        threadId: extendedUpdate.thread_id,
                     }))
                 }
 
@@ -180,6 +188,10 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                 }
 
                 if (update.stage === "complete" && update.response) {
+                    if (didComplete) {
+                        continue
+                    }
+                    didComplete = true
                     finalResponse = update.response
 
                     const assistantMessage: ChatMessage = {
