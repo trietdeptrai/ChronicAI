@@ -6,6 +6,18 @@
 
 ## Bug Fixes
 
+### 2026-02-07: Fixed TypeScript error for lucide-react missing declarations
+
+**Symptom**: TypeScript error "Could not find a declaration file for module 'lucide-react'" in frontend components (e.g. message-bubble.tsx).
+
+**Root Cause**: Installed `lucide-react@0.563.0` package does not include its published `.d.ts` in `node_modules/dist`, so TS can’t resolve types.
+
+**Fix Applied**:
+1. Added a local declaration file with real icon/component typings to satisfy TypeScript.
+
+**Files Changed**:
+- `frontend/types/lucide-react.d.ts`
+
 ### 2026-01-30: Fixed `__init__() got an unexpected keyword argument 'proxy'` error
 
 **Symptom**: Patient chatbot displayed error "Lỗi: __init__() got an unexpected keyword argument 'proxy'" when sending messages.
