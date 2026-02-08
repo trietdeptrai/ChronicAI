@@ -1,40 +1,41 @@
 /**
- * Chat placeholder route for sidebar navigation
+ * Chat page
  */
 "use client"
 
-import Link from "next/link"
 import { useAuth } from "@/contexts"
 import { PageHeader } from "@/components/shared"
-import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { MessageSquare, ArrowRight } from "lucide-react"
+import { ChatInterface, DoctorChatInterface } from "@/components/chat"
+import { Card } from "@/components/ui/card"
 
 export default function ChatPage() {
-    const { role } = useAuth()
+    const { role, user } = useAuth()
+    const isDoctor = role === "doctor"
 
+    // For patients, show patient-specific chat with their own ID
+    if (!isDoctor && user?.id) {
+        return (
+            <div className="h-[calc(100vh-theme(spacing.16))]">
+                <Card className="h-full">
+                    <ChatInterface
+                        patientId={user.id}
+                        patientName="Tài khoản của tôi"
+                    />
+                </Card>
+            </div>
+        )
+    }
+
+    // For doctors, show the orchestrator chat (no patient pre-selection needed)
     return (
-        <div className="space-y-6">
+        <div className="h-[calc(100vh-theme(spacing.16))]">
             <PageHeader
-                title="AI Chat"
-                description="Điểm vào hội thoại AI được kết nối backend"
+                title="Trợ lý Bác sĩ AI"
+                description="Hỏi về bất kỳ bệnh nhân nào - không cần chọn trước"
             />
 
-            <Card>
-                <CardContent className="p-8 text-center">
-                    <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-                    <p className="text-sm text-muted-foreground mb-4">
-                        {role === "doctor"
-                            ? "Chọn một bệnh nhân để bắt đầu trao đổi AI dựa trên hồ sơ."
-                            : "Bạn có thể mở hồ sơ để xem lịch sử và trao đổi liên quan điều trị."}
-                    </p>
-                    <Button asChild variant="outline">
-                        <Link href={role === "doctor" ? "/dashboard/patients" : "/dashboard/records"}>
-                            {role === "doctor" ? "Đến danh sách bệnh nhân" : "Đến hồ sơ của tôi"}
-                            <ArrowRight className="h-4 w-4 ml-1" />
-                        </Link>
-                    </Button>
-                </CardContent>
+            <Card className="h-[calc(100%-80px)]">
+                <DoctorChatInterface />
             </Card>
         </div>
     )
