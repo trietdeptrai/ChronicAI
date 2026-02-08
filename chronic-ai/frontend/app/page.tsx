@@ -1,15 +1,16 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Stethoscope, User } from "lucide-react";
+import { useAuth } from "@/contexts";
 
 export default function Home() {
   const router = useRouter();
+  const { setRole } = useAuth();
 
   const selectRole = (role: "doctor" | "patient") => {
-    // Store role selection in localStorage or state management
-    localStorage.setItem("userRole", role);
+    // Keep auth context and persistence in sync before navigating.
+    setRole(role);
     router.push("/dashboard");
   };
 
