@@ -32,7 +32,7 @@ class OllamaClient:
         Generate text using specified model.
         
         Args:
-            model: Model name (e.g., 'qwen2.5:1.5b', 'alibayram/medgemma:4b')
+            model: Model name (e.g., 'alibayram/medgemma:4b')
             prompt: User prompt
             system: Optional system prompt
             images: Optional list of base64-encoded images for multimodal models

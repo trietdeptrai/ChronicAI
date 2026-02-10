@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Calendar as CalendarIcon, Clock, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Appointment, timeSlots, appointmentTypes, mockAppointments } from '@/lib/data/appointmentData';
-import { format, addDays, startOfWeek, isSameDay } from 'date-fns';
-import { vi } from 'date-fns/locale';
+import { format, addDays, startOfWeek, isSameDay, vi } from '@/lib/date-utils';
 
 interface AppointmentBookingProps {
   patientId: string;

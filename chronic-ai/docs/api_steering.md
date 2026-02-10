@@ -24,7 +24,7 @@
 | **Framework** | FastAPI | Latest |
 | **Python** | Python | 3.11+ |
 | **Database** | Supabase (PostgreSQL + pgvector) | - |
-| **AI Models** | MedGemma 4B, Qwen 2.5 1.5B | Via Ollama |
+| **AI Models** | MedGemma 4B | Via Ollama |
 | **Embeddings** | nomic-embed-text | Via Ollama |
 | **OCR** | PaddleOCR | Latest |
 
@@ -63,7 +63,7 @@ api/
 │   │   ├── patient_service.py
 │   │   ├── doctor_service.py
 │   │   ├── medical_ai_service.py    # MedGemma integration
-│   │   ├── translation_service.py   # Qwen translation
+│   │   ├── translation_service.py   # Translation service
 │   │   ├── rag_service.py           # RAG pipeline
 │   │   └── ocr_service.py           # PaddleOCR integration
 │   │

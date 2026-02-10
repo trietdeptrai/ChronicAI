@@ -4,7 +4,7 @@
  */
 "use client"
 
-import { createContext, useContext, useState, useCallback, ReactNode } from "react"
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react"
 
 export type UserRole = "patient" | "doctor" | null
 
@@ -27,33 +27,47 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null)
 
+function createDemoUser(role: Exclude<UserRole, null>): User {
+    return {
+        id: role === "doctor"
+            ? "22222222-2222-4222-a222-222222222222"
+            : "11111111-1111-4111-a111-111111111111",
+        phone: "+84123456789",
+        role,
+        name: role === "doctor" ? "Bác sĩ Demo" : "Bệnh nhân Demo",
+    }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null)
     const [role, setRoleState] = useState<UserRole>(null)
-    const [isLoading, setIsLoading] = useState(false)
+    const [isLoading, setIsLoading] = useState(true)
+
+    useEffect(() => {
+        const storedRole = localStorage.getItem("userRole")
+        if (storedRole === "doctor" || storedRole === "patient") {
+            setRoleState(storedRole)
+            setUser(createDemoUser(storedRole))
+        }
+        setIsLoading(false)
+    }, [])
 
     const setRole = useCallback((newRole: UserRole) => {
         setRoleState(newRole)
-        // In demo mode, create a mock user with valid UUIDs (hex characters only: 0-9, a-f)
         if (newRole) {
-            setUser({
-                // Valid UUIDs for demo - must use only hex chars, these should match seeded data
-                id: newRole === "doctor"
-                    ? "22222222-2222-4222-a222-222222222222"  // Demo doctor UUID
-                    : "11111111-1111-4111-a111-111111111111", // Demo patient UUID
-                phone: "+84123456789",
-                role: newRole,
-                name: newRole === "doctor" ? "Bác sĩ Demo" : "Bệnh nhân Demo",
-            })
+            localStorage.setItem("userRole", newRole)
+            setUser(createDemoUser(newRole))
         } else {
+            localStorage.removeItem("userRole")
             setUser(null)
         }
     }, [])
 
-    const login = useCallback(async (phone: string, otp: string) => {
+    const login = useCallback(async (phone: string, _otp: string) => {
         setIsLoading(true)
         // TODO: Implement actual Supabase OTP auth
         try {
+            void _otp
             // Simulate login delay
             await new Promise(resolve => setTimeout(resolve, 1000))
             // For now, just set the user
@@ -69,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [role])
 
     const logout = useCallback(() => {
+        localStorage.removeItem("userRole")
         setUser(null)
         setRoleState(null)
     }, [])

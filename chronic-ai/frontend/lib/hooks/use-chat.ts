@@ -66,6 +66,7 @@ export function useChat({ patientId, onStreamUpdate, onComplete, onError }: UseC
             }
 
             let finalResponse = ""
+            let didComplete = false
 
             for await (const update of sendChatMessageStreaming(request)) {
                 onStreamUpdate?.(update)
@@ -77,6 +78,10 @@ export function useChat({ patientId, onStreamUpdate, onComplete, onError }: UseC
                 }))
 
                 if (update.stage === "complete" && update.response) {
+                    if (didComplete) {
+                        continue
+                    }
+                    didComplete = true
                     finalResponse = update.response
 
                     const assistantMessage: ChatMessage = {

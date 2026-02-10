@@ -96,10 +96,30 @@ export interface PatientDetailResponse {
   recent_consultations: ConsultationSummary[]
 }
 
+export interface VitalSignsResponse {
+  patient_id: string
+  vitals: VitalSign[]
+}
+
 export interface VitalSign {
   id: string
   patient_id: string
   recorded_at: string
+  recorded_by?: string
+  blood_pressure_systolic?: number
+  blood_pressure_diastolic?: number
+  heart_rate?: number
+  blood_glucose?: number
+  blood_glucose_timing?: "fasting" | "before_meal" | "after_meal" | "random"
+  temperature?: number
+  oxygen_saturation?: number
+  weight_kg?: number
+  notes?: string
+  source?: "self_reported" | "clinic" | "hospital" | "device"
+}
+
+export interface VitalSignInput {
+  recorded_at?: string
   recorded_by?: string
   blood_pressure_systolic?: number
   blood_pressure_diastolic?: number

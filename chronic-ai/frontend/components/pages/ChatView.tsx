@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Sparkles, TrendingUp, AlertCircle, Calendar, Activity } from 'lucide-react';
 import { mockPatients, mockRecords, mockAlerts } from '@/lib/data/mockData';
-import { format } from 'date-fns';
-import { vi } from 'date-fns/locale';
+import { format, vi } from '@/lib/date-utils';
 
 interface Message {
   id: string;

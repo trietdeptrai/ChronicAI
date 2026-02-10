@@ -111,8 +111,10 @@ export async function* sendDoctorChatStreaming(
     message: string,
     imagePath?: string
 ): AsyncGenerator<DoctorChatStreamUpdate> {
-    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/stream", {
+    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/v2/stream", {
         message,
-        image_path: imagePath
+        image_path: imagePath,
+        enable_hitl: false,
+        output_format: "structured",
     })
 }

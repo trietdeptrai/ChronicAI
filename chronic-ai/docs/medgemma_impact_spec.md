@@ -65,7 +65,9 @@ Backend
 - RAG pipeline using pgvector (chunking, embedding, vector search).
 - OCR for PDFs and images (PaddleOCR) and ingestion into records/embeddings.
 - Upload endpoints for documents, chat images, patient photos, and record images.
-- Doctor endpoints: patient list, patient detail, records, dashboard stats, clinical summary.
+- Document uploads now store PDFs/images in Supabase Storage for viewing/download.
+- Doctor endpoints: patient list, patient detail, records, vitals read/write, dashboard stats,
+  clinical summary.
 - LangGraph-based doctor and patient flows with verification, safety checks, HITL, and
   resilience (retry/circuit breaker).
 - Database schema for patients, doctors, vitals, consultations, records, embeddings.
@@ -73,17 +75,20 @@ Backend
 Frontend
 - Role selection (doctor/patient) and demo auth context.
 - Dashboard with stats and quick actions.
-- Patient list and patient detail with profile photo and imaging upload.
+- Patient list and patient detail with profile photo, vitals logging + history, and
+  imaging upload.
 - Patient and doctor chat UIs with SSE streaming progress.
+- Medical record viewer with filters + image/PDF preview (doctor + patient views).
+- Patient records page and placeholder routes for calendar/analytics/settings.
 - React Query hooks and API clients for backend endpoints.
 
 ## 7. Gaps / What To Implement Next
 Product
 - Direct patient-doctor messaging workflow (currently AI-only mediation).
 - Doctor review queue for AI-flagged or urgent patient messages.
-- Patient vitals input + history visualization.
-- Full record viewer (list, filter, download, images).
+- Patient self-report vitals entry in patient portal + trend charts/alerts.
 - Appointment scheduling and reminders (optional but strong for chronic care).
+- Change format of AI summary to become more concise, like USMLE format
 
 Safety and Compliance
 - Consent and data retention policies in UI and documentation.

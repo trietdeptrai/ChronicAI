@@ -35,13 +35,29 @@ export interface ChatResponse {
 }
 
 export interface ChatStreamUpdate {
-    stage: "translating_input" | "retrieving_context" | "medical_reasoning" | "translating_output" | "complete" | "error"
+    stage:
+        | "starting"
+        | "translating_input"
+        | "translated_input"
+        | "verifying_input"
+        | "verified_input"
+        | "retrieving_context"
+        | "retrieved_context"
+        | "medical_reasoning"
+        | "reasoned"
+        | "translating_output"
+        | "formatting_output"
+        | "formatted"
+        | "complete"
+        | "hitl_required"
+        | "error"
     message: string
     progress: number
     response?: string
     response_en?: string
     error?: string
     attachments?: ChatAttachment[]
+    thread_id?: string
 }
 
 export interface Consultation {
@@ -88,13 +104,26 @@ export interface PatientMention {
 
 export interface DoctorChatStreamUpdate {
     stage:
+    | "starting"
     | "translating_input"
+    | "translated_input"
+    | "verifying_input"
+    | "verified_input"
     | "extracting_patients"
+    | "extracted_patients"
     | "resolving_patients"
+    | "resolved_patients"
     | "retrieving_context"
+    | "retrieved_context"
     | "medical_reasoning"
+    | "reasoned"
+    | "safety_check"
+    | "safety_checked"
+    | "formatting_output"
+    | "formatted"
     | "translating_output"
     | "complete"
+    | "hitl_required"
     | "error"
     message: string
     progress: number
@@ -103,4 +132,24 @@ export interface DoctorChatStreamUpdate {
     mentioned_patients?: PatientMention[]
     error?: string
     attachments?: ChatAttachment[]
+    formatted_response?: {
+        sections: Array<{
+            type: string
+            icon: string
+            title: string
+            content?: string
+            items?: string[]
+        }>
+        confidence: number
+        sources: string[]
+        raw_text: string
+    }
+    safety_score?: number
+    hitl_request?: {
+        type: "clarification_needed" | "approval_required" | "patient_confirmation" | "safety_review"
+        message: string
+        details: Record<string, unknown>
+        options?: string[]
+    }
+    thread_id?: string
 }

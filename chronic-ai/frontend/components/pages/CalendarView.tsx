@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, MapPin, User, UserPlus, Phone, MessageSquare } from 'lucide-react';
 import { Appointment, mockAppointments, appointmentTypes } from '@/lib/data/appointmentData';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, startOfWeek, endOfWeek } from 'date-fns';
-import { vi } from 'date-fns/locale';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, addMonths, subMonths, startOfWeek, endOfWeek, vi } from '@/lib/date-utils';
 import { mockPatients } from '@/lib/data/mockData';
 
 interface CalendarViewProps {
