@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     # Ollama Configuration
     ollama_host: str = "http://localhost:11434"
+    ollama_auto_pull_missing_models: bool = True
 
     # Application Configuration
     fastapi_host: str = "0.0.0.0"
@@ -19,7 +20,10 @@ class Settings(BaseSettings):
     cors_origins: List[str] = ["http://localhost:3000"]
 
     # Model Configuration
-    medical_model: str = "thiagomoraes/medgemma-1.5-4b-it:Q8_0"
+    medical_model: str = "alibayram/medgemma:4b"
+    # Upload pipeline behavior
+    # False by default: image uploads go directly to LLM (no OCR in hot path)
+    image_upload_run_ocr: bool = False
 
     # Verification Model (Gemma 2B instruct for input validation + safety checks)
     verification_model: str = "gemma:2b-instruct"

@@ -8,11 +8,14 @@ Implements the three-step translation process:
 
 VinAI Translate models are kept persistent for performance.
 """
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Optional
 from uuid import UUID
 import base64
+import json
 import logging
+import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.services.ollama_client import ollama_client
@@ -73,6 +76,248 @@ CRITICAL - HANDLING MISSING DATA:
 - If important data is missing, suggest checking with the healthcare provider
 
 Remember: You are a support tool, not a replacement for professional medical advice."""
+
+UPLOAD_ANALYSIS_SYSTEM = """You are a clinical decision-support assistant for doctors.
+Analyze uploaded medical records and produce concise, practical insights.
+You must return valid JSON only (no markdown or extra commentary)."""
+
+
+def _extract_json_object(raw_text: str) -> Optional[dict[str, Any]]:
+    """Extract first JSON object from a model response."""
+    if not raw_text:
+        return None
+
+    try:
+        data = json.loads(raw_text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", raw_text)
+    if not match:
+        return None
+
+    try:
+        data = json.loads(match.group(0))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        return None
+
+    return None
+
+
+def _to_string_list(value: Any, max_items: int = 5) -> list[str]:
+    """Normalize a model field into a list of non-empty strings."""
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = [value]
+    else:
+        return []
+
+    cleaned: list[str] = []
+    for item in items:
+        item_str = str(item).strip()
+        if item_str:
+            cleaned.append(item_str)
+        if len(cleaned) >= max_items:
+            break
+    return cleaned
+
+
+def _sanitize_text(value: Any, max_len: int = 1200) -> str:
+    """
+    Normalize text for safe DB JSON storage.
+
+    Removes null/control chars that commonly break JSONB insertion.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    # Remove null bytes first.
+    text = text.replace("\x00", " ")
+    # Keep printable chars and common whitespace.
+    text = "".join(ch for ch in text if ch == "\n" or ch == "\r" or ch == "\t" or ord(ch) >= 32)
+    # Drop invalid unicode code points for storage safety.
+    text = text.encode("utf-8", "ignore").decode("utf-8")
+    if len(text) > max_len:
+        text = text[:max_len].rstrip()
+    return text
+
+
+def _sanitize_list(values: list[str], max_items: int = 5, max_item_len: int = 400) -> list[str]:
+    """Sanitize a list of strings for storage safety."""
+    out: list[str] = []
+    for value in values[:max_items]:
+        cleaned = _sanitize_text(value, max_len=max_item_len)
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
+async def analyze_uploaded_record(
+    *,
+    record_type: str,
+    title: Optional[str],
+    extracted_text: Optional[str],
+    image_base64: Optional[str] = None
+) -> dict[str, Any]:
+    """
+    Analyze an uploaded medical record using the same medical model as doctor chat.
+
+    Returns:
+        JSON-serializable dict to store in medical_records.analysis_result
+    """
+    safe_title = (title or "Untitled record").strip()
+    extracted = (extracted_text or "").strip()
+    if len(extracted) > 12000:
+        extracted = extracted[:12000]
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+    base_result = {
+        "model": settings.medical_model,
+        "record_type": record_type,
+        "generated_at": timestamp,
+    }
+
+    logger.info(
+        "[upload-analysis] start record_type=%s title=%s text_len=%s has_image=%s",
+        record_type,
+        safe_title[:120],
+        len(extracted),
+        bool(image_base64),
+    )
+
+    if not extracted and not image_base64:
+        logger.warning("[upload-analysis] skipped: no OCR text and no image payload")
+        return {
+            **base_result,
+            "status": "skipped",
+            "summary": "No extractable content found for AI analysis.",
+            "key_findings": [],
+            "recommended_follow_up": [],
+            "limitations": ["No OCR text or image content was available."],
+        }
+
+    prompt = f"""Analyze the uploaded medical record and return concise clinical insights.
+
+Record metadata:
+- record_type: {record_type}
+- title: {safe_title}
+
+Extracted text (OCR):
+{extracted or "No OCR text available."}
+
+Return JSON with this exact schema:
+{{
+  "summary": "short clinical summary",
+  "key_findings": ["finding 1", "finding 2"],
+  "clinical_significance": "why this matters clinically",
+  "recommended_follow_up": ["follow-up action 1", "follow-up action 2"],
+  "urgency": "low|medium|high",
+  "confidence": "low|medium|high",
+  "limitations": ["known uncertainty or missing data"]
+}}
+
+Rules:
+- Use Vietnamese for user-facing fields.
+- Keep summary under 120 words.
+- Keep key_findings and recommended_follow_up concise and actionable.
+- If data is limited, state that clearly in limitations.
+- Return valid JSON only.
+"""
+
+    model_available = await ollama_client.check_model_available(settings.medical_model)
+    if not model_available:
+        logger.error(
+            "[upload-analysis] model unavailable: %s",
+            settings.medical_model
+        )
+        return {
+            **base_result,
+            "status": "error",
+            "summary": "AI analysis model is not available on this server.",
+            "key_findings": [],
+            "recommended_follow_up": [],
+            "limitations": [f"Model not available: {settings.medical_model}"],
+        }
+
+    images = [image_base64] if image_base64 else None
+
+    try:
+        raw = await ollama_client.generate(
+            model=settings.medical_model,
+            prompt=prompt,
+            system=UPLOAD_ANALYSIS_SYSTEM,
+            images=images,
+            stream=False,
+            num_predict=768,
+        )
+        logger.info("[upload-analysis] primary-generate ok response_len=%s", len(raw or ""))
+
+        # Retry text-only if multimodal call returned empty/garbled payload.
+        if not raw or len(raw.strip()) < 10:
+            logger.warning("[upload-analysis] primary response too short; retrying text-only")
+            raw = await ollama_client.generate(
+                model=settings.medical_model,
+                prompt=prompt,
+                system=UPLOAD_ANALYSIS_SYSTEM,
+                images=None,
+                stream=False,
+                num_predict=768,
+            )
+            logger.info("[upload-analysis] retry-generate ok response_len=%s", len(raw or ""))
+
+        parsed = _extract_json_object(raw) or {}
+        summary = str(parsed.get("summary") or "").strip()
+        if not summary:
+            summary = (raw or "").strip()[:500]
+        if not summary:
+            summary = "Khong the tao AI analysis."
+        summary = _sanitize_text(summary, max_len=1200)
+
+        urgency = str(parsed.get("urgency") or "").strip().lower()
+        if urgency not in {"low", "medium", "high"}:
+            urgency = "medium"
+
+        confidence = str(parsed.get("confidence") or "").strip().lower()
+        if confidence not in {"low", "medium", "high"}:
+            confidence = "medium"
+
+        result: dict[str, Any] = {
+            **base_result,
+            "status": "completed",
+            "summary": summary,
+            "key_findings": _sanitize_list(_to_string_list(parsed.get("key_findings"))),
+            "clinical_significance": _sanitize_text(parsed.get("clinical_significance"), max_len=1200),
+            "recommended_follow_up": _sanitize_list(_to_string_list(parsed.get("recommended_follow_up"))),
+            "urgency": urgency,
+            "confidence": confidence,
+            "limitations": _sanitize_list(_to_string_list(parsed.get("limitations")), max_item_len=500),
+        }
+        logger.info(
+            "[upload-analysis] completed urgency=%s confidence=%s findings=%s follow_up=%s",
+            result.get("urgency"),
+            result.get("confidence"),
+            len(result.get("key_findings") or []),
+            len(result.get("recommended_follow_up") or []),
+        )
+        return result
+    except Exception as exc:
+        logger.exception("[upload-analysis] failed: %s", exc)
+        return {
+            **base_result,
+            "status": "error",
+            "summary": "AI analysis is temporarily unavailable for this file.",
+            "key_findings": [],
+            "recommended_follow_up": [],
+            "limitations": [_sanitize_text(str(exc), max_len=500)],
+        }
+    finally:
+        # Keep memory usage stable after one-shot upload analysis.
+        await ollama_client.unload(settings.medical_model)
 
 
 async def translate_vi_to_en(text: str) -> str:

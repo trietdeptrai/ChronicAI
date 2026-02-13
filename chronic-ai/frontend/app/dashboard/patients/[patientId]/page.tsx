@@ -6,7 +6,7 @@
 import { useRef, useState, type ChangeEvent } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useAuth } from "@/contexts"
-import { PageHeader, LoadingOverlay } from "@/components/shared"
+import { PageHeader, LoadingOverlay, RecordAIAnalysis } from "@/components/shared"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -695,6 +695,7 @@ export default function PatientDetailPage() {
                                                     {truncateText(record.content_text, 180)}
                                                 </p>
                                             )}
+                                            <RecordAIAnalysis analysis={record.analysis_result} />
                                         </div>
                                         <div className="flex flex-col gap-2 items-start md:items-end">
                                             {record.file_kind === "image" && record.file_url && (
@@ -827,6 +828,7 @@ export default function PatientDetailPage() {
                                     {activeRecord.content_text}
                                 </div>
                             )}
+                            <RecordAIAnalysis analysis={activeRecord.analysis_result} />
                         </div>
                     ) : (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">

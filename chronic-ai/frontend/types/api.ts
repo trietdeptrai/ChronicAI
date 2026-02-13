@@ -10,6 +10,21 @@ export interface ApiError {
     details?: Record<string, unknown>
 }
 
+export interface MedicalRecordAIAnalysis {
+    status?: "completed" | "skipped" | "error"
+    summary?: string
+    key_findings?: string[]
+    clinical_significance?: string
+    recommended_follow_up?: string[]
+    urgency?: "low" | "medium" | "high"
+    confidence?: "low" | "medium" | "high"
+    limitations?: string[]
+    model?: string
+    record_type?: string
+    generated_at?: string
+    [key: string]: unknown
+}
+
 export interface DashboardStats {
     total_patients: number
     urgent_cases: number
@@ -23,6 +38,7 @@ export interface UploadResponse {
     record_id: string
     patient_id: string
     extracted_text_preview?: string
+    ai_analysis?: MedicalRecordAIAnalysis | string | null
     chunks_created?: number
     message: string
 }
@@ -47,7 +63,7 @@ export interface MedicalRecord {
         | "referral"
     title: string
     content_text?: string
-    analysis_result?: string
+    analysis_result?: MedicalRecordAIAnalysis | string | null
     is_verified?: boolean
     created_at: string
     image_url?: string

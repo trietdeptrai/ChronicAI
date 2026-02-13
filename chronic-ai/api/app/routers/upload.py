@@ -5,8 +5,11 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import JSONResponse
 from typing import Optional
 from uuid import UUID
+import base64
+import json
 import tempfile
 import os
+import logging
 from pathlib import Path
 import uuid
 
@@ -14,10 +17,12 @@ from app.config import settings
 from app.db.database import get_supabase
 from app.models.schemas import RecordType
 from app.services.ocr import extract_text
-from app.services.rag import ingest_document, ingest_image
+from app.services.llm import analyze_uploaded_record
+from app.services.rag import ingest_document
 
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
+logger = logging.getLogger(__name__)
 
 # Directory for storing chat images temporarily
 CHAT_IMAGES_DIR = Path(tempfile.gettempdir()) / "chronic_ai_chat_images"
@@ -29,6 +34,52 @@ IMAGING_RECORD_TYPES = {
     "ct",
     "mri",
 }
+MAX_ANALYSIS_IMAGE_BYTES = 6 * 1024 * 1024
+
+
+def _summary_fallback_analysis(analysis: object) -> str:
+    """
+    Build a non-null text fallback for analysis_result.
+    Works with both JSONB and TEXT DB columns.
+    """
+    if isinstance(analysis, str):
+        text = analysis.strip()
+        if text:
+            return text[:2000]
+        return "AI analysis generated."
+
+    if isinstance(analysis, dict):
+        summary = str(analysis.get("summary") or "").strip()
+        if summary:
+            return summary[:2000]
+
+        findings = analysis.get("key_findings")
+        if isinstance(findings, list) and findings:
+            first = str(findings[0]).strip()
+            if first:
+                return first[:2000]
+
+        compact = json.dumps(analysis, ensure_ascii=False)
+        if compact:
+            return compact[:2000]
+
+    return "AI analysis generated."
+
+
+def _analysis_summary_text(analysis: object) -> str:
+    """
+    Extract a compact summary text from analysis payload.
+    """
+    if isinstance(analysis, str):
+        return analysis.strip()
+    if isinstance(analysis, dict):
+        summary = str(analysis.get("summary") or "").strip()
+        if summary:
+            return summary
+        findings = analysis.get("key_findings")
+        if isinstance(findings, list) and findings:
+            return "; ".join(str(item).strip() for item in findings if str(item).strip())
+    return ""
 
 
 @router.post("/chat-image")
@@ -89,7 +140,8 @@ async def upload_document(
     
     Process:
     1. Save file temporarily
-    2. OCR extract text
+    2. PDF: OCR extract text
+       Image: direct LLM image analysis (OCR optional via config)
     3. Create medical record in database
     4. Generate embeddings and store for RAG
     
@@ -132,8 +184,24 @@ async def upload_document(
         tmp_path = tmp.name
     
     try:
-        # Extract text via OCR
-        extracted_text = await extract_text(tmp_path)
+        is_pdf = file_ext == ".pdf"
+        extracted_text = ""
+        if is_pdf or settings.image_upload_run_ocr:
+            extracted_text = await extract_text(tmp_path)
+        else:
+            logger.info("[upload-document] skipping OCR for image upload (image_upload_run_ocr=false)")
+
+        image_base64 = None
+        if not is_pdf and len(content) <= MAX_ANALYSIS_IMAGE_BYTES:
+            image_base64 = base64.b64encode(content).decode("utf-8")
+        analysis_result = await analyze_uploaded_record(
+            record_type=record_type,
+            title=title or file.filename,
+            extracted_text=extracted_text,
+            image_base64=image_base64
+        )
+        analysis_summary = _analysis_summary_text(analysis_result)
+        content_for_record = extracted_text or analysis_summary or "AI analysis generated for this record."
         
         supabase = get_supabase()
         
@@ -172,14 +240,40 @@ async def upload_document(
             "patient_id": str(patient_uuid),
             "record_type": record_type,
             "title": title or file.filename,
-            "content_text": extracted_text,
+            "content_text": content_for_record,
             "image_path": image_path,
-            "analysis_result": None
+            "analysis_result": analysis_result
         }
+
+        # Ensure analysis payload is JSON-serializable; fallback to null if not.
+        try:
+            json.dumps(record_data["analysis_result"])
+        except Exception:
+            record_data["analysis_result"] = None
+
+        insert_warning = None
+        stored_analysis = record_data["analysis_result"]
+
+        try:
+            result = supabase.table("medical_records").insert(record_data).execute()
+        except Exception as exc:
+            logger.warning("Insert with structured analysis failed: %s", exc)
+            result = None
+
+        if (not result or not result.data) and record_data.get("analysis_result") is not None:
+            # Retry with summary text instead of null so doctor still gets AI output.
+            fallback_data = dict(record_data)
+            fallback_data["analysis_result"] = _summary_fallback_analysis(record_data["analysis_result"])
+            stored_analysis = fallback_data["analysis_result"]
+            try:
+                result = supabase.table("medical_records").insert(fallback_data).execute()
+            except Exception as exc:
+                logger.warning("Insert with summary-only analysis failed: %s", exc)
+                result = None
+            if result and result.data:
+                insert_warning = "Stored AI analysis as summary text due DB schema/encoding compatibility."
         
-        result = supabase.table("medical_records").insert(record_data).execute()
-        
-        if not result.data:
+        if not result or not result.data:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to create medical record"
@@ -188,16 +282,10 @@ async def upload_document(
         record_id = result.data[0]["id"]
         
         # Ingest into RAG system
-        if file_ext == ".pdf":
-            num_chunks = await ingest_document(
-                text=extracted_text,
-                record_id=UUID(record_id)
-            )
-        else:
-            num_chunks = await ingest_image(
-                image_text=extracted_text,
-                record_id=UUID(record_id)
-            )
+        num_chunks = await ingest_document(
+            text=content_for_record,
+            record_id=UUID(record_id)
+        )
         
         return JSONResponse(
             status_code=201,
@@ -206,6 +294,8 @@ async def upload_document(
                 "record_id": record_id,
                 "patient_id": patient_id,
                 "extracted_text_preview": extracted_text[:500] if extracted_text else "",
+                "ai_analysis": stored_analysis,
+                "warning": insert_warning,
                 "chunks_created": num_chunks,
                 "message": f"Document processed successfully. Created {num_chunks} embeddings."
             }
@@ -341,9 +431,10 @@ async def upload_patient_record_image(
     
     Process:
     1. Validate patient UUID and record type
-    2. Save image temporarily for OCR
-    3. Upload image to Supabase Storage
-    4. Create medical record entry and ingest into RAG
+    2. Save image temporarily
+    3. LLM analyzes image directly (OCR optional via config)
+    4. Upload image to Supabase Storage
+    5. Create medical record entry and ingest into RAG
     """
     allowed_extensions = {".png", ".jpg", ".jpeg", ".tiff", ".bmp"}
     file_ext = Path(file.filename).suffix.lower() if file.filename else ""
@@ -364,7 +455,14 @@ async def upload_patient_record_image(
         patient_uuid = UUID(patient_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid patient_id format")
-    
+
+    logger.info(
+        "[upload-record-image] start patient_id=%s record_type=%s filename=%s",
+        patient_id,
+        record_type,
+        file.filename,
+    )
+
     supabase = get_supabase()
     
     patient = supabase.table("patients").select("id").eq(
@@ -383,8 +481,44 @@ async def upload_patient_record_image(
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
-        
-        extracted_text = await extract_text(tmp_path)
+        logger.info("[upload-record-image] file-buffered size_bytes=%s tmp=%s", len(content), tmp_path)
+
+        extracted_text = ""
+        if settings.image_upload_run_ocr:
+            try:
+                extracted_text = await extract_text(tmp_path)
+            except Exception as exc:
+                logger.exception("[upload-record-image] OCR failed")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"OCR failed: {str(exc)}"
+                ) from exc
+            logger.info("[upload-record-image] OCR done text_len=%s", len(extracted_text or ""))
+        else:
+            logger.info("[upload-record-image] OCR disabled for image upload (image_upload_run_ocr=false)")
+        image_base64 = None
+        if len(content) <= MAX_ANALYSIS_IMAGE_BYTES:
+            image_base64 = base64.b64encode(content).decode("utf-8")
+        try:
+            analysis_result = await analyze_uploaded_record(
+                record_type=record_type,
+                title=title or file.filename,
+                extracted_text=extracted_text,
+                image_base64=image_base64
+            )
+        except Exception as exc:
+            logger.exception("[upload-record-image] analysis call crashed")
+            raise HTTPException(
+                status_code=500,
+                detail=f"AI analysis failed: {str(exc)}"
+            ) from exc
+        logger.info(
+            "[upload-record-image] analysis status=%s has_summary=%s",
+            (analysis_result or {}).get("status") if isinstance(analysis_result, dict) else "unknown",
+            bool((analysis_result or {}).get("summary")) if isinstance(analysis_result, dict) else bool(analysis_result),
+        )
+        analysis_summary = _analysis_summary_text(analysis_result)
+        content_for_record = extracted_text or analysis_summary or "AI analysis generated for this record."
         
         bucket = settings.patient_photo_bucket
         unique_name = f"{uuid.uuid4()}{file_ext}"
@@ -405,6 +539,7 @@ async def upload_patient_record_image(
                 status_code=500,
                 detail=f"Failed to upload image: {str(e)}"
             )
+        logger.info("[upload-record-image] storage upload ok path=%s", storage_path)
         
         if isinstance(upload_result, dict) and upload_result.get("error"):
             raise HTTPException(
@@ -416,14 +551,41 @@ async def upload_patient_record_image(
             "patient_id": str(patient_uuid),
             "record_type": record_type,
             "title": title or file.filename,
-            "content_text": extracted_text,
+            "content_text": content_for_record,
             "image_path": storage_path,
-            "analysis_result": None
+            "analysis_result": analysis_result
         }
+
+        # Ensure analysis payload is JSON-serializable; fallback to null if not.
+        try:
+            json.dumps(record_data["analysis_result"])
+        except Exception:
+            record_data["analysis_result"] = None
+
+        insert_warning = None
+        stored_analysis = record_data["analysis_result"]
+
+        try:
+            result = supabase.table("medical_records").insert(record_data).execute()
+        except Exception as exc:
+            logger.exception("[upload-record-image] insert with structured analysis failed")
+            result = None
+
+        if (not result or not result.data) and record_data.get("analysis_result") is not None:
+            # Retry with summary text instead of null so doctor still gets AI output.
+            fallback_data = dict(record_data)
+            fallback_data["analysis_result"] = _summary_fallback_analysis(record_data["analysis_result"])
+            stored_analysis = fallback_data["analysis_result"]
+            try:
+                result = supabase.table("medical_records").insert(fallback_data).execute()
+            except Exception as exc:
+                logger.exception("[upload-record-image] insert with summary-only analysis failed")
+                result = None
+            if result and result.data:
+                insert_warning = "Stored AI analysis as summary text due DB schema/encoding compatibility."
+        logger.info("[upload-record-image] db insert ok=%s warning=%s", bool(result and result.data), bool(insert_warning))
         
-        result = supabase.table("medical_records").insert(record_data).execute()
-        
-        if not result.data:
+        if not result or not result.data:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to create medical record"
@@ -431,10 +593,18 @@ async def upload_patient_record_image(
         
         record_id = result.data[0]["id"]
         
-        num_chunks = await ingest_image(
-            image_text=extracted_text,
-            record_id=UUID(record_id)
-        )
+        try:
+            num_chunks = await ingest_document(
+                text=content_for_record,
+                record_id=UUID(record_id)
+            )
+        except Exception as exc:
+            logger.exception("[upload-record-image] embedding ingestion failed record_id=%s", record_id)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Embedding ingestion failed: {str(exc)}"
+            ) from exc
+        logger.info("[upload-record-image] ingest done chunks=%s", num_chunks)
         
         return JSONResponse(
             status_code=201,
@@ -443,6 +613,8 @@ async def upload_patient_record_image(
                 "record_id": record_id,
                 "patient_id": patient_id,
                 "extracted_text_preview": extracted_text[:500] if extracted_text else "",
+                "ai_analysis": stored_analysis,
+                "warning": insert_warning,
                 "chunks_created": num_chunks,
                 "message": "Record image uploaded successfully"
             }
@@ -450,6 +622,7 @@ async def upload_patient_record_image(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("[upload-record-image] unexpected failure")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process record image: {str(e)}"
