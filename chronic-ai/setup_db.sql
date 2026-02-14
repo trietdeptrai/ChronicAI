@@ -344,6 +344,7 @@ CREATE TABLE medical_records (
     image_path VARCHAR(500),
     -- Structure: {diagnosis, findings, recommendations, confidence_score}
     analysis_result JSONB,
+    doctor_comment TEXT,
     is_verified BOOLEAN DEFAULT false,
     verified_by UUID REFERENCES doctors(id),
     verified_at TIMESTAMPTZ,

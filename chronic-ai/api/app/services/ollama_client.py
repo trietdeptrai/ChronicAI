@@ -1,29 +1,51 @@
 """
-Ollama Client Wrapper with Memory Management.
+LLM client wrapper.
 
-Provides async interface to Ollama for:
-- Text generation (translation, medical reasoning)
-- Embedding generation
-- Model loading/unloading for memory optimization
+Supports:
+- Vertex AI OpenAI-compatible chat completions (default)
+- Legacy Ollama generation fallback
+- Embeddings via local hash vectors (default) or Ollama
 """
 import asyncio
-import httpx
+import hashlib
+import json
 import logging
-from typing import AsyncGenerator, Optional, List, Union
+import os
+import shlex
+import shutil
+import subprocess
+import time
+from typing import AsyncGenerator, List, Optional, Union
+
+import httpx
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
-    """Async client for Ollama API with memory management."""
-    
+    """
+    Backward-compatible client interface used across the codebase.
+
+    Despite the class name, this client now routes generation to Vertex AI by default.
+    """
+
     def __init__(self, host: str = None):
+        # Legacy Ollama host is retained for optional embedding/provider fallback.
         self.host = host or settings.ollama_host
         self.timeout = httpx.Timeout(300.0, connect=60.0)
         self._loaded_model: Optional[str] = None
         self._model_locks: dict[str, asyncio.Lock] = {}
-    
+
+        self._provider = (settings.llm_provider or "vertex").strip().lower()
+        self._embedding_provider = (settings.embedding_provider or "hash").strip().lower()
+
+        # Access token cache for Vertex auth.
+        self._token_lock = asyncio.Lock()
+        self._access_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
+
     async def generate(
         self,
         model: str,
@@ -31,90 +53,409 @@ class OllamaClient:
         system: Optional[str] = None,
         images: Optional[List[str]] = None,
         stream: bool = False,
-        num_predict: int = 2048
+        num_predict: int = 2048,
     ) -> Union[str, AsyncGenerator[str, None]]:
         """
-        Generate text using specified model.
-        
+        Generate text using configured provider.
+
         Args:
-            model: Model name (e.g., 'alibayram/medgemma:4b')
+            model: Model name
             prompt: User prompt
             system: Optional system prompt
-            images: Optional list of base64-encoded images for multimodal models
-            stream: Whether to stream the response
-            num_predict: Maximum number of tokens to generate (default: 2048)
-            
-        Returns:
-            Full response text if stream=False, else async generator of tokens
+            images: Optional base64 image list
+            stream: Stream output if True
+            num_predict: Max generated tokens
         """
+        if self._provider == "ollama":
+            return await self._generate_ollama(
+                model=model,
+                prompt=prompt,
+                system=system,
+                images=images,
+                stream=stream,
+                num_predict=num_predict,
+            )
+
+        # Vertex provider.
+        if stream:
+            return self._stream_vertex_response(
+                model=model,
+                prompt=prompt,
+                system=system,
+                images=images,
+                num_predict=num_predict,
+            )
+
+        return await self._generate_vertex(
+            model=model,
+            prompt=prompt,
+            system=system,
+            images=images,
+            num_predict=num_predict,
+        )
+
+    async def _generate_ollama(
+        self,
+        model: str,
+        prompt: str,
+        system: Optional[str] = None,
+        images: Optional[List[str]] = None,
+        stream: bool = False,
+        num_predict: int = 2048,
+    ) -> Union[str, AsyncGenerator[str, None]]:
         payload = {
             "model": model,
             "prompt": prompt,
             "stream": stream,
             "options": {
-                "num_predict": num_predict
-            }
+                "num_predict": num_predict,
+            },
         }
-        
+
         if system:
             payload["system"] = system
-            
+
         if images:
             payload["images"] = images
-        
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 if stream:
                     return self._stream_response(client, payload)
-                else:
-                    response = await client.post(
-                        f"{self.host}/api/generate",
-                        json=payload
-                    )
-                    response.raise_for_status()
-                    return response.json()["response"]
+                response = await client.post(
+                    f"{self.host}/api/generate",
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()["response"]
         except httpx.ConnectError:
             raise RuntimeError(f"Cannot connect to Ollama at {self.host}. Is Ollama running?")
         except httpx.TimeoutException:
             raise RuntimeError(f"Ollama request timed out for model '{model}'")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Ollama error ({e.response.status_code}): {e.response.text[:200] if e.response.text else 'No response'}")
+            raise RuntimeError(
+                f"Ollama error ({e.response.status_code}): "
+                f"{e.response.text[:300] if e.response.text else 'No response'}"
+            )
         except Exception as e:
             raise RuntimeError(f"Ollama generation failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
 
-    
+    async def _generate_vertex(
+        self,
+        model: str,
+        prompt: str,
+        system: Optional[str] = None,
+        images: Optional[List[str]] = None,
+        num_predict: int = 2048,
+    ) -> str:
+        payload = self._build_vertex_payload(
+            model=model,
+            prompt=prompt,
+            system=system,
+            images=images,
+            num_predict=num_predict,
+            stream=False,
+        )
+        headers = await self._vertex_headers()
+        url = self._vertex_chat_completions_url()
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                return self._extract_vertex_text(response.json())
+        except httpx.ConnectError:
+            raise RuntimeError(f"Cannot connect to Vertex AI endpoint at {settings.vertex_ai_host}")
+        except httpx.TimeoutException:
+            raise RuntimeError("Vertex AI request timed out")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"Vertex AI error ({e.response.status_code}): "
+                f"{self._extract_http_error(e.response)}"
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Vertex generation failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
     async def _stream_response(
         self,
         client: httpx.AsyncClient,
-        payload: dict
+        payload: dict,
     ) -> AsyncGenerator[str, None]:
-        """Stream response tokens."""
+        """Stream response tokens from Ollama."""
         async with client.stream(
             "POST",
             f"{self.host}/api/generate",
-            json=payload
+            json=payload,
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if line:
-                    import json
                     data = json.loads(line)
                     if "response" in data:
                         yield data["response"]
-    
+
+    async def _stream_vertex_response(
+        self,
+        model: str,
+        prompt: str,
+        system: Optional[str],
+        images: Optional[List[str]],
+        num_predict: int,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming compatibility for existing call sites.
+
+        Current implementation emits one final chunk. This preserves the interface
+        used by the rest of the codebase without introducing SSE complexity.
+        """
+        text = await self._generate_vertex(
+            model=model,
+            prompt=prompt,
+            system=system,
+            images=images,
+            num_predict=num_predict,
+        )
+        if text:
+            yield text
+
+    def _vertex_chat_completions_url(self) -> str:
+        host = (settings.vertex_ai_host or "").strip().rstrip("/")
+        if not host:
+            raise RuntimeError("VERTEX_AI_HOST is not configured")
+
+        custom_path = (settings.vertex_ai_chat_completions_path or "").strip()
+        if custom_path:
+            if not custom_path.startswith("/"):
+                custom_path = f"/{custom_path}"
+            return f"{host}{custom_path}"
+
+        project = (settings.vertex_ai_project_id or "").strip()
+        location = (settings.vertex_ai_location or "").strip()
+        endpoint_id = (settings.vertex_ai_endpoint_id or "").strip()
+
+        if not project or not location or not endpoint_id:
+            raise RuntimeError(
+                "Vertex AI route requires VERTEX_AI_PROJECT_ID, VERTEX_AI_LOCATION, and VERTEX_AI_ENDPOINT_ID"
+            )
+
+        return (
+            f"{host}/v1/projects/{project}/locations/{location}/endpoints/{endpoint_id}/chat/completions"
+        )
+
+    def _build_vertex_payload(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        system: Optional[str],
+        images: Optional[List[str]],
+        num_predict: int,
+        stream: bool,
+    ) -> dict:
+        messages: list[dict] = []
+        if system:
+            messages.append({
+                "role": "system",
+                "content": system,
+            })
+
+        user_content: Union[str, List[dict]]
+        if images:
+            user_content = [{"type": "text", "text": prompt}]
+            for image in images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": self._to_data_url(image),
+                    },
+                })
+        else:
+            user_content = prompt
+
+        messages.append({
+            "role": "user",
+            "content": user_content,
+        })
+
+        payload = {
+            "model": model or settings.vertex_ai_model or settings.medical_model,
+            "messages": messages,
+            "max_tokens": num_predict,
+            "temperature": settings.vertex_ai_temperature,
+            "stream": stream,
+        }
+        return payload
+
+    @staticmethod
+    def _to_data_url(image_base64: str) -> str:
+        if image_base64.startswith("data:"):
+            return image_base64
+        return f"data:image/jpeg;base64,{image_base64}"
+
+    @staticmethod
+    def _extract_vertex_text(payload: dict) -> str:
+        if not isinstance(payload, dict):
+            raise RuntimeError("Vertex AI response is not a JSON object")
+
+        # OpenAI-compatible response shape.
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                message = first.get("message", {})
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list):
+                        parts: list[str] = []
+                        for item in content:
+                            if isinstance(item, dict):
+                                text = item.get("text")
+                                if text:
+                                    parts.append(str(text))
+                        if parts:
+                            return "".join(parts)
+
+        # Fallback for non-standard response wrappers.
+        output_text = payload.get("output_text")
+        if isinstance(output_text, str):
+            return output_text
+
+        raise RuntimeError("Vertex AI response did not include completion text")
+
+    async def _vertex_headers(self) -> dict:
+        token = await self._get_vertex_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        project = (settings.vertex_ai_project_id or "").strip()
+        if project:
+            headers["x-goog-user-project"] = project
+        return headers
+
+    async def _get_vertex_access_token(self) -> str:
+        now = time.time()
+        if self._access_token and now < self._token_expires_at:
+            return self._access_token
+
+        async with self._token_lock:
+            now = time.time()
+            if self._access_token and now < self._token_expires_at:
+                return self._access_token
+
+            command = (settings.vertex_ai_gcloud_command or "gcloud").strip() or "gcloud"
+            argv = self._resolve_gcloud_argv(command)
+            argv.extend(["auth", "print-access-token"])
+
+            try:
+                stdout, stderr, returncode = await asyncio.to_thread(
+                    self._run_subprocess_capture,
+                    argv,
+                )
+            except FileNotFoundError:
+                raise RuntimeError(
+                    f"gcloud CLI not found (command: {command}). "
+                    "Install Google Cloud CLI and run: gcloud auth login"
+                )
+
+            if returncode != 0:
+                err = (stderr or "").strip()
+                raise RuntimeError(
+                    f"Failed to get gcloud access token (exit {returncode}): {err or 'unknown error'}"
+                )
+
+            token = (stdout or "").strip()
+            if not token:
+                raise RuntimeError("gcloud returned an empty access token")
+
+            ttl = max(int(settings.vertex_ai_token_ttl_seconds), 60)
+            # Refresh slightly before nominal expiry to avoid edge failures.
+            self._access_token = token
+            self._token_expires_at = time.time() + max(ttl - 60, 30)
+            return token
+
+    @staticmethod
+    def _run_subprocess_capture(argv: List[str]) -> tuple[str, str, int]:
+        """Run a subprocess synchronously (threaded by caller) and capture text output."""
+        completed = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            check=False,
+        )
+        return completed.stdout or "", completed.stderr or "", int(completed.returncode)
+
+    @staticmethod
+    def _resolve_gcloud_argv(command: str) -> List[str]:
+        """Resolve gcloud executable, including common Windows install locations."""
+        argv = shlex.split(command, posix=False)
+        if not argv:
+            argv = ["gcloud"]
+
+        executable = argv[0]
+        normalized = executable.lower()
+        if normalized in {"gcloud", "gcloud.cmd", "gcloud.exe"}:
+            resolved = (
+                shutil.which(executable)
+                or shutil.which("gcloud.cmd")
+                or shutil.which("gcloud.exe")
+            )
+            if not resolved:
+                user_profile = os.environ.get("USERPROFILE", "")
+                candidates = [
+                    os.path.join(
+                        user_profile,
+                        "AppData",
+                        "Local",
+                        "Google",
+                        "Cloud SDK",
+                        "google-cloud-sdk",
+                        "bin",
+                        "gcloud.cmd",
+                    ),
+                    r"C:\Program Files\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd",
+                ]
+                for candidate in candidates:
+                    if candidate and os.path.exists(candidate):
+                        resolved = candidate
+                        break
+            if resolved:
+                argv[0] = resolved
+
+        return argv
+
     async def embed(self, text: str, model: str = None) -> List[float]:
         """
-        Generate embedding for text.
-        
-        Args:
-            text: Text to embed
-            model: Embedding model (defaults to nomic-embed-text)
-            
-        Returns:
-            768-dimensional embedding vector
+        Generate embedding vector.
+
+        Default behavior uses deterministic local hash embeddings so the system
+        works without a separate embedding service.
         """
         model = model or settings.embedding_model
-        
+
+        if self._embedding_provider == "hash":
+            return self._hash_embedding(text, settings.embedding_dimensions)
+
+        if self._embedding_provider == "ollama":
+            return await self._embed_ollama(text, model)
+
+        raise RuntimeError(
+            f"Unsupported embedding provider '{self._embedding_provider}'. "
+            "Use 'hash' or 'ollama'."
+        )
+
+    async def _embed_ollama(self, text: str, model: str) -> List[float]:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
@@ -152,18 +493,40 @@ class OllamaClient:
                 )
             raise RuntimeError(
                 f"Ollama embedding error ({e.response.status_code}): "
-                f"{e.response.text[:200] if e.response.text else 'No response'}"
+                f"{e.response.text[:300] if e.response.text else 'No response'}"
             )
         except RuntimeError:
             raise
         except Exception as e:
             raise RuntimeError(f"Ollama embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
 
+    @staticmethod
+    def _hash_embedding(text: str, dims: int) -> List[float]:
+        dim = max(int(dims), 8)
+        vec = [0.0] * dim
+        if not text:
+            vec[0] = 1.0
+            return vec
+
+        # Word hashing with signed accumulation.
+        for token in text.lower().split():
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            idx = int.from_bytes(digest[:4], "big") % dim
+            sign = 1.0 if (digest[4] % 2 == 0) else -1.0
+            weight = 1.0 + (digest[5] / 255.0)
+            vec[idx] += sign * weight
+
+        norm = sum(v * v for v in vec) ** 0.5
+        if norm <= 1e-12:
+            vec[0] = 1.0
+            return vec
+        return [v / norm for v in vec]
+
     async def _request_embedding(
         self,
         client: httpx.AsyncClient,
         text: str,
-        model: str
+        model: str,
     ) -> List[float]:
         """
         Request embeddings with Ollama endpoint compatibility.
@@ -174,18 +537,17 @@ class OllamaClient:
             f"{self.host}/api/embeddings",
             json={
                 "model": model,
-                "prompt": text
-            }
+                "prompt": text,
+            },
         )
 
         if response.status_code == 404 and not self._is_model_missing_error(response, model):
-            # Newer Ollama versions expose /api/embed instead of /api/embeddings.
             response = await client.post(
                 f"{self.host}/api/embed",
                 json={
                     "model": model,
-                    "input": text
-                }
+                    "input": text,
+                },
             )
 
         response.raise_for_status()
@@ -193,14 +555,12 @@ class OllamaClient:
 
     @staticmethod
     def _extract_embedding(payload: dict) -> List[float]:
-        """Normalize embedding payload shape across Ollama API variants."""
         embedding = payload.get("embedding")
         if isinstance(embedding, list) and embedding:
             return embedding
 
         embeddings = payload.get("embeddings")
         if isinstance(embeddings, list) and embeddings:
-            # /api/embed may return [[...]] for single input, or [...] in some variants.
             first = embeddings[0]
             if isinstance(first, list):
                 return first
@@ -211,7 +571,6 @@ class OllamaClient:
 
     @staticmethod
     def _extract_error_message(response: httpx.Response) -> str:
-        """Extract Ollama error message from JSON or fallback text."""
         try:
             payload = response.json()
             if isinstance(payload, dict):
@@ -222,78 +581,81 @@ class OllamaClient:
             pass
         return response.text or ""
 
+    @staticmethod
+    def _extract_http_error(response: httpx.Response) -> str:
+        try:
+            data = response.json()
+            if isinstance(data, dict):
+                for key in ("error", "message", "detail"):
+                    val = data.get(key)
+                    if val:
+                        return str(val)[:300]
+        except Exception:
+            pass
+        return (response.text or "No response")[:300]
+
     def _is_model_missing_error(self, response: httpx.Response, model: str) -> bool:
-        """Detect Ollama's model-not-found error shape."""
         message = self._extract_error_message(response).lower()
         if response.status_code != 404 or "not found" not in message or "model" not in message:
             return False
         model_lower = model.lower()
         return model_lower in message or f"\"{model_lower}\"" in message
 
-    
     async def embed_batch(
         self,
         texts: List[str],
-        model: str = None
+        model: str = None,
     ) -> List[List[float]]:
-        """
-        Generate embeddings for multiple texts.
-        
-        Args:
-            texts: List of texts to embed
-            model: Embedding model
-            
-        Returns:
-            List of 768-dimensional embedding vectors
-        """
         embeddings = []
         for text in texts:
             embedding = await self.embed(text, model)
             embeddings.append(embedding)
         return embeddings
-    
+
     async def unload(self, model: str) -> bool:
         """
         Unload a model from memory.
-        
-        Args:
-            model: Model name to unload
-            
-        Returns:
-            True if successful
+
+        Vertex is remote, so this is a no-op and always succeeds.
         """
+        if self._provider != "ollama":
+            return True
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                # Setting keep_alive to 0 unloads the model
                 response = await client.post(
                     f"{self.host}/api/generate",
                     json={
                         "model": model,
-                        "keep_alive": 0
-                    }
+                        "keep_alive": 0,
+                    },
                 )
                 response.raise_for_status()
                 self._loaded_model = None
                 return True
         except Exception:
-            # Unload failures are non-critical, just return False
             return False
 
-    
     async def list_models(self) -> List[dict]:
         """List available models."""
+        if self._provider != "ollama":
+            model_name = settings.vertex_ai_model or settings.medical_model
+            return [{"name": model_name}] if model_name else []
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.get(f"{self.host}/api/tags")
             response.raise_for_status()
             return response.json().get("models", [])
-    
+
     async def pull_model(self, model: str) -> bool:
         """
         Pull a model from Ollama registry.
 
-        Returns:
-            True if the model is available after pull, False otherwise.
+        Vertex mode does not support pull and simply checks configured availability.
         """
+        if self._provider != "ollama":
+            return await self.check_model_available(model)
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
@@ -311,7 +673,7 @@ class OllamaClient:
         except httpx.HTTPStatusError as e:
             raise RuntimeError(
                 f"Ollama pull error ({e.response.status_code}): "
-                f"{e.response.text[:200] if e.response.text else 'No response'}"
+                f"{e.response.text[:300] if e.response.text else 'No response'}"
             )
         except Exception as e:
             raise RuntimeError(f"Ollama pull failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
@@ -320,6 +682,9 @@ class OllamaClient:
 
     async def ensure_model_available(self, model: str) -> bool:
         """Ensure a model is available locally, pulling it if needed."""
+        if self._provider != "ollama":
+            return await self.check_model_available(model)
+
         if await self.check_model_available(model):
             return True
 
@@ -331,15 +696,49 @@ class OllamaClient:
 
     async def check_model_available(self, model: str) -> bool:
         """Check if a model is available."""
+        if self._embedding_provider == "hash" and model == settings.embedding_model:
+            return True
+
+        if self._provider != "ollama":
+            host = bool((settings.vertex_ai_host or "").strip())
+            project = bool((settings.vertex_ai_project_id or "").strip())
+            location = bool((settings.vertex_ai_location or "").strip())
+            endpoint_id = bool((settings.vertex_ai_endpoint_id or "").strip())
+            model_name = (settings.vertex_ai_model or settings.medical_model or "").strip()
+            if model and model_name and model != model_name:
+                # Same endpoint is currently used for both medical and verification calls.
+                logger.warning(
+                    "Requested model '%s' differs from configured Vertex model '%s'.",
+                    model,
+                    model_name,
+                )
+            return host and project and location and endpoint_id and bool(model_name)
+
         models = await self.list_models()
         model_names = [m.get("name", "") for m in models]
         return any(
             name == model or name.startswith(f"{model}:")
             for name in model_names
         )
-    
+
     async def health_check(self) -> bool:
-        """Check if Ollama is running."""
+        """Check whether configured LLM provider is reachable."""
+        if self._provider != "ollama":
+            if not await self.check_model_available(settings.medical_model):
+                return False
+            try:
+                _ = await self._generate_vertex(
+                    model=settings.medical_model,
+                    prompt="Reply with: ok",
+                    system="You are a health check assistant. Respond with exactly 'ok'.",
+                    images=None,
+                    num_predict=8,
+                )
+                return True
+            except Exception as e:
+                logger.warning("Vertex health check failed: %s", e)
+                return False
+
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 response = await client.get(f"{self.host}/api/tags")

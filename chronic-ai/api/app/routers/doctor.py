@@ -17,6 +17,38 @@ from app.services.llm import generate_clinical_summary
 router = APIRouter(prefix="/doctor", tags=["Doctor"])
 
 
+def _extract_signed_url(signed: object) -> Optional[str]:
+    if isinstance(signed, dict):
+        return (
+            signed.get("signedURL")
+            or signed.get("signed_url")
+            or (signed.get("data") or {}).get("signedURL")
+            or (signed.get("data") or {}).get("signed_url")
+        )
+    return None
+
+
+def _extract_record_doctor_comment(record: dict) -> Optional[str]:
+    comment = record.get("doctor_comment")
+    if isinstance(comment, str):
+        comment = comment.strip() or None
+    elif comment is not None:
+        comment = str(comment).strip() or None
+
+    analysis = record.get("analysis_result")
+    if not comment and isinstance(analysis, dict):
+        value = analysis.get("doctor_comment")
+        if isinstance(value, str):
+            comment = value.strip() or None
+
+    if isinstance(analysis, dict) and "doctor_comment" in analysis:
+        cleaned = dict(analysis)
+        cleaned.pop("doctor_comment", None)
+        record["analysis_result"] = cleaned
+
+    return comment
+
+
 class ClinicalSummaryRequest(BaseModel):
     """Request for clinical summary generation."""
     consultation_id: str
@@ -130,14 +162,7 @@ async def list_patients(
         photo_path = patient.get("profile_photo_url")
         if photo_path and not str(photo_path).startswith("http"):
             signed = supabase.storage.from_(bucket).create_signed_url(photo_path, ttl)
-            signed_url = None
-            if isinstance(signed, dict):
-                signed_url = (
-                    signed.get("signedURL")
-                    or signed.get("signed_url")
-                    or (signed.get("data") or {}).get("signedURL")
-                    or (signed.get("data") or {}).get("signed_url")
-                )
+            signed_url = _extract_signed_url(signed)
             if signed_url:
                 patient["profile_photo_url"] = signed_url
     
@@ -204,14 +229,7 @@ async def get_patient_detail(patient_id: str):
                 photo_path,
                 settings.patient_photo_signed_url_ttl_seconds
             )
-            signed_url = None
-            if isinstance(signed, dict):
-                signed_url = (
-                    signed.get("signedURL")
-                    or signed.get("signed_url")
-                    or (signed.get("data") or {}).get("signedURL")
-                    or (signed.get("data") or {}).get("signed_url")
-                )
+            signed_url = _extract_signed_url(signed)
             if signed_url:
                 patient_data["profile_photo_url"] = signed_url
     
@@ -330,42 +348,50 @@ async def get_patient_records(
         raise HTTPException(status_code=400, detail="Invalid patient_id format")
     
     supabase = get_supabase()
-    
-    query = supabase.table("medical_records").select(
-        "id, record_type, title, content_text, analysis_result, "
-        "is_verified, created_at, image_path"
-    ).eq("patient_id", str(patient_uuid))
-    
-    if record_type:
-        valid_types = {record_type.value for record_type in RecordType}
-        if record_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid record_type. Allowed: {', '.join(sorted(valid_types))}"
-            )
-        query = query.eq("record_type", record_type)
-    
-    query = query.order("created_at", desc=True).limit(limit)
-    result = query.execute()
 
-    records = result.data or []
+    def _run_records_query(include_doctor_comment: bool):
+        select_cols = (
+            "id, record_type, title, content_text, analysis_result, "
+            "is_verified, created_at, updated_at, image_path"
+        )
+        if include_doctor_comment:
+            select_cols += ", doctor_comment"
+
+        query = supabase.table("medical_records").select(select_cols).eq("patient_id", str(patient_uuid))
+        if record_type:
+            valid_types = {record_type.value for record_type in RecordType}
+            if record_type not in valid_types:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid record_type. Allowed: {', '.join(sorted(valid_types))}"
+                )
+            query = query.eq("record_type", record_type)
+        query = query.order("created_at", desc=True).limit(limit)
+        return query.execute()
+
+    try:
+        result = _run_records_query(include_doctor_comment=True)
+        records = result.data or []
+    except HTTPException:
+        raise
+    except Exception:
+        # Backward compatibility for DBs without doctor_comment column.
+        result = _run_records_query(include_doctor_comment=False)
+        records = result.data or []
+        for record in records:
+            record["doctor_comment"] = None
+
     bucket = settings.patient_photo_bucket
     ttl = settings.patient_photo_signed_url_ttl_seconds
     for record in records:
+        record["doctor_comment"] = _extract_record_doctor_comment(record)
         image_path = record.get("image_path")
         if image_path:
             try:
                 signed = supabase.storage.from_(bucket).create_signed_url(image_path, ttl)
             except Exception:
                 signed = None
-            signed_url = None
-            if isinstance(signed, dict):
-                signed_url = (
-                    signed.get("signedURL")
-                    or signed.get("signed_url")
-                    or (signed.get("data") or {}).get("signedURL")
-                    or (signed.get("data") or {}).get("signed_url")
-                )
+            signed_url = _extract_signed_url(signed)
             if signed_url:
                 ext = Path(image_path).suffix.lower()
                 file_kind = "pdf" if ext == ".pdf" else "image"

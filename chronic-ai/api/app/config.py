@@ -1,8 +1,15 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        # Resolve .env relative to api/ directory so runtime cwd does not matter.
+        env_file=str(Path(__file__).resolve().parents[1] / ".env"),
+        case_sensitive=False,
+    )
+
     # Supabase Configuration - defaults for testing
     supabase_url: str = ""
     supabase_anon_key: str = ""
@@ -10,7 +17,21 @@ class Settings(BaseSettings):
     patient_photo_bucket: str = "patient-photos"
     patient_photo_signed_url_ttl_seconds: int = 3600
 
-    # Ollama Configuration
+    # LLM Provider Configuration
+    llm_provider: str = "ollama"  # vertex | ollama
+
+    # Vertex AI OpenAI-compatible endpoint configuration
+    vertex_ai_host: str = ""
+    vertex_ai_project_id: str = ""
+    vertex_ai_location: str = "us-central1"
+    vertex_ai_endpoint_id: str = ""
+    vertex_ai_model: str = ""
+    vertex_ai_chat_completions_path: str = ""
+    vertex_ai_gcloud_command: str = "gcloud"
+    vertex_ai_token_ttl_seconds: int = 3300
+    vertex_ai_temperature: float = 0.2
+
+    # Legacy Ollama Configuration (optional fallback)
     ollama_host: str = "http://localhost:11434"
     ollama_auto_pull_missing_models: bool = True
 
@@ -25,7 +46,8 @@ class Settings(BaseSettings):
     # False by default: image uploads go directly to LLM (no OCR in hot path)
     image_upload_run_ocr: bool = False
 
-    # Verification Model (Gemma 2B instruct for input validation + safety checks)
+    # Verification model for input validation + safety checks.
+    # In Vertex endpoint mode this typically points to the same deployed endpoint model.
     verification_model: str = "gemma:2b-instruct"
 
     # Human-in-the-Loop Configuration
@@ -52,7 +74,12 @@ class Settings(BaseSettings):
     envit5_model: str = "VietAI/envit5-translation"  # deprecated
     envit5_device: str = "auto"  # deprecated
 
+    # Embedding settings:
+    # - embedding_provider=hash: local deterministic vectors (no external service needed)
+    # - embedding_provider=ollama: use Ollama embedding model from embedding_model
     embedding_model: str = "nomic-embed-text"
+    embedding_provider: str = "hash"  # hash | ollama
+    embedding_dimensions: int = 768
 
     # Resilience Configuration
     llm_retry_max_attempts: int = 3
@@ -72,10 +99,5 @@ class Settings(BaseSettings):
 
     # Deprecated: translation_model no longer used (replaced by envit5_model)
     translation_model: Optional[str] = None
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-
 
 settings = Settings()

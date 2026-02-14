@@ -95,6 +95,8 @@ async def health_check():
         return {
             "status": system_status["status"],
             "api": "healthy",
+            "llm_provider": system_status.get("provider", settings.llm_provider),
+            "llm": system_status.get("llm", False),
             "ollama": system_status.get("ollama", False),
             "models": system_status.get("models", {}),
             "message": system_status.get("message", "")
@@ -103,6 +105,8 @@ async def health_check():
         return {
             "status": "degraded",
             "api": "healthy",
+            "llm_provider": settings.llm_provider,
+            "llm": False,
             "ollama": False,
             "error": str(e)
         }

@@ -39,7 +39,9 @@ export interface UploadResponse {
     patient_id: string
     extracted_text_preview?: string
     ai_analysis?: MedicalRecordAIAnalysis | string | null
+    doctor_comment?: string | null
     chunks_created?: number
+    warning?: string | null
     message: string
 }
 
@@ -64,8 +66,10 @@ export interface MedicalRecord {
     title: string
     content_text?: string
     analysis_result?: MedicalRecordAIAnalysis | string | null
+    doctor_comment?: string | null
     is_verified?: boolean
     created_at: string
+    updated_at?: string
     image_url?: string
     file_url?: string
     file_kind?: "image" | "pdf"

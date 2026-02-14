@@ -11,6 +11,8 @@ import {
     getDashboardStats,
     uploadPatientPhoto,
     uploadPatientRecordImage,
+    updatePatientRecord,
+    deletePatientRecord,
     getPatientVitals,
     createPatientVital,
 } from "@/lib/api"
@@ -128,6 +130,7 @@ export function useUploadPatientRecordImage() {
             recordType,
             file,
             title,
+            doctorComment,
         }: {
             patientId: string
             recordType:
@@ -137,7 +140,33 @@ export function useUploadPatientRecordImage() {
                 | "mri"
             file: File
             title?: string
-        }) => uploadPatientRecordImage(patientId, recordType, file, title),
+            doctorComment?: string
+        }) => uploadPatientRecordImage(patientId, recordType, file, title, doctorComment),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+        },
+    })
+}
+
+export function useUpdatePatientRecord() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: updatePatientRecord,
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+        },
+    })
+}
+
+export function useDeletePatientRecord() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: ({ patientId, recordId }: { patientId: string; recordId: string }) =>
+            deletePatientRecord(patientId, recordId),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })

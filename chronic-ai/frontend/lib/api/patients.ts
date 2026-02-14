@@ -4,7 +4,6 @@
 
 import { apiClient, uploadFile } from "./client"
 import type {
-    Patient,
     PatientListResponse,
     PatientDetailResponse,
     MedicalRecordsResponse,
@@ -128,13 +127,42 @@ export async function uploadPatientRecordImage(
         | "ct"
         | "mri",
     file: File,
-    title?: string
+    title?: string,
+    doctorComment?: string
 ): Promise<UploadResponse> {
     const formData = new FormData()
     formData.append("patient_id", patientId)
     formData.append("record_type", recordType)
     formData.append("file", file)
     if (title) formData.append("title", title)
+    if (doctorComment !== undefined) formData.append("doctor_comment", doctorComment)
 
     return uploadFile<UploadResponse>("/upload/patient-record-image", formData)
+}
+
+interface UpdatePatientRecordInput {
+    patientId: string
+    recordId: string
+    doctorComment?: string
+    title?: string
+    recordType?: "prescription" | "lab" | "xray" | "ecg" | "ct" | "mri" | "notes" | "referral"
+    file?: File
+}
+
+export async function updatePatientRecord(input: UpdatePatientRecordInput): Promise<UploadResponse> {
+    const formData = new FormData()
+    formData.append("patient_id", input.patientId)
+    if (input.doctorComment !== undefined) formData.append("doctor_comment", input.doctorComment)
+    if (input.title !== undefined) formData.append("title", input.title)
+    if (input.recordType) formData.append("record_type", input.recordType)
+    if (input.file) formData.append("file", input.file)
+
+    return uploadFile<UploadResponse>(`/upload/patient-record/${input.recordId}`, formData, "PUT")
+}
+
+export async function deletePatientRecord(patientId: string, recordId: string): Promise<{ status: string; record_id: string; patient_id: string; message: string }> {
+    const endpoint = `/upload/patient-record/${recordId}?patient_id=${encodeURIComponent(patientId)}`
+    return apiClient<{ status: string; record_id: string; patient_id: string; message: string }>(endpoint, {
+        method: "DELETE",
+    })
 }

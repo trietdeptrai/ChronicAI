@@ -17,6 +17,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import uuid
 
 from app.services.ollama_client import ollama_client
 from app.services.transformers_client import transformers_client
@@ -157,6 +158,26 @@ def _sanitize_list(values: list[str], max_items: int = 5, max_item_len: int = 40
     return out
 
 
+def _classify_llm_error(message: str) -> str:
+    """Convert low-level LLM errors into backend diagnostic reason text."""
+    msg = (message or "").lower()
+    if "notimplementederror" in msg:
+        return "Server runtime does not support async subprocess execution for token retrieval."
+    if "not found" in msg and "model" in msg:
+        return "Configured model is unavailable. Please verify MEDICAL_MODEL in backend configuration."
+    if "gcloud" in msg or "access token" in msg or "auth" in msg:
+        return "Google Cloud authentication is unavailable for this server session."
+    if "vertex ai error (401)" in msg or "vertex ai error (403)" in msg:
+        return "The backend is not authorized to call the Vertex endpoint."
+    if "timeout" in msg:
+        return "The model request timed out."
+    if "vertex ai error (400)" in msg or "invalid" in msg:
+        return "The request payload was rejected by the model endpoint."
+    if "cannot connect" in msg:
+        return "The backend cannot reach the model endpoint."
+    return "The model request failed unexpectedly."
+
+
 async def analyze_uploaded_record(
     *,
     record_type: str,
@@ -174,16 +195,21 @@ async def analyze_uploaded_record(
     extracted = (extracted_text or "").strip()
     if len(extracted) > 12000:
         extracted = extracted[:12000]
+    request_id = uuid.uuid4().hex[:8]
 
     timestamp = datetime.now(timezone.utc).isoformat()
     base_result = {
         "model": settings.medical_model,
         "record_type": record_type,
         "generated_at": timestamp,
+        "request_id": request_id,
     }
 
     logger.info(
-        "[upload-analysis] start record_type=%s title=%s text_len=%s has_image=%s",
+        "[upload-analysis] start id=%s provider=%s model=%s record_type=%s title=%s text_len=%s has_image=%s",
+        request_id,
+        settings.llm_provider,
+        settings.medical_model,
         record_type,
         safe_title[:120],
         len(extracted),
@@ -232,13 +258,15 @@ Rules:
     model_available = await ollama_client.check_model_available(settings.medical_model)
     if not model_available:
         logger.error(
-            "[upload-analysis] model unavailable: %s",
+            "[upload-analysis] model unavailable id=%s provider=%s model=%s",
+            request_id,
+            settings.llm_provider,
             settings.medical_model
         )
         return {
             **base_result,
             "status": "error",
-            "summary": "AI analysis model is not available on this server.",
+            "summary": "AI analysis model is unavailable on this server.",
             "key_findings": [],
             "recommended_follow_up": [],
             "limitations": [f"Model not available: {settings.medical_model}"],
@@ -247,19 +275,34 @@ Rules:
     images = [image_base64] if image_base64 else None
 
     try:
-        raw = await ollama_client.generate(
-            model=settings.medical_model,
-            prompt=prompt,
-            system=UPLOAD_ANALYSIS_SYSTEM,
-            images=images,
-            stream=False,
-            num_predict=768,
-        )
-        logger.info("[upload-analysis] primary-generate ok response_len=%s", len(raw or ""))
+        raw = ""
+        multimodal_error: Optional[str] = None
 
-        # Retry text-only if multimodal call returned empty/garbled payload.
-        if not raw or len(raw.strip()) < 10:
-            logger.warning("[upload-analysis] primary response too short; retrying text-only")
+        if images:
+            try:
+                raw = await ollama_client.generate(
+                    model=settings.medical_model,
+                    prompt=prompt,
+                    system=UPLOAD_ANALYSIS_SYSTEM,
+                    images=images,
+                    stream=False,
+                    num_predict=768,
+                )
+                logger.info(
+                    "[upload-analysis] multimodal ok id=%s response_len=%s",
+                    request_id,
+                    len(raw or ""),
+                )
+            except Exception as exc:
+                multimodal_error = _sanitize_text(str(exc) or repr(exc), max_len=500)
+                logger.exception(
+                    "[upload-analysis] multimodal failed id=%s provider=%s model=%s image_len=%s; falling back to text-only",
+                    request_id,
+                    settings.llm_provider,
+                    settings.medical_model,
+                    len(image_base64 or ""),
+                )
+        else:
             raw = await ollama_client.generate(
                 model=settings.medical_model,
                 prompt=prompt,
@@ -268,7 +311,32 @@ Rules:
                 stream=False,
                 num_predict=768,
             )
-            logger.info("[upload-analysis] retry-generate ok response_len=%s", len(raw or ""))
+            logger.info(
+                "[upload-analysis] text-only primary ok id=%s response_len=%s",
+                request_id,
+                len(raw or ""),
+            )
+
+        # Retry text-only if multimodal call returned empty/garbled payload.
+        if not raw or len(raw.strip()) < 10:
+            logger.warning(
+                "[upload-analysis] retrying text-only id=%s reason=%s",
+                request_id,
+                "multimodal_error" if multimodal_error else "short_or_empty_response",
+            )
+            raw = await ollama_client.generate(
+                model=settings.medical_model,
+                prompt=prompt,
+                system=UPLOAD_ANALYSIS_SYSTEM,
+                images=None,
+                stream=False,
+                num_predict=768,
+            )
+            logger.info(
+                "[upload-analysis] text-only retry ok id=%s response_len=%s",
+                request_id,
+                len(raw or ""),
+            )
 
         parsed = _extract_json_object(raw) or {}
         summary = str(parsed.get("summary") or "").strip()
@@ -297,8 +365,17 @@ Rules:
             "confidence": confidence,
             "limitations": _sanitize_list(_to_string_list(parsed.get("limitations")), max_item_len=500),
         }
+        if multimodal_error:
+            result["limitations"] = _sanitize_list(
+                (result.get("limitations") or []) + [
+                    "Image analysis fallback was used due to multimodal request failure.",
+                ],
+                max_items=6,
+                max_item_len=500,
+            )
         logger.info(
-            "[upload-analysis] completed urgency=%s confidence=%s findings=%s follow_up=%s",
+            "[upload-analysis] completed id=%s urgency=%s confidence=%s findings=%s follow_up=%s",
+            request_id,
             result.get("urgency"),
             result.get("confidence"),
             len(result.get("key_findings") or []),
@@ -306,14 +383,26 @@ Rules:
         )
         return result
     except Exception as exc:
-        logger.exception("[upload-analysis] failed: %s", exc)
+        detail = _sanitize_text(str(exc) or repr(exc), max_len=500)
+        reason = _classify_llm_error(detail)
+        logger.exception(
+            "[upload-analysis] failed id=%s provider=%s model=%s reason=%s error=%s has_image=%s text_len=%s title=%s",
+            request_id,
+            settings.llm_provider,
+            settings.medical_model,
+            reason,
+            detail,
+            bool(image_base64),
+            len(extracted),
+            safe_title[:120],
+        )
         return {
             **base_result,
             "status": "error",
             "summary": "AI analysis is temporarily unavailable for this file.",
             "key_findings": [],
             "recommended_follow_up": [],
-            "limitations": [_sanitize_text(str(exc), max_len=500)],
+            "limitations": ["Could not complete AI analysis at this time."],
         }
     finally:
         # Keep memory usage stable after one-shot upload analysis.
@@ -588,13 +677,16 @@ async def check_system_health() -> dict:
     Returns:
         Health status dict
     """
-    ollama_ok = await ollama_client.health_check()
-    
-    if not ollama_ok:
+    llm_ok = await ollama_client.health_check()
+    provider = (settings.llm_provider or "vertex").lower()
+
+    if not llm_ok:
         return {
             "status": "unhealthy",
-            "ollama": False,
-            "message": "Ollama is not running"
+            "provider": provider,
+            "llm": False,
+            "ollama": provider == "ollama",
+            "message": f"{provider} provider is not reachable",
         }
     
     models_status = {
@@ -612,7 +704,9 @@ async def check_system_health() -> dict:
     
     return {
         "status": "healthy" if all_available else "degraded",
-        "ollama": True,
+        "provider": provider,
+        "llm": True,
+        "ollama": provider == "ollama",
         "models": models_status,
         "message": "All systems operational" if all_available else "Some models missing"
     }

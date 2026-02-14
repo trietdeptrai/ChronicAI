@@ -147,12 +147,15 @@ export default function RecordsPage() {
                                             <p className="text-xs text-muted-foreground">
                                                 {formatDateTime(record.created_at)}
                                             </p>
-                                            {record.content_text && (
+                                            {record.content_text && !hasAnalysis(record.analysis_result) && (
                                                 <p className="mt-2 text-sm text-muted-foreground">
                                                     {truncateText(record.content_text, 180)}
                                                 </p>
                                             )}
-                                            <RecordAIAnalysis analysis={record.analysis_result} />
+                                            <RecordAIAnalysis
+                                                analysis={record.analysis_result}
+                                                doctorComment={record.doctor_comment}
+                                            />
                                         </div>
                                         <div className="flex flex-col gap-2 items-start md:items-end">
                                             {record.file_kind === "image" && record.file_url && (
@@ -209,12 +212,15 @@ export default function RecordsPage() {
                                 alt={activeRecord.title}
                                 className="w-full rounded-lg border object-contain"
                             />
-                            {activeRecord.content_text && (
+                            {activeRecord.content_text && !hasAnalysis(activeRecord.analysis_result) && (
                                 <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground whitespace-pre-line">
                                     {activeRecord.content_text}
                                 </div>
                             )}
-                            <RecordAIAnalysis analysis={activeRecord.analysis_result} />
+                            <RecordAIAnalysis
+                                analysis={activeRecord.analysis_result}
+                                doctorComment={activeRecord.doctor_comment}
+                            />
                         </div>
                     ) : (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -244,4 +250,11 @@ function formatDateTime(value: string): string {
 function truncateText(text: string, maxLength: number): string {
     if (text.length <= maxLength) return text
     return `${text.slice(0, maxLength)}...`
+}
+
+function hasAnalysis(value: unknown): boolean {
+    if (!value) return false
+    if (typeof value === "string") return value.trim().length > 0
+    if (typeof value === "object") return true
+    return false
 }
