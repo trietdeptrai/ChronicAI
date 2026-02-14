@@ -3,6 +3,9 @@ import type { MedicalRecordAIAnalysis } from "@/types"
 
 interface RecordAIAnalysisProps {
     analysis?: MedicalRecordAIAnalysis | string | null
+}
+
+interface RecordDoctorCommentProps {
     doctorComment?: string | null
 }
 
@@ -34,11 +37,24 @@ function getUrgencyBadgeVariant(urgency?: string): "outline" | "secondary" | "de
     return "outline"
 }
 
-export function RecordAIAnalysis({ analysis, doctorComment }: RecordAIAnalysisProps) {
-    const parsed = normalizeAnalysis(analysis)
+export function RecordDoctorComment({ doctorComment }: RecordDoctorCommentProps) {
     const normalizedDoctorComment =
         typeof doctorComment === "string" ? doctorComment.trim() : ""
-    if (!parsed && !normalizedDoctorComment) return null
+    if (!normalizedDoctorComment) return null
+
+    return (
+        <div className="mt-3 rounded-lg border bg-background/80 p-3">
+            <p className="text-sm font-semibold text-foreground">Nhận xét bác sĩ</p>
+            <p className="mt-2 text-sm text-muted-foreground whitespace-pre-line">
+                {normalizedDoctorComment}
+            </p>
+        </div>
+    )
+}
+
+export function RecordAIAnalysis({ analysis }: RecordAIAnalysisProps) {
+    const parsed = normalizeAnalysis(analysis)
+    if (!parsed) return null
 
     const summary = parsed && typeof parsed.summary === "string" ? parsed.summary.trim() : ""
     const keyFindings = parsed ? normalizeList(parsed.key_findings) : []
@@ -50,7 +66,6 @@ export function RecordAIAnalysis({ analysis, doctorComment }: RecordAIAnalysisPr
         && keyFindings.length === 0
         && followUp.length === 0
         && limitations.length === 0
-        && !normalizedDoctorComment
     ) {
         return null
     }
@@ -91,15 +106,6 @@ export function RecordAIAnalysis({ analysis, doctorComment }: RecordAIAnalysisPr
                             <li key={`${item}-${index}`}>{item}</li>
                         ))}
                     </ul>
-                </div>
-            )}
-
-            {normalizedDoctorComment && (
-                <div className="mt-3 rounded-md border bg-background/80 p-2">
-                    <p className="text-xs font-medium text-foreground">Nhan xet bac si</p>
-                    <p className="mt-1 text-xs text-muted-foreground whitespace-pre-line">
-                        {normalizedDoctorComment}
-                    </p>
                 </div>
             )}
 

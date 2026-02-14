@@ -38,7 +38,6 @@ from app.services.ollama_client import ollama_client
 from app.services.transformers_client import transformers_client
 from app.services.rag import (
     get_patient_context,
-    get_patient_record_image_attachments,
     get_patient_record_images_base64,
 )
 from app.services.verification_service import (
@@ -235,6 +234,103 @@ def find_best_patient_matches(
 
 
 # ============================================================================
+# IMAGE ATTACHMENT GATING
+# ============================================================================
+
+_EXPLICIT_IMAGE_REQUEST_KEYWORDS: tuple[str, ...] = (
+    "show image",
+    "show images",
+    "display image",
+    "display images",
+    "attach image",
+    "include image",
+    "send image",
+    "xem hinh",
+    "xem anh",
+    "hien thi hinh",
+    "hien thi anh",
+    "dinh kem hinh",
+    "dinh kem anh",
+    "gui hinh",
+    "gui anh",
+    "cho toi xem hinh",
+    "cho toi xem anh",
+)
+
+_IMAGE_RELEVANCE_KEYWORDS: tuple[str, ...] = (
+    "xray",
+    "x ray",
+    "x quang",
+    "radiograph",
+    "ct",
+    "mri",
+    "ultrasound",
+    "sieu am",
+    "ecg",
+    "ekg",
+    "dicom",
+    "imaging",
+    "scan",
+    "hinh anh",
+    "hinh x quang",
+    "phim x quang",
+)
+
+
+def _normalize_query_text(text: str) -> str:
+    """
+    Normalize query text for robust keyword matching across Vietnamese/English.
+    """
+    normalized = unicodedata.normalize("NFD", (text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("đ", "d")
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _query_contains_keyword(normalized_query: str, keyword: str) -> bool:
+    """
+    Keyword matcher with boundary checks for short tokens (for example: "ct").
+    """
+    if not keyword:
+        return False
+    if " " in keyword:
+        return keyword in normalized_query
+    if len(keyword) <= 3:
+        return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+    return keyword in normalized_query
+
+
+def _should_include_record_images(state: DoctorOrchestratorState) -> Tuple[bool, str]:
+    """
+    Decide whether patient record images should be fetched and attached.
+
+    Images are included only if the doctor explicitly asks for them
+    or the query is imaging-related.
+    """
+    if state.get("image_base64"):
+        return True, "user_uploaded_image"
+
+    if state.get("query_type") == QueryType.IMAGE_ANALYSIS:
+        return True, "query_type_image_analysis"
+
+    normalized_query = _normalize_query_text(
+        f"{state.get('query_vi', '')} {state.get('query_en', '')}"
+    )
+    if not normalized_query:
+        return False, "empty_query"
+
+    if any(_query_contains_keyword(normalized_query, keyword) for keyword in _EXPLICIT_IMAGE_REQUEST_KEYWORDS):
+        return True, "explicit_image_request"
+
+    if any(_query_contains_keyword(normalized_query, keyword) for keyword in _IMAGE_RELEVANCE_KEYWORDS):
+        return True, "imaging_related_query"
+
+    return False, "not_requested_or_relevant"
+
+
+# ============================================================================
 # NODE FUNCTIONS
 # ============================================================================
 
@@ -297,8 +393,8 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
                 0.25
             )]
         }
-        # Check if HITL is enabled and clarification is needed
-        if settings.enable_hitl and should_request_clarification(verification):
+        # Check if HITL is enabled for this request and clarification is needed
+        if state.get("enable_hitl", True) and should_request_clarification(verification):
             logger.info("[Graph] verify_input: Requesting clarification via HITL")
 
             # Create HITL request
@@ -522,7 +618,7 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
         has_multiple_matches = len(matched_patients) > 1
         needs_confirmation = ambiguous_matches or has_low_confidence or has_multiple_matches
 
-        if settings.enable_hitl and needs_confirmation:
+        if state.get("enable_hitl", True) and needs_confirmation:
             logger.info(f"[Graph] resolve_patients: Requesting patient confirmation "
                        f"(ambiguous={bool(ambiguous_matches)}, low_conf={has_low_confidence}, multiple={has_multiple_matches})")
 
@@ -591,6 +687,13 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
 
     record_attachments: List[dict] = []
     patient_record_images_base64: List[str] = []
+    include_record_images, image_gate_reason = _should_include_record_images(state)
+    logger.info(
+        "[Graph] get_context: image_gate include=%s reason=%s query_type=%s",
+        include_record_images,
+        image_gate_reason,
+        state.get("query_type"),
+    )
 
     if state["query_type"] == QueryType.AGGREGATE:
         # Get overview of all patients
@@ -608,17 +711,23 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
             context_parts.append(patient_context)
             context_parts.append("\n---\n")
 
-            # Fetch actual patient record images for LLM analysis
-            images_b64, attachments = await get_patient_record_images_base64(
-                patient_id=UUID(patient["id"]),
-                limit=2
-            )
-            if images_b64:
-                patient_record_images_base64.extend(images_b64)
-            if attachments:
-                record_attachments.extend(attachments)
+            if include_record_images:
+                # Fetch actual patient record images for LLM analysis + UI attachments
+                images_b64, attachments = await get_patient_record_images_base64(
+                    patient_id=UUID(patient["id"]),
+                    limit=2
+                )
+                if images_b64:
+                    patient_record_images_base64.extend(images_b64)
+                if attachments:
+                    record_attachments.extend(attachments)
 
         context = "\n".join(context_parts)
+        if not include_record_images:
+            logger.info(
+                "[Graph] get_context: Skipped record image fetch (reason=%s)",
+                image_gate_reason,
+            )
         logger.info(
             f"[Graph] get_context: Loaded {len(patient_record_images_base64)} "
             "patient record images for analysis"
@@ -721,7 +830,8 @@ Remember: It's better to say "I don't have enough information" than to provide p
                 prompt=reasoning_prompt,
                 system=system_prompt,
                 images=all_images if all_images else None,
-                stream=False
+                stream=False,
+                num_predict=max(int(settings.doctor_reasoning_max_tokens), 128)
             )
 
         response_en = await with_circuit_breaker(
@@ -838,7 +948,7 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
     }
 
     # HITL: Request approval for risky responses
-    if settings.enable_hitl and requires_human_review:
+    if state.get("enable_hitl", True) and requires_human_review:
         logger.info(f"[Graph] safety_check: Requesting human approval (score={safety_score:.2f}, risks={risk_factors})")
 
         # Provide detailed context for reviewer
@@ -971,11 +1081,35 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
 # ROUTING FUNCTIONS
 # ============================================================================
 
+def route_after_translation(state: DoctorOrchestratorState) -> Literal["verify_input", "extract_patients"]:
+    """
+    Route after translation.
+
+    Fast-path optimization:
+    - When HITL is disabled, skip expensive verification call.
+    """
+    if not state.get("enable_hitl", True):
+        return "extract_patients"
+    return "verify_input"
+
+
 def route_after_verification(state: DoctorOrchestratorState) -> Literal["extract_patients", END]:
     """Route after verification: continue or abort if invalid."""
     if state.get("errors"):
         return END
     return "extract_patients"
+
+
+def route_after_reasoning(state: DoctorOrchestratorState) -> Literal["safety_check", "format_output"]:
+    """
+    Route after medical reasoning.
+
+    Fast-path optimization:
+    - When HITL is disabled, skip expensive safety-check LLM call.
+    """
+    if not state.get("enable_hitl", True):
+        return "format_output"
+    return "safety_check"
 
 
 def route_after_safety(state: DoctorOrchestratorState) -> Literal["format_output", "medical_reasoning", END]:
@@ -1015,7 +1149,11 @@ def build_doctor_graph():
     
     # Add edges
     builder.add_edge(START, "translate_input")
-    builder.add_edge("translate_input", "verify_input")
+    builder.add_conditional_edges(
+        "translate_input",
+        route_after_translation,
+        ["verify_input", "extract_patients"]
+    )
     builder.add_conditional_edges(
         "verify_input",
         route_after_verification,
@@ -1024,7 +1162,11 @@ def build_doctor_graph():
     builder.add_edge("extract_patients", "resolve_patients")
     builder.add_edge("resolve_patients", "get_context")
     builder.add_edge("get_context", "medical_reasoning")
-    builder.add_edge("medical_reasoning", "safety_check")
+    builder.add_conditional_edges(
+        "medical_reasoning",
+        route_after_reasoning,
+        ["safety_check", "format_output"]
+    )
     builder.add_conditional_edges(
         "safety_check",
         route_after_safety,
@@ -1148,6 +1290,7 @@ async def process_doctor_query_graph(
     query_vi: str,
     image_path: Optional[str] = None,
     thread_id: Optional[str] = None,
+    enable_hitl: bool = True,
 ) -> AsyncGenerator[dict, None]:
     """
     Process a doctor query using the LangGraph orchestrator.
@@ -1158,15 +1301,17 @@ async def process_doctor_query_graph(
         query_vi: Vietnamese query from doctor
         image_path: Optional path to medical image
         thread_id: Optional thread ID for state persistence
+        enable_hitl: Enable HITL checks and guardrails (False enables fast path)
         
     Yields:
         Stage update dictionaries
     """
     graph = get_doctor_graph()
+    cache_mode = f"hitl:{int(bool(enable_hitl))}"
 
     # Check cache first (only for queries without images)
     if not image_path and response_cache.enabled:
-        cached = await get_cached_response(query_vi)
+        cached = await get_cached_response(query_vi, query_type=cache_mode)
         if cached:
             response_vi, response_en = cached
             logger.info(f"[Graph] Cache HIT for query: {query_vi[:50]}...")
@@ -1182,7 +1327,13 @@ async def process_doctor_query_graph(
             return
 
     # Create initial state
-    initial_state = create_initial_doctor_state(query_vi, image_path)
+    initial_state = create_initial_doctor_state(
+        query_vi,
+        image_path,
+        enable_hitl=enable_hitl,
+    )
+    if not enable_hitl:
+        logger.info("[Graph] Fast path enabled: skipping verify_input and safety_check nodes")
 
     # Config for checkpointing
     config = {"configurable": {"thread_id": thread_id or "default"}}
@@ -1235,10 +1386,11 @@ async def process_doctor_query_graph(
                 response=response_vi,
                 response_en=response_en,
                 patient_ids=patient_ids if patient_ids else None,
-                query_type=str(final_state.get("query_type", "general")),
+                query_type=cache_mode,
                 metadata={
                     "safety_score": final_state.get("safety_score"),
                     "patient_count": len(patient_ids),
+                    "graph_query_type": str(final_state.get("query_type", "general")),
                 }
             )
             logger.info(f"[Graph] Cached response for query: {query_vi[:50]}...")

@@ -7,7 +7,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { useAuth } from "@/contexts"
 import { usePatientRecords } from "@/lib/hooks"
-import { PageHeader, RecordAIAnalysis } from "@/components/shared"
+import { PageHeader, RecordAIAnalysis, RecordDoctorComment } from "@/components/shared"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -152,10 +152,8 @@ export default function RecordsPage() {
                                                     {truncateText(record.content_text, 180)}
                                                 </p>
                                             )}
-                                            <RecordAIAnalysis
-                                                analysis={record.analysis_result}
-                                                doctorComment={record.doctor_comment}
-                                            />
+                                            <RecordDoctorComment doctorComment={record.doctor_comment} />
+                                            <RecordAIAnalysis analysis={record.analysis_result} />
                                         </div>
                                         <div className="flex flex-col gap-2 items-start md:items-end">
                                             {record.file_kind === "image" && record.file_url && (
@@ -217,10 +215,8 @@ export default function RecordsPage() {
                                     {activeRecord.content_text}
                                 </div>
                             )}
-                            <RecordAIAnalysis
-                                analysis={activeRecord.analysis_result}
-                                doctorComment={activeRecord.doctor_comment}
-                            />
+                            <RecordDoctorComment doctorComment={activeRecord.doctor_comment} />
+                            <RecordAIAnalysis analysis={activeRecord.analysis_result} />
                         </div>
                     ) : (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">

@@ -111,7 +111,7 @@ async def verify_input(query_en: str) -> VerificationResult:
                 prompt=f"Query to analyze: {query_en}",
                 system=VERIFICATION_SYSTEM,
                 stream=False,
-                num_predict=512
+                num_predict=max(int(settings.verification_max_tokens), 64)
             )
 
         response = await with_circuit_breaker(
@@ -174,7 +174,7 @@ async def check_response_safety(response_en: str) -> Tuple[float, List[str], boo
                 prompt=f"Medical AI response to review:\n\n{response_en}",
                 system=SAFETY_CHECK_SYSTEM,
                 stream=False,
-                num_predict=512
+                num_predict=max(int(settings.verification_max_tokens), 64)
             )
 
         response = await with_circuit_breaker(

@@ -6,7 +6,7 @@
 import { useRef, useState, type ChangeEvent } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useAuth } from "@/contexts"
-import { PageHeader, LoadingOverlay, RecordAIAnalysis } from "@/components/shared"
+import { PageHeader, LoadingOverlay, RecordAIAnalysis, RecordDoctorComment } from "@/components/shared"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,8 +41,9 @@ import {
     useUpdatePatientRecord,
     useDeletePatientRecord,
 } from "@/lib/hooks"
-import type { MedicalRecord, VitalSign, VitalSignInput } from "@/types"
+import type { MedicalRecord, MedicalRecordAIAnalysis, VitalSign, VitalSignInput } from "@/types"
 import { Activity, ArrowLeft, FileText, Upload } from "lucide-react"
+import { toast } from "sonner"
 
 type ImagingRecordType =
     | "xray"
@@ -82,7 +83,7 @@ type RecordEditState = {
 
 const imagingTypeOptions: Array<{ value: ImagingRecordType; label: string }> = [
     { value: "xray", label: "X-quang" },
-    { value: "ecg", label: "Điện tâm đềE(ECG)" },
+    { value: "ecg", label: "Điện tâm đồ (ECG)" },
     { value: "ct", label: "CT" },
     { value: "mri", label: "MRI" },
 ]
@@ -135,11 +136,12 @@ export default function PatientDetailPage() {
     const [activeRecord, setActiveRecord] = useState<MedicalRecord | null>(null)
 
     const { data, isLoading, error } = usePatient(patientId ?? "")
-    const { data: recordsData, isLoading: recordsLoading, error: recordsError } = usePatientRecords(
-        patientId ?? "",
-        recordFilter || undefined,
-        50
-    )
+    const {
+        data: recordsData,
+        isLoading: recordsLoading,
+        error: recordsError,
+        refetch: refetchRecords,
+    } = usePatientRecords(patientId ?? "", recordFilter || undefined, 50)
     const { data: vitalsData, isLoading: vitalsLoading, error: vitalsError } = usePatientVitals(
         patientId ?? "",
         30
@@ -158,15 +160,16 @@ export default function PatientDetailPage() {
     const [recordType, setRecordType] = useState<ImagingRecordType>("xray")
     const [recordTitle, setRecordTitle] = useState("")
     const [recordError, setRecordError] = useState<string | null>(null)
-    const [recordSuccess, setRecordSuccess] = useState<string | null>(null)
     const recordInputRef = useRef<HTMLInputElement>(null)
     const [postUploadRecordId, setPostUploadRecordId] = useState<string | null>(null)
     const [postUploadComment, setPostUploadComment] = useState("")
+    const [postUploadAiAnalysis, setPostUploadAiAnalysis] = useState<MedicalRecordAIAnalysis | string | null>(null)
     const [isPostUploadDialogOpen, setIsPostUploadDialogOpen] = useState(false)
 
     const [editState, setEditState] = useState<RecordEditState | null>(null)
     const [editError, setEditError] = useState<string | null>(null)
     const [deleteRecord, setDeleteRecord] = useState<MedicalRecord | null>(null)
+    const [recordListError, setRecordListError] = useState<string | null>(null)
 
     const [vitalForm, setVitalForm] = useState<VitalFormState>({
         recordedAt: "",
@@ -200,7 +203,7 @@ export default function PatientDetailPage() {
             return
         }
         if (!photoFile.type.startsWith("image/")) {
-            setPhotoError("Tệp không hợp lềE Vui lòng chọn ảnh.")
+            setPhotoError("Tệp không hợp lệ. Vui lòng chọn ảnh.")
             return
         }
 
@@ -221,12 +224,12 @@ export default function PatientDetailPage() {
         const selected = e.target.files?.[0] ?? null
         setRecordFile(selected)
         setRecordError(null)
-        setRecordSuccess(null)
+        setRecordListError(null)
     }
 
     const handleRecordUpload = () => {
         setRecordError(null)
-        setRecordSuccess(null)
+        setRecordListError(null)
         if (!patientId) {
             setRecordError("Không tìm thấy mã bệnh nhân.")
             return
@@ -236,7 +239,7 @@ export default function PatientDetailPage() {
             return
         }
         if (!recordFile.type.startsWith("image/")) {
-            setRecordError("Tệp không hợp lềE Vui lòng chọn ảnh.")
+            setRecordError("Tệp không hợp lệ. Vui lòng chọn ảnh.")
             return
         }
 
@@ -251,10 +254,12 @@ export default function PatientDetailPage() {
                 onSuccess: (response) => {
                     setRecordFile(null)
                     setRecordTitle("")
-                    setRecordSuccess("Da tai tep thanh cong. Ban co the them nhan xet bac si.")
+                    toast.success("Đã tải tệp thành công.")
                     setPostUploadRecordId(response.record_id)
                     setPostUploadComment("")
+                    setPostUploadAiAnalysis(response.ai_analysis ?? null)
                     setIsPostUploadDialogOpen(true)
+                    void refetchRecords()
                     if (recordInputRef.current) {
                         recordInputRef.current.value = ""
                     }
@@ -280,10 +285,12 @@ export default function PatientDetailPage() {
                     setIsPostUploadDialogOpen(false)
                     setPostUploadRecordId(null)
                     setPostUploadComment("")
-                    setRecordSuccess("Da luu nhan xet bac si.")
+                    setPostUploadAiAnalysis(null)
+                    toast.success("Đã lưu nhận xét bác sĩ.")
+                    void refetchRecords()
                 },
                 onError: (err) => {
-                    setRecordError(getErrorMessage(err, "Khong the luu nhan xet bac si."))
+                    setRecordError(getErrorMessage(err, "Không thể lưu nhận xét bác sĩ."))
                 },
             }
         )
@@ -291,6 +298,7 @@ export default function PatientDetailPage() {
 
     const openEditRecord = (record: MedicalRecord) => {
         setEditError(null)
+        setRecordListError(null)
         setEditState({
             recordId: record.id,
             title: record.title || "",
@@ -317,9 +325,10 @@ export default function PatientDetailPage() {
         }
 
         setEditError(null)
+        setRecordListError(null)
 
         if (editState.file && !editState.file.type.startsWith("image/") && editState.file.type !== "application/pdf") {
-            setEditError("Tep thay the phai la anh hoac PDF.")
+            setEditError("Tệp thay thế phải là ảnh hoặc PDF.")
             return
         }
 
@@ -336,13 +345,14 @@ export default function PatientDetailPage() {
                 onSuccess: () => {
                     setEditState(null)
                     setEditError(null)
-                    setRecordSuccess("Da cap nhat ho so y khoa.")
+                    toast.success("Đã cập nhật hồ sơ y khoa.")
                     if (activeRecord?.id === editState.recordId) {
                         setActiveRecord(null)
                     }
+                    void refetchRecords()
                 },
                 onError: (err) => {
-                    setEditError(getErrorMessage(err, "Cap nhat ho so y khoa that bai."))
+                    setEditError(getErrorMessage(err, "Cập nhật hồ sơ y khoa thất bại."))
                 },
             }
         )
@@ -352,6 +362,8 @@ export default function PatientDetailPage() {
         if (!patientId || !deleteRecord) {
             return
         }
+
+        setRecordListError(null)
 
         recordDeleteMutation.mutate(
             {
@@ -364,10 +376,11 @@ export default function PatientDetailPage() {
                         setActiveRecord(null)
                     }
                     setDeleteRecord(null)
-                    setRecordSuccess("Da xoa ho so y khoa.")
+                    toast.success("Đã xóa hồ sơ y khoa thành công.")
+                    void refetchRecords()
                 },
                 onError: (err) => {
-                    setRecordError(getErrorMessage(err, "Xoa ho so y khoa that bai."))
+                    setRecordListError(getErrorMessage(err, "Xóa hồ sơ y khoa thất bại."))
                 },
             }
         )
@@ -400,7 +413,7 @@ export default function PatientDetailPage() {
         ].some(value => value.trim() !== "")
 
         if (!hasMeasurements) {
-            setVitalError("Vui lòng nhập ít nhất một chềEsềE")
+            setVitalError("Vui lòng nhập ít nhất một chỉ số.")
             return
         }
 
@@ -443,7 +456,7 @@ export default function PatientDetailPage() {
             { patientId, data: payload },
             {
                 onSuccess: () => {
-                    setVitalSuccess("Đã lưu chềEsềEsinh tồn.")
+                    setVitalSuccess("Đã lưu chỉ số sinh tồn.")
                     setVitalForm({
                         recordedAt: "",
                         source: role === "doctor" ? "clinic" : "self_reported",
@@ -463,14 +476,14 @@ export default function PatientDetailPage() {
     }
 
     if (isLoading) {
-        return <LoadingOverlay text="Đang tải hềEsơ bệnh nhân..." />
+        return <LoadingOverlay text="Đang tải hồ sơ bệnh nhân..." />
     }
 
     if (error || !data?.patient) {
         return (
             <Card className="border-destructive/30 bg-destructive/5">
                 <CardContent className="p-6 text-center">
-                    <p className="text-destructive font-medium">Không thềEtải hềEsơ bệnh nhân</p>
+                    <p className="text-destructive font-medium">Không thể tải hồ sơ bệnh nhân</p>
                     <p className="text-sm text-muted-foreground mt-1">
                         Vui lòng thử lại sau
                     </p>
@@ -482,6 +495,10 @@ export default function PatientDetailPage() {
     const patient = data.patient
     const initials = getInitials(patient.full_name)
     const vitals = vitalsData?.vitals ?? data.recent_vitals
+    const postUploadRecord = postUploadRecordId
+        ? recordsData?.records.find((record) => record.id === postUploadRecordId)
+        : null
+    const postUploadAnalysis = postUploadAiAnalysis ?? postUploadRecord?.analysis_result ?? null
 
     return (
         <div className="space-y-6">
@@ -490,12 +507,12 @@ export default function PatientDetailPage() {
                     <ArrowLeft className="h-4 w-4 mr-1" />
                     Quay lại
                 </Button>
-                <PageHeader title="HềEsơ bệnh nhân" description={patient.full_name} />
+                <PageHeader title="Hồ sơ bệnh nhân" description={patient.full_name} />
             </div>
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Ảnh hềEsơ</CardTitle>
+                    <CardTitle>Ảnh hồ sơ</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="flex items-center gap-4">
@@ -537,7 +554,7 @@ export default function PatientDetailPage() {
                     )}
                     {photoUploadMutation.isSuccess && (
                         <p className="text-sm text-emerald-600">
-                            Đã cập nhật ảnh hềEsơ.
+                            Đã cập nhật ảnh hồ sơ.
                         </p>
                     )}
 
@@ -553,7 +570,7 @@ export default function PatientDetailPage() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>ChềEsềEsinh tồn</CardTitle>
+                    <CardTitle>Chỉ số sinh tồn</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                     <div className="grid gap-6 lg:grid-cols-2">
@@ -617,7 +634,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-spo2">SpO₁E(%)</Label>
+                                    <Label htmlFor="vital-spo2">SpO₂ (%)</Label>
                                     <Input
                                         id="vital-spo2"
                                         type="number"
@@ -628,7 +645,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-temperature">Nhiệt đềE(°C)</Label>
+                                    <Label htmlFor="vital-temperature">Nhiệt độ (°C)</Label>
                                     <Input
                                         id="vital-temperature"
                                         type="number"
@@ -695,7 +712,7 @@ export default function PatientDetailPage() {
                             )}
                             {createVitalMutation.isError && (
                                 <p className="text-sm text-destructive">
-                                    Lưu chềEsềEthất bại. Vui lòng thử lại.
+                                    Lưu chỉ số thất bại. Vui lòng thử lại.
                                 </p>
                             )}
                             {vitalSuccess && (
@@ -707,7 +724,7 @@ export default function PatientDetailPage() {
                                 disabled={createVitalMutation.isPending}
                             >
                                 <Activity className="h-4 w-4 mr-2" />
-                                {createVitalMutation.isPending ? "Dang luu..." : "Luu chi so"}
+                                {createVitalMutation.isPending ? "Đang lưu..." : "Lưu chỉ số"}
                             </Button>
                         </div>
 
@@ -725,13 +742,13 @@ export default function PatientDetailPage() {
 
                             {vitalsError && (
                                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                                    Không thềEtải dữ liệu sinh tồn.
+                                    Không thể tải dữ liệu sinh tồn.
                                 </div>
                             )}
 
                             {!vitalsLoading && !vitalsError && vitals && vitals.length === 0 && (
                                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                                    Chưa có chềEsềEsinh tồn nào.
+                                    Chưa có chỉ số sinh tồn nào.
                                 </div>
                             )}
 
@@ -783,7 +800,7 @@ export default function PatientDetailPage() {
             <Card>
                 <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <CardTitle>HềEsơ y khoa</CardTitle>
+                        <CardTitle>Hồ sơ y khoa</CardTitle>
                         <p className="text-sm text-muted-foreground">
                             Xem và lọc các tài liệu đã tải lên
                         </p>
@@ -803,21 +820,27 @@ export default function PatientDetailPage() {
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    {recordListError && (
+                        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                            {recordListError}
+                        </div>
+                    )}
+
                     {recordsLoading && (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Đang tải hềEsơ y khoa...
+                            Đang tải hồ sơ y khoa...
                         </div>
                     )}
 
                     {recordsError && (
                         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                            Không thềEtải hềEsơ y khoa.
+                            Không thể tải hồ sơ y khoa.
                         </div>
                     )}
 
                     {!recordsLoading && !recordsError && recordsData?.records.length === 0 && (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Chưa có hềEsơ y khoa nào.
+                            Chưa có hồ sơ y khoa nào.
                         </div>
                     )}
 
@@ -846,7 +869,8 @@ export default function PatientDetailPage() {
                                                     {truncateText(record.content_text, 180)}
                                                 </p>
                                             )}
-                                            <RecordAIAnalysis analysis={record.analysis_result} doctorComment={record.doctor_comment} />
+                                            <RecordDoctorComment doctorComment={record.doctor_comment} />
+                                            <RecordAIAnalysis analysis={record.analysis_result} />
                                         </div>
                                         <div className="flex flex-col gap-2 items-start md:items-end">
                                             {role === "doctor" && (
@@ -856,14 +880,17 @@ export default function PatientDetailPage() {
                                                         variant="outline"
                                                         onClick={() => openEditRecord(record)}
                                                     >
-                                                        Chinh sua
+                                                        Chỉnh sửa
                                                     </Button>
                                                     <Button
                                                         size="sm"
                                                         variant="destructive"
-                                                        onClick={() => setDeleteRecord(record)}
+                                                        onClick={() => {
+                                                            setRecordListError(null)
+                                                            setDeleteRecord(record)
+                                                        }}
                                                     >
-                                                        Xoa
+                                                        Xóa
                                                     </Button>
                                                 </div>
                                             )}
@@ -915,7 +942,6 @@ export default function PatientDetailPage() {
                             onChange={(event) => {
                                 setRecordType(event.target.value as ImagingRecordType)
                                 setRecordError(null)
-                                setRecordSuccess(null)
                             }}
                             className="border-input h-9 w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                         >
@@ -928,14 +954,13 @@ export default function PatientDetailPage() {
                     </div>
 
                     <div className="grid gap-2">
-                        <Label htmlFor="record-title">Tiêu đềE(tuỳ chọn)</Label>
+                        <Label htmlFor="record-title">Tiêu đề (tùy chọn)</Label>
                         <Input
                             id="record-title"
                             placeholder="Ví dụ: CT ngực 2026-02-01"
                             value={recordTitle}
                             onChange={(event) => {
                                 setRecordTitle(event.target.value)
-                                setRecordSuccess(null)
                             }}
                         />
                     </div>
@@ -959,9 +984,6 @@ export default function PatientDetailPage() {
                             Tải ảnh thất bại. Vui lòng thử lại.
                         </p>
                     )}
-                    {recordSuccess && (
-                        <p className="text-sm text-emerald-600">{recordSuccess}</p>
-                    )}
 
                     <Button
                         onClick={handleRecordUpload}
@@ -980,21 +1002,29 @@ export default function PatientDetailPage() {
                     if (!open) {
                         setPostUploadRecordId(null)
                         setPostUploadComment("")
+                        setPostUploadAiAnalysis(null)
                     }
                 }}
             >
                 <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
-                        <DialogTitle>Them nhan xet bac si (tuy chon)</DialogTitle>
+                        <DialogTitle>Thêm nhận xét bác sĩ (tùy chọn)</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-3">
                         <p className="text-sm text-muted-foreground">
-                            AI da phan tich xong. Ban co the bo sung nhan xet bac si cho ho so nay.
+                            AI đã phân tích xong. Bạn có thể bổ sung nhận xét bác sĩ cho hồ sơ này.
                         </p>
+                        {postUploadAnalysis ? (
+                            <RecordAIAnalysis analysis={postUploadAnalysis} />
+                        ) : (
+                            <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                                Chưa có nội dung phân tích AI để tham khảo.
+                            </div>
+                        )}
                         <Textarea
                             value={postUploadComment}
                             onChange={(event) => setPostUploadComment(event.target.value)}
-                            placeholder="Nhap nhan xet bac si..."
+                            placeholder="Nhập nhận xét bác sĩ..."
                             rows={4}
                         />
                     </div>
@@ -1005,15 +1035,16 @@ export default function PatientDetailPage() {
                                 setIsPostUploadDialogOpen(false)
                                 setPostUploadRecordId(null)
                                 setPostUploadComment("")
+                                setPostUploadAiAnalysis(null)
                             }}
                         >
-                            Bo qua
+                            Bỏ qua
                         </Button>
                         <Button
                             onClick={handlePostUploadCommentSave}
                             disabled={!postUploadRecordId || recordUpdateMutation.isPending}
                         >
-                            {recordUpdateMutation.isPending ? "Dang luu..." : "Luu nhan xet"}
+                            {recordUpdateMutation.isPending ? "Đang lưu..." : "Lưu nhận xét"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -1030,12 +1061,12 @@ export default function PatientDetailPage() {
             >
                 <DialogContent className="sm:max-w-xl">
                     <DialogHeader>
-                        <DialogTitle>Cap nhat ho so y khoa</DialogTitle>
+                        <DialogTitle>Cập nhật hồ sơ y khoa</DialogTitle>
                     </DialogHeader>
                     {editState && (
                         <div className="space-y-4">
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-title">Tieu de</Label>
+                                <Label htmlFor="edit-record-title">Tiêu đề</Label>
                                 <Input
                                     id="edit-record-title"
                                     value={editState.title}
@@ -1053,7 +1084,7 @@ export default function PatientDetailPage() {
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-type">Loai ho so</Label>
+                                <Label htmlFor="edit-record-type">Loại hồ sơ</Label>
                                 <select
                                     id="edit-record-type"
                                     value={editState.recordType}
@@ -1080,7 +1111,7 @@ export default function PatientDetailPage() {
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-file">Thay tep (tuỳ chọn)</Label>
+                                <Label htmlFor="edit-record-file">Thay tệp (tùy chọn)</Label>
                                 <Input
                                     id="edit-record-file"
                                     type="file"
@@ -1088,12 +1119,12 @@ export default function PatientDetailPage() {
                                     onChange={handleEditRecordFileChange}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    Neu thay tep, he thong se chay lai phan tich AI.
+                                    Nếu thay tệp, hệ thống sẽ chạy lại phân tích AI.
                                 </p>
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-comment">Nhan xet bac si</Label>
+                                <Label htmlFor="edit-record-comment">Nhận xét bác sĩ</Label>
                                 <Textarea
                                     id="edit-record-comment"
                                     value={editState.doctorComment}
@@ -1108,7 +1139,7 @@ export default function PatientDetailPage() {
                                         )
                                     }
                                     rows={4}
-                                    placeholder="Nhap nhan xet bac si..."
+                                    placeholder="Nhập nhận xét bác sĩ..."
                                 />
                             </div>
 
@@ -1117,10 +1148,10 @@ export default function PatientDetailPage() {
                     )}
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditState(null)}>
-                            Huy
+                            Hủy
                         </Button>
                         <Button onClick={handleRecordUpdate} disabled={!editState || recordUpdateMutation.isPending}>
-                            {recordUpdateMutation.isPending ? "Dang cap nhat..." : "Luu thay doi"}
+                            {recordUpdateMutation.isPending ? "Đang cập nhật..." : "Lưu thay đổi"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -1136,18 +1167,18 @@ export default function PatientDetailPage() {
             >
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Xoa ho so y khoa?</AlertDialogTitle>
+                        <AlertDialogTitle>Xóa hồ sơ y khoa?</AlertDialogTitle>
                         <AlertDialogDescription>
-                            Tep, ket qua phan tich AI va du lieu lien quan cua ban ghi nay se bi xoa.
+                            Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bị xóa.
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel>Huy</AlertDialogCancel>
+                        <AlertDialogCancel>Hủy</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={handleDeleteRecord}
                             disabled={recordDeleteMutation.isPending}
                         >
-                            {recordDeleteMutation.isPending ? "Dang xoa..." : "Xoa"}
+                            {recordDeleteMutation.isPending ? "Đang xóa..." : "Xóa"}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
@@ -1177,14 +1208,12 @@ export default function PatientDetailPage() {
                                     {activeRecord.content_text}
                                 </div>
                             )}
-                            <RecordAIAnalysis
-                                analysis={activeRecord.analysis_result}
-                                doctorComment={activeRecord.doctor_comment}
-                            />
+                            <RecordDoctorComment doctorComment={activeRecord.doctor_comment} />
+                            <RecordAIAnalysis analysis={activeRecord.analysis_result} />
                         </div>
                     ) : (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Không có ảnh đềEhiển thềE
+                            Không có ảnh để hiển thị
                         </div>
                     )}
                 </DialogContent>
@@ -1232,10 +1261,10 @@ function formatVitalMetrics(vital: VitalSign): string[] {
         metrics.push(`Đường huyết ${vital.blood_glucose} mmol/L${timingLabel ? ` (${timingLabel})` : ""}`)
     }
     if (vital.temperature) {
-        metrics.push(`Nhiệt đềE${vital.temperature} °C`)
+        metrics.push(`Nhiệt độ ${vital.temperature} °C`)
     }
     if (vital.oxygen_saturation) {
-        metrics.push(`SpO₁E${vital.oxygen_saturation}%`)
+        metrics.push(`SpO₂ ${vital.oxygen_saturation}%`)
     }
     if (vital.weight_kg) {
         metrics.push(`Cân nặng ${vital.weight_kg} kg`)

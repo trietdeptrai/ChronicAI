@@ -4,7 +4,7 @@ LLM client wrapper.
 Supports:
 - Vertex AI OpenAI-compatible chat completions (default)
 - Legacy Ollama generation fallback
-- Embeddings via local hash vectors (default) or Ollama
+- Embeddings via local hash vectors (default), Ollama, or Gemini
 """
 import asyncio
 import hashlib
@@ -435,7 +435,13 @@ class OllamaClient:
 
         return argv
 
-    async def embed(self, text: str, model: str = None) -> List[float]:
+    async def embed(
+        self,
+        text: str,
+        model: str = None,
+        *,
+        task_type: Optional[str] = None,
+    ) -> List[float]:
         """
         Generate embedding vector.
 
@@ -450,9 +456,19 @@ class OllamaClient:
         if self._embedding_provider == "ollama":
             return await self._embed_ollama(text, model)
 
+        if self._embedding_provider == "gemini":
+            gemini_model = (model or "").strip()
+            if not gemini_model or gemini_model == "nomic-embed-text":
+                gemini_model = "gemini-embedding-001"
+                logger.info(
+                    "Embedding provider is gemini; defaulting EMBEDDING_MODEL to %s",
+                    gemini_model,
+                )
+            return await self._embed_gemini(text, gemini_model, task_type=task_type)
+
         raise RuntimeError(
             f"Unsupported embedding provider '{self._embedding_provider}'. "
-            "Use 'hash' or 'ollama'."
+            "Use 'hash', 'ollama', or 'gemini'."
         )
 
     async def _embed_ollama(self, text: str, model: str) -> List[float]:
@@ -499,6 +515,101 @@ class OllamaClient:
             raise
         except Exception as e:
             raise RuntimeError(f"Ollama embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
+    async def _embed_gemini(
+        self,
+        text: str,
+        model: str,
+        *,
+        task_type: Optional[str] = None,
+    ) -> List[float]:
+        url = self._vertex_embedding_url(model)
+        headers = await self._vertex_headers()
+        payload = self._build_vertex_embedding_payload(text, task_type=task_type)
+        requested_dims = max(int(settings.embedding_dimensions), 0)
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                embedding = self._extract_vertex_embedding(response.json())
+
+                if requested_dims and len(embedding) != requested_dims:
+                    logger.warning(
+                        "Gemini embedding dimension mismatch: expected=%s actual=%s model=%s",
+                        requested_dims,
+                        len(embedding),
+                        model,
+                    )
+                return embedding
+        except httpx.ConnectError:
+            raise RuntimeError("Cannot connect to Vertex Gemini embedding endpoint")
+        except httpx.TimeoutException:
+            raise RuntimeError("Vertex Gemini embedding request timed out")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"Vertex Gemini embedding error ({e.response.status_code}): "
+                f"{self._extract_http_error(e.response)}"
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Vertex Gemini embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
+    def _vertex_embedding_url(self, model: str) -> str:
+        project = (settings.vertex_ai_project_id or "").strip()
+        location = (settings.vertex_ai_location or "").strip()
+        if not project or not location:
+            raise RuntimeError(
+                "Gemini embeddings require VERTEX_AI_PROJECT_ID and VERTEX_AI_LOCATION"
+            )
+
+        model_ref = (model or "").strip()
+        if not model_ref:
+            raise RuntimeError(
+                "Embedding model is required. Set EMBEDDING_MODEL (for example: gemini-embedding-001)."
+            )
+
+        base = f"https://{location}-aiplatform.googleapis.com/v1"
+        if model_ref.startswith("projects/"):
+            resource = model_ref
+        elif model_ref.startswith("publishers/"):
+            resource = f"projects/{project}/locations/{location}/{model_ref}"
+        else:
+            resource = (
+                f"projects/{project}/locations/{location}/publishers/google/models/{model_ref}"
+            )
+
+        if resource.endswith(":predict"):
+            return f"{base}/{resource}"
+        return f"{base}/{resource}:predict"
+
+    def _build_vertex_embedding_payload(
+        self,
+        text: str,
+        *,
+        task_type: Optional[str] = None,
+    ) -> dict:
+        payload: dict = {
+            "instances": [{
+                "content": text or "",
+                "task_type": (
+                    task_type
+                    or settings.embedding_task_type_document
+                    or "RETRIEVAL_DOCUMENT"
+                ),
+            }]
+        }
+
+        requested_dims = max(int(settings.embedding_dimensions), 0)
+        if requested_dims:
+            payload["parameters"] = {"outputDimensionality": requested_dims}
+
+        return payload
 
     @staticmethod
     def _hash_embedding(text: str, dims: int) -> List[float]:
@@ -570,6 +681,55 @@ class OllamaClient:
         raise RuntimeError("Ollama embedding response is missing embedding vector")
 
     @staticmethod
+    def _extract_vertex_embedding(payload: dict) -> List[float]:
+        if not isinstance(payload, dict):
+            raise RuntimeError("Vertex Gemini embedding response is not a JSON object")
+
+        predictions = payload.get("predictions")
+        if isinstance(predictions, list) and predictions:
+            first = predictions[0]
+            if isinstance(first, dict):
+                embedded = first.get("embeddings")
+                if isinstance(embedded, dict):
+                    values = OllamaClient._extract_numeric_list(embedded.get("values"))
+                    if values:
+                        return values
+
+                values = OllamaClient._extract_numeric_list(first.get("values"))
+                if values:
+                    return values
+
+                values = OllamaClient._extract_numeric_list(first.get("embedding"))
+                if values:
+                    return values
+
+        values = OllamaClient._extract_numeric_list(
+            (payload.get("embedding") or {}).get("values")
+            if isinstance(payload.get("embedding"), dict)
+            else payload.get("embedding")
+        )
+        if values:
+            return values
+
+        values = OllamaClient._extract_numeric_list(
+            (payload.get("data") or [{}])[0].get("embedding")
+            if isinstance(payload.get("data"), list) and payload.get("data")
+            else None
+        )
+        if values:
+            return values
+
+        raise RuntimeError("Vertex Gemini embedding response is missing embedding vector")
+
+    @staticmethod
+    def _extract_numeric_list(value: object) -> List[float]:
+        if not isinstance(value, list) or not value:
+            return []
+        if not all(isinstance(item, (int, float)) for item in value):
+            return []
+        return [float(item) for item in value]
+
+    @staticmethod
     def _extract_error_message(response: httpx.Response) -> str:
         try:
             payload = response.json()
@@ -605,10 +765,12 @@ class OllamaClient:
         self,
         texts: List[str],
         model: str = None,
+        *,
+        task_type: Optional[str] = None,
     ) -> List[List[float]]:
         embeddings = []
         for text in texts:
-            embedding = await self.embed(text, model)
+            embedding = await self.embed(text, model, task_type=task_type)
             embeddings.append(embedding)
         return embeddings
 

@@ -82,6 +82,7 @@ class DoctorOrchestratorState(TypedDict):
     query_en: str  # Translated English query
     image_path: Optional[str]  # Path to uploaded image (if any)
     image_base64: Optional[str]  # Base64 encoded image (user-uploaded)
+    enable_hitl: bool  # Per-request HITL toggle (also controls fast-path checks)
 
     # === Patient Record Images ===
     patient_record_images_base64: List[str]  # Base64 encoded patient record images from DB
@@ -167,7 +168,8 @@ class PatientChatState(TypedDict):
 
 def create_initial_doctor_state(
     query_vi: str,
-    image_path: Optional[str] = None
+    image_path: Optional[str] = None,
+    enable_hitl: bool = True,
 ) -> DoctorOrchestratorState:
     """Create initial state for doctor orchestrator graph."""
     return DoctorOrchestratorState(
@@ -176,13 +178,14 @@ def create_initial_doctor_state(
         query_en="",
         image_path=image_path,
         image_base64=None,
+        enable_hitl=enable_hitl,
 
         # Patient record images
         patient_record_images_base64=[],
 
         # Verification
         verification_result=None,
-        input_confidence=0.0,
+        input_confidence=1.0,
         human_approved_input=None,
         
         # Patient routing
@@ -193,7 +196,7 @@ def create_initial_doctor_state(
         
         # Reasoning
         reasoning_en="",
-        safety_score=0.0,
+        safety_score=1.0,
         safety_issues=[],
         human_approved_output=None,
         

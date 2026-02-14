@@ -306,11 +306,6 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
         thread_id: Optional ID for conversation state persistence
     """
     import uuid as uuid_lib
-    from app.config import settings
-    
-    # Temporarily override HITL setting if specified
-    original_hitl = settings.enable_hitl
-    settings.enable_hitl = request.enable_hitl
     
     # Generate thread ID if not provided
     thread_id = request.thread_id or str(uuid_lib.uuid4())
@@ -321,7 +316,8 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
             async for update in process_doctor_query_graph(
                 query_vi=request.message,
                 image_path=request.image_path,
-                thread_id=thread_id
+                thread_id=thread_id,
+                enable_hitl=request.enable_hitl,
             ):
                 # Add thread_id to updates for HITL resume
                 update["thread_id"] = thread_id
@@ -344,10 +340,6 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
                 "thread_id": thread_id
             }, ensure_ascii=False)
             yield f"data: {error_data}\n\n"
-        finally:
-            # Restore original HITL setting
-            settings.enable_hitl = original_hitl
-    
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",

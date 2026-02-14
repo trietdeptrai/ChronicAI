@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     # Verification model for input validation + safety checks.
     # In Vertex endpoint mode this typically points to the same deployed endpoint model.
     verification_model: str = "gemma:2b-instruct"
+    doctor_reasoning_max_tokens: int = 900
+    verification_max_tokens: int = 256
 
     # Human-in-the-Loop Configuration
     enable_hitl: bool = True
@@ -77,9 +79,12 @@ class Settings(BaseSettings):
     # Embedding settings:
     # - embedding_provider=hash: local deterministic vectors (no external service needed)
     # - embedding_provider=ollama: use Ollama embedding model from embedding_model
+    # - embedding_provider=gemini: use Vertex Gemini embedding model from embedding_model
     embedding_model: str = "nomic-embed-text"
-    embedding_provider: str = "hash"  # hash | ollama
+    embedding_provider: str = "hash"  # hash | ollama | gemini
     embedding_dimensions: int = 768
+    embedding_task_type_document: str = "RETRIEVAL_DOCUMENT"
+    embedding_task_type_query: str = "RETRIEVAL_QUERY"
 
     # Resilience Configuration
     llm_retry_max_attempts: int = 3
