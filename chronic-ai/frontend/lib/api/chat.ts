@@ -115,6 +115,21 @@ export async function* sendDoctorChatStreaming(
         message,
         image_path: imagePath,
         enable_hitl: false,
+        enable_llm_hitl: false,
+        enable_patient_confirmation_hitl: true,
         output_format: "structured",
+    })
+}
+
+/**
+ * Resume doctor orchestrator stream after a HITL interrupt.
+ */
+export async function* resumeDoctorChatStreaming(
+    threadId: string,
+    response: Record<string, unknown>
+): AsyncGenerator<DoctorChatStreamUpdate> {
+    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/v2/resume", {
+        thread_id: threadId,
+        response,
     })
 }
