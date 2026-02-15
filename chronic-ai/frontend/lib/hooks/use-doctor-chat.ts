@@ -113,7 +113,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
             messages: [...prev.messages, userMessage],
             isLoading: true,
             isStreaming: true,
-            currentStage: "translating_input" as DoctorChatStreamUpdate["stage"],
+            currentStage: "starting" as DoctorChatStreamUpdate["stage"],
             currentStageMessage: STAGE_MESSAGES.starting,
             currentProgress: 0,
             mentionedPatients: [],
@@ -198,7 +198,6 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                         id: `assistant-${Date.now()}`,
                         role: "assistant",
                         content: update.response,
-                        content_en: update.response_en,
                         timestamp: new Date().toISOString(),
                         attachments: update.attachments,
                     }
@@ -338,7 +337,6 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                         id: `assistant-${Date.now()}`,
                         role: "assistant",
                         content: update.response,
-                        content_en: update.response_en,
                         timestamp: new Date().toISOString(),
                         attachments: update.attachments,
                     }

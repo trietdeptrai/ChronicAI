@@ -35,7 +35,6 @@ from app.services.graph_state import (
     HITLRequest,
 )
 from app.services.llm_client import llm_client
-from app.services.transformers_client import transformers_client
 from app.services.rag import (
     get_patient_context,
     get_patient_record_images_base64,
@@ -346,22 +345,13 @@ def _patient_confirmation_hitl_enabled(state: DoctorOrchestratorState) -> bool:
 
 async def translate_input_node(state: DoctorOrchestratorState) -> dict:
     """
-    Node: Translate Vietnamese input to English.
-    
-    Uses EnviT5 for translation.
+    Node: Normalize input for downstream processing.
     """
     logger.info(f"[Graph] translate_input: {state['query_vi'][:50]}...")
     start_time = time.perf_counter()
     try:
-        if settings.doctor_graph_use_translation_model:
-            query_en = await transformers_client.translate_vi_to_en(state["query_vi"])
-            stage_message = "Hoàn thành dịch sang tiếng Anh"
-            logger.info("[Graph] translate_input: Translation model enabled")
-        else:
-            # Temporary fast path for direct MedGemma testing without translation model.
-            query_en = state["query_vi"]
-            stage_message = "Bỏ qua dịch, dùng truy vấn gốc"
-            logger.info("[Graph] translate_input: Translation model disabled, using original query directly")
+        query_en = state["query_vi"]
+        stage_message = "Đã hiểu câu hỏi"
 
         # Load image if provided
         image_base64 = None
@@ -380,7 +370,6 @@ async def translate_input_node(state: DoctorOrchestratorState) -> dict:
                 "translating_input",
                 stage_message,
                 0.15,
-                translation=query_en
             )]
         }
     finally:
@@ -434,12 +423,8 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
                 # Human provided clarification
                 result["query_vi"] = clarified.get("query", state["query_vi"])
                 result["human_approved_input"] = True
-                # Re-translate only when translation model is enabled.
                 if result["query_vi"] != state["query_vi"]:
-                    if settings.doctor_graph_use_translation_model:
-                        result["query_en"] = await transformers_client.translate_vi_to_en(result["query_vi"])
-                    else:
-                        result["query_en"] = result["query_vi"]
+                    result["query_en"] = result["query_vi"]
 
         return result
     finally:
@@ -1514,7 +1499,7 @@ async def process_doctor_query_graph(
     if not image_path and response_cache.enabled:
         cached = await get_cached_response(query_vi, query_type=cache_mode)
         if cached:
-            response_vi, response_en = cached
+            response_vi, _ = cached
             logger.info(f"[Graph] Cache HIT for query: {query_vi[:50]}...")
             yield create_stage_message("starting", "Đang tải kết quả...", 0.0)
             yield {
@@ -1522,7 +1507,6 @@ async def process_doctor_query_graph(
                 "message": "Hoàn thành (từ bộ nhớ đệm)",
                 "progress": 1.0,
                 "response": response_vi,
-                "response_en": response_en,
                 "from_cache": True
             }
             return
@@ -1604,7 +1588,6 @@ async def process_doctor_query_graph(
             "message": "Hoàn thành",
             "progress": 1.0,
             "response": response_vi,
-            "response_en": response_en,
             "formatted_response": final_state.get("formatted_response"),
             "mentioned_patients": [
                 {"id": m["id"], "name": m["name"]}

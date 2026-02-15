@@ -1,6 +1,6 @@
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+from typing import List
 
 
 class Settings(BaseSettings):
@@ -57,27 +57,6 @@ class Settings(BaseSettings):
     hitl_confidence_threshold: float = 0.7  # Below this, request clarification
     hitl_safety_threshold: float = 0.8  # Below (1.0 - this), require safety review
 
-    # VinAI Translate Models (HuggingFace) - State-of-the-art Vi-En translation
-    # Higher BLEU scores than EnviT5, especially for medical domain
-    vinai_vi2en_model: str = "vinai/vinai-translate-vi2en"
-    vinai_en2vi_model: str = "vinai/vinai-translate-en2vi"
-    # Device options: "auto" (recommended), "mps" (Apple Silicon), "cuda" (NVIDIA), "cpu"
-    translation_device: str = "auto"
-
-    # Translation Performance Settings
-    translation_cache_enabled: bool = True
-    translation_cache_max_size: int = 2000  # LRU cache entries
-    translation_cache_ttl: float = 7200.0  # 2 hours TTL
-    translation_batch_size: int = 8  # Max texts per batch
-    translation_adaptive_beams: bool = True  # Use fewer beams for short texts
-    translation_short_text_threshold: int = 50  # tokens - below this use 3 beams
-    # Temporary toggle for direct MedGemma evaluation without translation model.
-    doctor_graph_use_translation_model: bool = True
-
-    # Deprecated: EnviT5 settings (kept for backward compatibility)
-    envit5_model: str = "VietAI/envit5-translation"  # deprecated
-    envit5_device: str = "auto"  # deprecated
-
     # Embedding settings:
     # - embedding_provider=hash: local deterministic vectors (no external service needed)
     # - embedding_provider=ollama: use Ollama embedding model from embedding_model
@@ -103,8 +82,5 @@ class Settings(BaseSettings):
     # Audit Configuration
     enable_safety_audit: bool = True
     audit_retention_entries: int = 10000
-
-    # Deprecated: translation_model no longer used (replaced by envit5_model)
-    translation_model: Optional[str] = None
 
 settings = Settings()

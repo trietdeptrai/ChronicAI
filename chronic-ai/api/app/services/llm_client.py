@@ -283,8 +283,12 @@ class LLMClient:
             "content": user_content,
         })
 
+        # In Vertex endpoint mode we prefer the endpoint's configured model.
+        # This avoids sending stale local model names when endpoint IDs change.
+        selected_model = (settings.vertex_ai_model or "").strip() or model or settings.medical_model
+
         payload = {
-            "model": model or settings.vertex_ai_model or settings.medical_model,
+            "model": selected_model,
             "messages": messages,
             "max_tokens": num_predict,
             "temperature": settings.vertex_ai_temperature,

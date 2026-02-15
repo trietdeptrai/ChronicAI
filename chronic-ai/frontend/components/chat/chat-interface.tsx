@@ -3,14 +3,14 @@
  */
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import { useRef, useEffect } from "react"
 import { useChat } from "@/lib/hooks"
 import { MessageBubble } from "./message-bubble"
 import { ChatInput } from "./chat-input"
 import { StreamingProgress } from "./streaming-progress"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { MessageSquare, X, Search } from "lucide-react"
+import { MessageSquare, X } from "lucide-react"
 
 interface ChatInterfaceProps {
     patientId: string
@@ -18,7 +18,6 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ patientId, patientName }: ChatInterfaceProps) {
-    const [showEnglish, setShowEnglish] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
     const {
@@ -75,15 +74,6 @@ export function ChatInterface({ patientId, patientName }: ChatInterfaceProps) {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowEnglish(!showEnglish)}
-                        className={showEnglish ? "text-primary" : ""}
-                    >
-                        <Search className="w-4 h-4 mr-1" />
-                        <span className="text-xs">EN</span>
-                    </Button>
                     {messages.length > 0 && (
                         <Button
                             variant="ghost"
@@ -107,7 +97,6 @@ export function ChatInterface({ patientId, patientName }: ChatInterfaceProps) {
                             <MessageBubble
                                 key={message.id}
                                 message={message}
-                                showEnglish={showEnglish}
                             />
                         ))}
 

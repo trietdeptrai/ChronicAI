@@ -10,10 +10,9 @@ import ReactMarkdown from "react-markdown"
 
 interface MessageBubbleProps {
     message: ChatMessage
-    showEnglish?: boolean
 }
 
-export function MessageBubble({ message, showEnglish = false }: MessageBubbleProps) {
+export function MessageBubble({ message }: MessageBubbleProps) {
     const [copied, setCopied] = useState(false)
     const isUser = message.role === "user"
 
@@ -95,15 +94,6 @@ export function MessageBubble({ message, showEnglish = false }: MessageBubblePro
                                 </div>
                             )
                         })}
-                    </div>
-                )}
-
-                {/* Show English translation if available */}
-                {showEnglish && message.content_en && (
-                    <div className="mt-2 pt-2 border-t border-current/10">
-                        <p className="text-xs opacity-70 italic">
-                            {message.content_en}
-                        </p>
                     </div>
                 )}
 

@@ -18,25 +18,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle - preload translation models once."""
-    # Startup: preload translation models
+    """Startup/shutdown lifecycle."""
     logger.info("=" * 50)
-    logger.info("SERVER STARTING - Preloading translation models...")
+    logger.info("SERVER STARTING")
     logger.info("=" * 50)
-
-    try:
-        from app.services.transformers_client import transformers_client
-
-        # Preload both models at startup (not on first request)
-        await transformers_client._ensure_vi2en_loaded()
-        await transformers_client._ensure_en2vi_loaded()
-
-        logger.info("=" * 50)
-        logger.info("Translation models loaded successfully!")
-        logger.info("=" * 50)
-    except Exception as e:
-        logger.warning(f"Failed to preload translation models: {e}")
-        logger.warning("Models will load on first request instead")
 
     yield  # Server runs here
 

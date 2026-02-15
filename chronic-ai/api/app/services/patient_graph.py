@@ -30,7 +30,6 @@ from app.services.graph_state import (
     HITLRequest
 )
 from app.services.llm_client import llm_client
-from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.services.verification_service import (
     verify_input,
@@ -112,10 +111,9 @@ def create_initial_patient_state(
 # ============================================================================
 
 async def translate_patient_input_node(state: PatientChatState) -> dict:
-    """Node: Translate Vietnamese input to English."""
+    """Node: Normalize patient input."""
     logger.info(f"[PatientGraph] translate_input: {state['query_vi'][:50]}...")
-    
-    query_en = await transformers_client.translate_vi_to_en(state["query_vi"])
+    query_en = state["query_vi"]
     
     return {
         "query_en": query_en,
@@ -397,23 +395,11 @@ async def format_patient_output_node(state: PatientChatState) -> dict:
 
 
 async def translate_patient_output_node(state: PatientChatState) -> dict:
-    """Node: Translate to Vi."""
-    logger.info("[PatientGraph] translate_output: Translating...")
-    
-    response_vi = await transformers_client.translate_en_to_vi(state["reasoning_en"])
-    
-    # Translate structured content if needed
-    if state.get("formatted_response"):
-        formatted = state["formatted_response"].copy()
-        for section in formatted["sections"]:
-            if section.get("content"):
-                section["content"] = await transformers_client.translate_en_to_vi(section["content"])
-            if section.get("items"):
-                section["items"] = [
-                    await transformers_client.translate_en_to_vi(item) 
-                    for item in section["items"]
-                ]
-    
+    """Node: Finalize response payload."""
+    logger.info("[PatientGraph] translate_output: Finalizing response...")
+
+    response_vi = state["reasoning_en"]
+
     return {
         "response_vi": response_vi,
         "current_stage": "complete",

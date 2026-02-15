@@ -30,7 +30,12 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
 export async function* sendChatMessageStreaming(
     request: ChatRequest
 ): AsyncGenerator<ChatStreamUpdate> {
-    yield* streamingFetch<ChatStreamUpdate>("/chat/stream", request)
+    yield* streamingFetch<ChatStreamUpdate>("/chat/patient/v2/stream", {
+        patient_id: request.patient_id,
+        message: request.message,
+        image_path: request.image_path,
+        output_format: "structured",
+    })
 }
 
 /**

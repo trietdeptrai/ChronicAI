@@ -1,12 +1,5 @@
 """
-Translation Sandwich Pipeline (LLM Service).
-
-Implements the three-step translation process:
-1. Vietnamese → English (VinAI Translate)
-2. Medical Reasoning (MedGemma 4B) with RAG context
-3. English → Vietnamese (VinAI Translate)
-
-VinAI Translate models are kept persistent for performance.
+LLM Service.
 """
 from typing import Any, AsyncGenerator, Optional
 from uuid import UUID
@@ -20,40 +13,10 @@ from pathlib import Path
 import uuid
 
 from app.services.llm_client import llm_client
-from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-# System prompts for translation
-VI_TO_EN_SYSTEM = """You are a professional medical translator. 
-Translate the following Vietnamese text to English accurately.
-Preserve all medical terminology and context.
-Output ONLY the English translation, nothing else."""
-
-EN_TO_VI_SYSTEM = """You are a professional medical translator specializing in Vietnamese healthcare.
-Translate the following English text to Vietnamese.
-
-CRITICAL GUIDELINES:
-- Use PROPER Vietnamese medical terminology - do NOT translate technical terms word-by-word
-- Common medical terms to use correctly:
-  * "opacity" / "opacities" → "vùng mờ" or "đám mờ" (NOT "quang khuông" or similar)
-  * "radiolucency" → "vùng sáng" or "độ xuyên thấu"
-  * "patchy" → "dạng đám" or "không đều"
-  * "hilar" → "rốn phổi"
-  * "infiltrate" → "thâm nhiễm"
-  * "consolidation" → "đông đặc"
-  * "effusion" → "tràn dịch"
-  * "nodule" → "nốt"
-  * "mass" → "khối"
-  * "cardiomegaly" → "tim to"
-- Remove all markdown formatting (**, *, #, etc.) - output plain text only
-- Use proper Vietnamese punctuation and grammar
-- The translation should be natural and easy to understand for Vietnamese readers
-- For unclear technical terms, keep the English term in parentheses
-
-Output ONLY the Vietnamese translation, nothing else."""
 
 # System prompt for MedGemma medical reasoning
 MEDICAL_REASONING_SYSTEM = """You are a helpful medical AI assistant for Vietnamese healthcare.
@@ -411,32 +374,16 @@ Rules:
 
 async def translate_vi_to_en(text: str) -> str:
     """
-    Translate Vietnamese to English using VinAI Translate.
-
-    Uses vinai/vinai-translate-vi2en model with caching and batch optimization.
-
-    Args:
-        text: Vietnamese text to translate
-
-    Returns:
-        English translation
+    Backward-compatible passthrough.
     """
-    return await transformers_client.translate_vi_to_en(text)
+    return text
 
 
 async def translate_en_to_vi(text: str) -> str:
     """
-    Translate English to Vietnamese using VinAI Translate.
-
-    Uses vinai/vinai-translate-en2vi model with structure preservation.
-
-    Args:
-        text: English text to translate
-
-    Returns:
-        Vietnamese translation
+    Backward-compatible passthrough.
     """
-    return await transformers_client.translate_en_to_vi(text)
+    return text
 
 
 async def medical_reasoning(
@@ -480,22 +427,7 @@ async def process_medical_query(
     patient_id: UUID,
     image_path: Optional[str] = None
 ) -> AsyncGenerator[dict, None]:
-    """
-    Full Translation Sandwich Pipeline with streaming.
-    
-    Steps:
-        A. Vietnamese → English (VietAI EnviT5)
-        B. Medical Reasoning (MedGemma 4B) + RAG Context
-        C. English → Vietnamese (VietAI EnviT5)
-    
-    Yields:
-        Dict with stage info and content for real-time UI updates
-        
-    Args:
-        user_input_vi: User's question in Vietnamese
-        patient_id: Patient UUID for context retrieval
-        image_path: Optional path to medical image
-    """
+    """Patient query pipeline with streaming updates."""
     start_total = time.perf_counter()
     image_base64 = None
     
@@ -506,25 +438,22 @@ async def process_medical_query(
             with open(path, "rb") as f:
                 image_base64 = base64.b64encode(f.read()).decode("utf-8")
     
-    # ========== STEP A: Vietnamese → English ==========
+    # ========== STEP A: Analyze Input ==========
     yield {
-        "stage": "translating_input",
-        "message": "Đang dịch câu hỏi...",
+        "stage": "verifying_input",
+        "message": "Đang phân tích câu hỏi...",
         "progress": 0.1
     }
     start_step_a = time.perf_counter()
-    query_en = await translate_vi_to_en(user_input_vi)
+    query_en = user_input_vi
     elapsed_a = (time.perf_counter() - start_step_a) * 1000
     logger.info(f"[LLM] step_a_translate_input: Took {elapsed_a:.1f} ms")
     
     yield {
-        "stage": "translating_input",
-        "message": "Hoàn thành dịch sang tiếng Anh",
+        "stage": "verified_input",
+        "message": "Đã hiểu câu hỏi",
         "progress": 0.25,
-        "translation": query_en
     }
-
-    # Note: Translation models are kept persistent for performance
 
     # ========== STEP B: Medical Reasoning with RAG ==========
     yield {
@@ -563,20 +492,19 @@ async def process_medical_query(
         "stage": "medical_reasoning",
         "message": "Hoàn thành phân tích",
         "progress": 0.7,
-        "response_en": response_en
     }
     
     # ========== Memory Optimization: Unload MedGemma ==========
     await llm_client.unload(settings.medical_model)
     
-    # ========== STEP C: English → Vietnamese ==========
+    # ========== STEP C: Finalize Output ==========
     yield {
-        "stage": "translating_output",
-        "message": "Đang dịch phản hồi sang tiếng Việt...",
+        "stage": "formatting_output",
+        "message": "Đang chuẩn bị phản hồi...",
         "progress": 0.85
     }
     start_step_c = time.perf_counter()
-    response_vi = await translate_en_to_vi(response_en)
+    response_vi = response_en
     elapsed_c = (time.perf_counter() - start_step_c) * 1000
     logger.info(f"[LLM] step_c_translate_output: Took {elapsed_c:.1f} ms")
     
@@ -585,7 +513,6 @@ async def process_medical_query(
         "message": "Hoàn thành",
         "progress": 1.0,
         "response": response_vi,
-        "response_en": response_en  # Include English for doctor reference
     }
     elapsed_total = (time.perf_counter() - start_total) * 1000
     logger.info(f"[LLM] pipeline_total: Took {elapsed_total:.1f} ms")
@@ -649,25 +576,17 @@ Generate a clinical summary including:
 
 Format the summary professionally for medical records."""
 
-    # Translate prompt to English
-    prompt_en = await translate_vi_to_en(summary_prompt)
-
-    # Note: Translation models are kept persistent for performance
-
     # Generate summary with MedGemma
     summary_en = await llm_client.generate(
         model=settings.medical_model,
-        prompt=prompt_en,
+        prompt=summary_prompt,
         system="You are a medical documentation specialist. Generate professional clinical notes.",
         stream=False
     )
     
     await llm_client.unload(settings.medical_model)
     
-    # Translate back to Vietnamese
-    summary_vi = await translate_en_to_vi(summary_en)
-    
-    return summary_vi
+    return summary_en
 
 
 async def check_system_health() -> dict:
@@ -690,8 +609,6 @@ async def check_system_health() -> dict:
         }
     
     models_status = {
-        "vinai_vi2en": transformers_client.is_vi2en_loaded(),
-        "vinai_en2vi": transformers_client.is_en2vi_loaded(),
         "medical_model": await llm_client.check_model_available(
             settings.medical_model
         ),

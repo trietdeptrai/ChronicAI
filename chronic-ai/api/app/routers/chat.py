@@ -87,7 +87,6 @@ class ChatRequestV2(BaseModel):
 class ChatResponse(BaseModel):
     """Non-streaming chat response."""
     response: str
-    response_en: Optional[str] = None
     patient_id: str
 
 
@@ -96,10 +95,7 @@ async def chat(request: ChatRequest):
     """
     Send a message to the medical AI assistant.
     
-    Uses the Translation Sandwich pipeline:
-    1. Vietnamese → English translation
-    2. MedGemma medical reasoning with RAG context
-    3. English → Vietnamese translation
+    Uses the medical reasoning pipeline with RAG context.
     
     Returns full response (non-streaming).
     """
@@ -109,8 +105,6 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Invalid patient_id format")
     
     final_response = None
-    response_en = None
-    
     # Process through pipeline and get final result
     async for update in process_medical_query(
         user_input_vi=request.message,
@@ -119,7 +113,6 @@ async def chat(request: ChatRequest):
     ):
         if update.get("stage") == "complete":
             final_response = update.get("response", "")
-            response_en = update.get("response_en")
     
     if not final_response:
         raise HTTPException(
@@ -129,7 +122,6 @@ async def chat(request: ChatRequest):
     
     return ChatResponse(
         response=final_response,
-        response_en=response_en,
         patient_id=request.patient_id
     )
 
@@ -139,12 +131,7 @@ async def chat_stream(request: ChatRequest):
     """
     Send a message with streaming response.
     
-    Returns Server-Sent Events (SSE) with progress updates:
-    - translating_input: Translating Vietnamese to English
-    - retrieving_context: Searching medical records
-    - medical_reasoning: MedGemma processing
-    - translating_output: Translating response to Vietnamese
-    - complete: Final response ready
+    Returns Server-Sent Events (SSE) with progress updates.
     
     Each event contains:
     - stage: Current processing stage
@@ -232,17 +219,14 @@ async def doctor_chat_stream(request: DoctorChatRequest):
     4. Generate comprehensive response
     
     Returns Server-Sent Events (SSE) with progress updates including:
-    - translating_input: Translating Vietnamese to English
     - extracting_patients: Identifying mentioned patients
     - resolving_patients: Finding patient records
     - retrieving_context: Gathering medical context
     - medical_reasoning: AI processing
-    - translating_output: Translating response to Vietnamese
     - complete: Final response ready
     
     Each 'complete' event includes:
     - response: Vietnamese response
-    - response_en: English response
     - mentioned_patients: List of identified patients
     """
     async def event_generator():
@@ -410,7 +394,6 @@ async def doctor_chat_resume_hitl(request: HITLResumeRequest):
                 "message": "Hoàn thành",
                 "progress": 1.0,
                 "response": final_state.get("response_vi", ""),
-                "response_en": final_state.get("reasoning_en", ""),
                 "formatted_response": final_state.get("formatted_response"),
                 "mentioned_patients": [
                     {"id": m["id"], "name": m["name"]}

@@ -12,10 +12,9 @@ import { StreamingProgress } from "./streaming-progress"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { X, Search, Users, Sparkles } from "lucide-react"
+import { X, Users, Sparkles } from "lucide-react"
 
 export function DoctorChatInterface() {
-    const [showEnglish, setShowEnglish] = useState(false)
     const [isResolvingHITL, setIsResolvingHITL] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -108,15 +107,6 @@ export function DoctorChatInterface() {
                             )}
                         </div>
                     )}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowEnglish(!showEnglish)}
-                        className={showEnglish ? "text-primary" : ""}
-                    >
-                        <Search className="w-4 h-4 mr-1" />
-                        <span className="text-xs">EN</span>
-                    </Button>
                     {messages.length > 0 && (
                         <Button
                             variant="ghost"
@@ -140,7 +130,6 @@ export function DoctorChatInterface() {
                             <MessageBubble
                                 key={message.id}
                                 message={message}
-                                showEnglish={showEnglish}
                             />
                         ))}
 
