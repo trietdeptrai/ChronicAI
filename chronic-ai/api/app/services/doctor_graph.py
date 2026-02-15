@@ -34,11 +34,9 @@ from app.services.graph_state import (
     PatientMatch,
     HITLRequest,
 )
-from app.services.ollama_client import ollama_client
-from app.services.transformers_client import transformers_client
+from app.services.llm_client import llm_client
 from app.services.rag import (
     get_patient_context,
-    get_patient_record_image_attachments,
     get_patient_record_images_base64,
 )
 from app.services.verification_service import (
@@ -70,7 +68,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Circuit breakers for external services
-_ollama_breaker = get_circuit_breaker("ollama_doctor", failure_threshold=3, recovery_timeout=60.0)
+_llm_breaker = get_circuit_breaker("llm_doctor", failure_threshold=3, recovery_timeout=60.0)
 _db_breaker = get_circuit_breaker("database_doctor", failure_threshold=5, recovery_timeout=30.0)
 
 # Retry configuration for LLM calls
@@ -235,19 +233,125 @@ def find_best_patient_matches(
 
 
 # ============================================================================
+# IMAGE ATTACHMENT GATING
+# ============================================================================
+
+_EXPLICIT_IMAGE_REQUEST_KEYWORDS: tuple[str, ...] = (
+    "show image",
+    "show images",
+    "display image",
+    "display images",
+    "attach image",
+    "include image",
+    "send image",
+    "xem hinh",
+    "xem anh",
+    "hien thi hinh",
+    "hien thi anh",
+    "dinh kem hinh",
+    "dinh kem anh",
+    "gui hinh",
+    "gui anh",
+    "cho toi xem hinh",
+    "cho toi xem anh",
+)
+
+_IMAGE_RELEVANCE_KEYWORDS: tuple[str, ...] = (
+    "xray",
+    "x ray",
+    "x quang",
+    "radiograph",
+    "ct",
+    "mri",
+    "ultrasound",
+    "sieu am",
+    "ecg",
+    "ekg",
+    "dicom",
+    "imaging",
+    "scan",
+    "hinh anh",
+    "hinh x quang",
+    "phim x quang",
+)
+
+
+def _normalize_query_text(text: str) -> str:
+    """
+    Normalize query text for robust keyword matching across Vietnamese/English.
+    """
+    normalized = unicodedata.normalize("NFD", (text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("đ", "d")
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _query_contains_keyword(normalized_query: str, keyword: str) -> bool:
+    """
+    Keyword matcher with boundary checks for short tokens (for example: "ct").
+    """
+    if not keyword:
+        return False
+    if " " in keyword:
+        return keyword in normalized_query
+    if len(keyword) <= 3:
+        return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+    return keyword in normalized_query
+
+
+def _should_include_record_images(state: DoctorOrchestratorState) -> Tuple[bool, str]:
+    """
+    Decide whether patient record images should be fetched and attached.
+
+    Images are included only if the doctor explicitly asks for them
+    or the query is imaging-related.
+    """
+    if state.get("image_base64"):
+        return True, "user_uploaded_image"
+
+    if state.get("query_type") == QueryType.IMAGE_ANALYSIS:
+        return True, "query_type_image_analysis"
+
+    normalized_query = _normalize_query_text(
+        f"{state.get('query_vi', '')} {state.get('query_en', '')}"
+    )
+    if not normalized_query:
+        return False, "empty_query"
+
+    if any(_query_contains_keyword(normalized_query, keyword) for keyword in _EXPLICIT_IMAGE_REQUEST_KEYWORDS):
+        return True, "explicit_image_request"
+
+    if any(_query_contains_keyword(normalized_query, keyword) for keyword in _IMAGE_RELEVANCE_KEYWORDS):
+        return True, "imaging_related_query"
+
+    return False, "not_requested_or_relevant"
+
+
+def _llm_hitl_enabled(state: DoctorOrchestratorState) -> bool:
+    """Whether LLM-dependent HITL checks are enabled for this request."""
+    return bool(state.get("enable_llm_hitl", state.get("enable_hitl", True)))
+
+
+def _patient_confirmation_hitl_enabled(state: DoctorOrchestratorState) -> bool:
+    """Whether non-LLM patient confirmation HITL is enabled for this request."""
+    return bool(state.get("enable_patient_confirmation_hitl", state.get("enable_hitl", True)))
+
+
+# ============================================================================
 # NODE FUNCTIONS
 # ============================================================================
 
 async def translate_input_node(state: DoctorOrchestratorState) -> dict:
     """
-    Node: Translate Vietnamese input to English.
-    
-    Uses EnviT5 for translation.
+    Node: Normalize input for downstream processing.
     """
     logger.info(f"[Graph] translate_input: {state['query_vi'][:50]}...")
     start_time = time.perf_counter()
     try:
-        query_en = await transformers_client.translate_vi_to_en(state["query_vi"])
+        query_en = state["query_vi"]
+        stage_message = "Đã hiểu câu hỏi"
 
         # Load image if provided
         image_base64 = None
@@ -264,9 +368,8 @@ async def translate_input_node(state: DoctorOrchestratorState) -> dict:
             "progress": 0.15,
             "stage_messages": [create_stage_message(
                 "translating_input",
-                "Hoàn thành dịch sang tiếng Anh",
+                stage_message,
                 0.15,
-                translation=query_en
             )]
         }
     finally:
@@ -297,8 +400,8 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
                 0.25
             )]
         }
-        # Check if HITL is enabled and clarification is needed
-        if settings.enable_hitl and should_request_clarification(verification):
+        # Check if HITL is enabled for this request and clarification is needed
+        if _llm_hitl_enabled(state) and should_request_clarification(verification):
             logger.info("[Graph] verify_input: Requesting clarification via HITL")
 
             # Create HITL request
@@ -320,9 +423,8 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
                 # Human provided clarification
                 result["query_vi"] = clarified.get("query", state["query_vi"])
                 result["human_approved_input"] = True
-                # Re-translate if query changed
                 if result["query_vi"] != state["query_vi"]:
-                    result["query_en"] = await transformers_client.translate_vi_to_en(result["query_vi"])
+                    result["query_en"] = result["query_vi"]
 
         return result
     finally:
@@ -342,13 +444,21 @@ async def extract_patients_node(state: DoctorOrchestratorState) -> dict:
     extraction_prompt = f"Query: {state['query_en']}"
     extraction_system = """Extract patient names from the query.
 Output ONLY a valid JSON array of names: ["Name1", "Name2"] or [] if no patients mentioned.
-Do not include any other text."""
+Do not include any other text.
+
+IMPORTANT: If the query is a general medical question NOT about a specific patient, return [].
+Examples:
+- "What are metformin side effects?" → []
+- "How is patient Bình doing?" → ["Bình"]
+- "Any patients need attention today?" → []
+- "Tình trạng của bệnh nhân Trần Thị Bình?" → ["Trần Thị Bình"]
+- "Thuốc hạ huyết áp nào phổ biến nhất?" → []"""
 
     mentioned_names = []
 
     try:
         async def _extraction_call():
-            return await ollama_client.generate(
+            return await llm_client.generate(
                 model=settings.medical_model,
                 prompt=extraction_prompt,
                 system=extraction_system,
@@ -357,7 +467,7 @@ Do not include any other text."""
             )
 
         response = await with_circuit_breaker(
-            _ollama_breaker,
+            _llm_breaker,
             retry_async,
             _extraction_call,
             config=LLM_RETRY_CONFIG,
@@ -522,7 +632,7 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
         has_multiple_matches = len(matched_patients) > 1
         needs_confirmation = ambiguous_matches or has_low_confidence or has_multiple_matches
 
-        if settings.enable_hitl and needs_confirmation:
+        if _patient_confirmation_hitl_enabled(state) and needs_confirmation:
             logger.info(f"[Graph] resolve_patients: Requesting patient confirmation "
                        f"(ambiguous={bool(ambiguous_matches)}, low_conf={has_low_confidence}, multiple={has_multiple_matches})")
 
@@ -591,6 +701,13 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
 
     record_attachments: List[dict] = []
     patient_record_images_base64: List[str] = []
+    include_record_images, image_gate_reason = _should_include_record_images(state)
+    logger.info(
+        "[Graph] get_context: image_gate include=%s reason=%s query_type=%s",
+        include_record_images,
+        image_gate_reason,
+        state.get("query_type"),
+    )
 
     if state["query_type"] == QueryType.AGGREGATE:
         # Get overview of all patients
@@ -608,17 +725,23 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
             context_parts.append(patient_context)
             context_parts.append("\n---\n")
 
-            # Fetch actual patient record images for LLM analysis
-            images_b64, attachments = await get_patient_record_images_base64(
-                patient_id=UUID(patient["id"]),
-                limit=2
-            )
-            if images_b64:
-                patient_record_images_base64.extend(images_b64)
-            if attachments:
-                record_attachments.extend(attachments)
+            if include_record_images:
+                # Fetch actual patient record images for LLM analysis + UI attachments
+                images_b64, attachments = await get_patient_record_images_base64(
+                    patient_id=UUID(patient["id"]),
+                    limit=2
+                )
+                if images_b64:
+                    patient_record_images_base64.extend(images_b64)
+                if attachments:
+                    record_attachments.extend(attachments)
 
         context = "\n".join(context_parts)
+        if not include_record_images:
+            logger.info(
+                "[Graph] get_context: Skipped record image fetch (reason=%s)",
+                image_gate_reason,
+            )
         logger.info(
             f"[Graph] get_context: Loaded {len(patient_record_images_base64)} "
             "patient record images for analysis"
@@ -627,7 +750,7 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
         context = "No specific patient context available."
 
     # Unload medical model to free memory for next step
-    await ollama_client.unload(settings.medical_model)
+    await llm_client.unload(settings.medical_model)
 
     result = {
         "patient_context": context,
@@ -644,6 +767,201 @@ async def get_context_node(state: DoctorOrchestratorState) -> dict:
     elapsed_ms = (time.perf_counter() - start_time) * 1000
     logger.info(f"[Graph] get_context: Took {elapsed_ms:.1f} ms")
     return result
+
+def _add_paragraph_breaks(text: str) -> str:
+    """
+    Add line breaks to dense Vietnamese text for better readability.
+
+    Strategy: split into sentences, then insert blank lines at topic
+    boundaries (bullet points, questions, transitional phrases, and
+    after long runs of text).
+
+    Args:
+        text: Dense text without proper formatting
+
+    Returns:
+        Text with paragraph breaks inserted
+    """
+    if not text or len(text) < 100:
+        return text
+
+    # If the text already has reasonable formatting, leave it alone
+    if text.count("\n\n") >= 3:
+        return text
+
+    # ---- Step 1: Normalize inline markdown and list markers ----
+    # Handle inline markdown headers: "...ổn định.## Phân tích" → split before ##
+    text = re.sub(r'(?<!\n)(#{1,4}\s)', r'\n\n\1', text)
+    # Handle inline dash lists: "...huyết áp.- Điều trị:" → split before dash
+    text = re.sub(r'([.!?])\s*-\s+', r'\1\n\n- ', text)
+    # Handle "...thương.•Suy hô hấp" → split before bullet
+    text = re.sub(r'([.!?])\s*([•●▪]\s*)', r'\1\n\n\2', text)
+    # Handle "...thương.1. Suy hô hấp" → split before numbered list
+    text = re.sub(r'([.!?])\s*(\d+[.)]\s)', r'\1\n\n\2', text)
+
+    # ---- Step 2: Split into lines (preserve any existing breaks) ----
+    lines = text.split("\n")
+    result_lines: list[str] = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            result_lines.append("")
+            continue
+
+        # If the line is short enough, keep as-is
+        if len(line) < 150:
+            result_lines.append(line)
+            continue
+
+        # ---- Step 3: Split dense line into sentences ----
+        # Split on sentence-ending punctuation followed by a space or bullet
+        sentences = re.split(r'(?<=[.!?])\s+', line)
+
+        current_paragraph: list[str] = []
+        current_length = 0
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+
+            # Detect if this sentence starts a new topic
+            is_new_topic = False
+
+            # Bullet point or numbered list
+            if re.match(r'^[•●▪\-]\s', sentence) or re.match(r'^\d+[.)]\s', sentence):
+                is_new_topic = True
+
+            # Question sentence
+            elif sentence.endswith("?"):
+                is_new_topic = True
+
+            # Starts with a transitional/topic phrase
+            elif re.match(
+                r'^(Tuy nhiên|Ngoài ra|Vậy|Tóm lại|Điều này|Cách tiếp cận|'
+                r'Lưu ý|Ví dụ|Về cơ bản|Nói chung|Cần lưu ý|Cần theo dõi|'
+                r'Những điều|Việc điều trị|Do đó|Vì vậy|Bên cạnh đó|'
+                r'However|In addition|Therefore|For example|In summary)',
+                sentence, re.IGNORECASE
+            ):
+                is_new_topic = True
+
+            # Current paragraph is getting long (>250 chars)
+            elif current_length > 250:
+                is_new_topic = True
+
+            if is_new_topic and current_paragraph:
+                # Flush current paragraph
+                result_lines.append(" ".join(current_paragraph))
+                result_lines.append("")  # blank line = paragraph break
+                current_paragraph = []
+                current_length = 0
+
+            current_paragraph.append(sentence)
+            current_length += len(sentence) + 1
+
+        # Flush remaining sentences
+        if current_paragraph:
+            result_lines.append(" ".join(current_paragraph))
+
+    # ---- Step 4: Clean up multiple blank lines ----
+    cleaned: list[str] = []
+    prev_blank = False
+    for line in result_lines:
+        is_blank = line.strip() == ""
+        if is_blank and prev_blank:
+            continue  # skip double blanks
+        cleaned.append(line)
+        prev_blank = is_blank
+
+    # Remove trailing blank line
+    while cleaned and cleaned[-1].strip() == "":
+        cleaned.pop()
+
+    return "\n".join(cleaned)
+
+
+def _build_system_prompt(query_type: QueryType) -> str:
+    """
+    Build a query-type-aware system prompt for MedGemma.
+
+    Returns different prompts based on query type to produce natural,
+    context-appropriate responses directly in Vietnamese.
+    """
+    # Shared safety guidelines for all query types
+    safety_guidelines = """QUY TẮC AN TOÀN:
+1. CHỈ cung cấp thông tin dựa trên dữ liệu được cung cấp
+2. KHÔNG BAO GIỜ bịa đặt thông tin bệnh nhân, kết quả xét nghiệm, hoặc tiền sử bệnh
+3. KHÔNG sử dụng placeholder như [Insert...], [TODO], [N/A]
+4. Nếu thiếu thông tin quan trọng, nói rõ "Không đủ dữ liệu"
+5. Nếu có hình ảnh y tế, phân tích kỹ và mô tả những gì quan sát được
+6. Trả lời hoàn toàn bằng tiếng Việt"""
+
+    if query_type == QueryType.GENERAL:
+        return f"""You are a medical AI assistant supporting doctors.
+
+The doctor is asking a general medical question (NOT about a specific patient).
+Provide a natural, clear, and helpful response. DO NOT use patient assessment structure.
+Respond as a professional medical discussion between colleagues.
+
+FORMATTING REQUIREMENTS:
+- Use **bold** for section headers or important medical terms
+- Break content into SHORT paragraphs separated by blank lines
+- Use bullet lists (•) when listing multiple items
+- DO NOT write one continuous block of text
+
+LANGUAGE: Respond entirely in Vietnamese.
+
+{safety_guidelines}"""
+
+    elif query_type == QueryType.PATIENT_SPECIFIC:
+        return f"""Bạn là trợ lý AI y khoa hỗ trợ bác sĩ quản lý bệnh nhân.
+
+Bác sĩ đang hỏi về bệnh nhân cụ thể. Hãy cung cấp đánh giá có cấu trúc.
+CHỈ bao gồm các phần liên quan đến câu hỏi (không cần tất cả):
+
+## Đánh giá
+Tình trạng hiện tại dựa trên dữ liệu có sẵn
+
+## Phân tích
+Kết quả chính từ hồ sơ và hình ảnh
+
+## Đề xuất
+Hành động được đề xuất dựa trên bằng chứng
+
+## Cảnh báo
+Các vấn đề cần chú ý ngay (nếu có)
+
+{safety_guidelines}"""
+
+    elif query_type == QueryType.AGGREGATE:
+        return f"""Bạn là trợ lý AI y khoa hỗ trợ bác sĩ.
+
+Bác sĩ đang yêu cầu tổng quan về nhiều bệnh nhân.
+Hãy tóm tắt ngắn gọn, ưu tiên các trường hợp khẩn cấp lên đầu.
+Sử dụng định dạng danh sách dễ đọc.
+
+{safety_guidelines}"""
+
+    elif query_type == QueryType.IMAGE_ANALYSIS:
+        return f"""Bạn là trợ lý AI y khoa chuyên phân tích hình ảnh y tế.
+
+Hãy phân tích kỹ các hình ảnh được cung cấp. Mô tả:
+- Những gì quan sát được trong hình ảnh
+- Các phát hiện bất thường (nếu có)
+- Đề xuất xét nghiệm hoặc theo dõi thêm
+
+Nếu có thông tin bệnh nhân, kết hợp với phân tích hình ảnh.
+
+{safety_guidelines}"""
+
+    else:
+        # Fallback
+        return f"""Bạn là trợ lý AI y khoa hỗ trợ bác sĩ.
+Hãy trả lời câu hỏi một cách chính xác và hữu ích.
+
+{safety_guidelines}"""
 
 
 async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
@@ -678,54 +996,30 @@ async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
     if has_images:
         image_context = f"\n\n## Hình ảnh y tế (Medical Images)\n{len(all_images)} image(s) attached for analysis. Please analyze these images as part of your assessment."
 
-    reasoning_prompt = f"""## Patient Context
+    reasoning_prompt = f"""## Ngữ cảnh bệnh nhân (Patient Context)
 {state['patient_context']}{image_context}
 
-## Doctor's Query
+## Câu hỏi của bác sĩ (Doctor's Query)
 {state['query_en']}
+"""
 
-Provide a helpful, accurate response to assist the doctor with patient management."""
-
-    system_prompt = """You are a medical AI assistant helping doctors manage patients.
-
-CRITICAL GUIDELINES:
-1. ACCURACY FIRST: Only provide information based on the patient context provided
-2. UNCERTAINTY: If you're uncertain or the data is insufficient, clearly state "Không đủ dữ liệu để đánh giá" (Insufficient data)
-3. NO FABRICATION: NEVER make up patient information, test results, or medical history
-4. NO PLACEHOLDERS: NEVER output [Insert...], [TODO], [N/A], or similar
-5. FLAG MISSING DATA: If critical information is missing, explicitly mention what's needed
-6. IMAGE ANALYSIS: If medical images are provided, analyze them carefully and include findings in your assessment. Describe what you observe in the images.
-
-RESPONSE STRUCTURE:
-## Đánh giá (Assessment)
-Current patient status based on available data
-
-## Phân tích (Analysis)
-Key findings from records and images - note any data gaps
-
-## Đề xuất (Recommendations)
-Evidence-based suggested actions
-
-## Cảnh báo (Warnings)
-Urgent concerns or items requiring immediate attention (if any)
-
-## Thông tin còn thiếu (Missing Information)
-List any critical data gaps that limit the assessment
-
-Remember: It's better to say "I don't have enough information" than to provide potentially harmful guidance."""
+    # Build query-type-aware system prompt
+    query_type = state.get("query_type", QueryType.GENERAL)
+    system_prompt = _build_system_prompt(query_type)
 
     try:
         async def _reasoning_call():
-            return await ollama_client.generate(
+            return await llm_client.generate(
                 model=settings.medical_model,
                 prompt=reasoning_prompt,
                 system=system_prompt,
                 images=all_images if all_images else None,
-                stream=False
+                stream=False,
+                num_predict=max(int(settings.doctor_reasoning_max_tokens), 128)
             )
 
         response_en = await with_circuit_breaker(
-            _ollama_breaker,
+            _llm_breaker,
             retry_async,
             _reasoning_call,
             config=LLM_RETRY_CONFIG,
@@ -737,14 +1031,16 @@ Remember: It's better to say "I don't have enough information" than to provide p
             logger.info("[Graph] medical_reasoning: Detected uncertainty - adding context warning")
 
         # Add context availability disclaimer
-        if not has_context:
-            response_en = f"""⚠️ **Limited Context Available**
-
-The following response is based on limited patient information. Please verify with complete medical records.
+        if not has_context and query_type != QueryType.GENERAL:
+            response_en = f"""⚠️ Thông tin bệnh nhân hạn chế. Vui lòng đối chiếu với hồ sơ bệnh án đầy đủ.
 
 ---
 
 {response_en}"""
+        
+        # Add paragraph breaks for all query types (model often returns wall of text)
+        response_en = _add_paragraph_breaks(response_en)
+        logger.info("[Graph] medical_reasoning: Applied paragraph formatting to response")
 
         logger.info(f"[Graph] medical_reasoning: Generated {len(response_en)} chars")
 
@@ -802,7 +1098,7 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
 
     # Unload MedGemma, load verification model
     try:
-        await ollama_client.unload(settings.medical_model)
+        await llm_client.unload(settings.medical_model)
     except Exception as e:
         logger.warning(f"[Graph] safety_check: Failed to unload model: {e}")
 
@@ -838,7 +1134,7 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
     }
 
     # HITL: Request approval for risky responses
-    if settings.enable_hitl and requires_human_review:
+    if _llm_hitl_enabled(state) and requires_human_review:
         logger.info(f"[Graph] safety_check: Requesting human approval (score={safety_score:.2f}, risks={risk_factors})")
 
         # Provide detailed context for reviewer
@@ -899,7 +1195,7 @@ async def format_output_node(state: DoctorOrchestratorState) -> dict:
     
     formatted = format_response(
         response_text=state["reasoning_en"],
-        language="en",  # Will be translated to Vi next
+        language="vi",  # MedGemma 27B responds directly in Vietnamese
         confidence=state["input_confidence"] * state["safety_score"],
         sources=["patient_records"]
     )
@@ -921,32 +1217,22 @@ async def format_output_node(state: DoctorOrchestratorState) -> dict:
 
 async def translate_output_node(state: DoctorOrchestratorState) -> dict:
     """
-    Node: Translate response to Vietnamese.
+    Node: Finalize output.
     
-    Uses EnviT5 for translation.
+    MedGemma 27B responds directly in Vietnamese, so no translation needed.
+    This node now acts as a pass-through that packages the final response.
     """
-    logger.info("[Graph] translate_output: Translating to Vietnamese...")
+    logger.info("[Graph] translate_output: Packaging Vietnamese response (no translation needed)...")
     start_time = time.perf_counter()
     
-    # Unload verification model before translation
-    await ollama_client.unload(settings.verification_model)
+    # MedGemma 27B already responds in Vietnamese — pass through directly
+    response_vi = state["reasoning_en"]  # Already Vietnamese despite the field name
     
-    response_vi = await transformers_client.translate_en_to_vi(state["reasoning_en"])
-    
-    # Also translate formatted sections
-    if state.get("formatted_response"):
-        formatted = state["formatted_response"].copy()
-        for section in formatted["sections"]:
-            if section.get("content"):
-                section["content"] = await transformers_client.translate_en_to_vi(section["content"])
-            if section.get("items"):
-                section["items"] = [
-                    await transformers_client.translate_en_to_vi(item)
-                    for item in section["items"]
-                ]
+    # Formatted sections are already in Vietnamese too
+    formatted = state.get("formatted_response")
+    if formatted:
+        formatted = formatted.copy()
         formatted["raw_text"] = response_vi
-    else:
-        formatted = None
     
     attachments = state.get("record_attachments", [])
     result = {
@@ -971,11 +1257,35 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
 # ROUTING FUNCTIONS
 # ============================================================================
 
+def route_after_translation(state: DoctorOrchestratorState) -> Literal["verify_input", "extract_patients"]:
+    """
+    Route after translation.
+
+    Fast-path optimization:
+    - When LLM-HITL is disabled, skip expensive verification call.
+    """
+    if not _llm_hitl_enabled(state):
+        return "extract_patients"
+    return "verify_input"
+
+
 def route_after_verification(state: DoctorOrchestratorState) -> Literal["extract_patients", END]:
     """Route after verification: continue or abort if invalid."""
     if state.get("errors"):
         return END
     return "extract_patients"
+
+
+def route_after_reasoning(state: DoctorOrchestratorState) -> Literal["safety_check", "format_output"]:
+    """
+    Route after medical reasoning.
+
+    Fast-path optimization:
+    - When LLM-HITL is disabled, skip expensive safety-check LLM call.
+    """
+    if not _llm_hitl_enabled(state):
+        return "format_output"
+    return "safety_check"
 
 
 def route_after_safety(state: DoctorOrchestratorState) -> Literal["format_output", "medical_reasoning", END]:
@@ -1015,7 +1325,11 @@ def build_doctor_graph():
     
     # Add edges
     builder.add_edge(START, "translate_input")
-    builder.add_edge("translate_input", "verify_input")
+    builder.add_conditional_edges(
+        "translate_input",
+        route_after_translation,
+        ["verify_input", "extract_patients"]
+    )
     builder.add_conditional_edges(
         "verify_input",
         route_after_verification,
@@ -1024,7 +1338,11 @@ def build_doctor_graph():
     builder.add_edge("extract_patients", "resolve_patients")
     builder.add_edge("resolve_patients", "get_context")
     builder.add_edge("get_context", "medical_reasoning")
-    builder.add_edge("medical_reasoning", "safety_check")
+    builder.add_conditional_edges(
+        "medical_reasoning",
+        route_after_reasoning,
+        ["safety_check", "format_output"]
+    )
     builder.add_conditional_edges(
         "safety_check",
         route_after_safety,
@@ -1148,6 +1466,9 @@ async def process_doctor_query_graph(
     query_vi: str,
     image_path: Optional[str] = None,
     thread_id: Optional[str] = None,
+    enable_hitl: bool = True,
+    enable_llm_hitl: Optional[bool] = None,
+    enable_patient_confirmation_hitl: Optional[bool] = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Process a doctor query using the LangGraph orchestrator.
@@ -1158,17 +1479,27 @@ async def process_doctor_query_graph(
         query_vi: Vietnamese query from doctor
         image_path: Optional path to medical image
         thread_id: Optional thread ID for state persistence
+        enable_hitl: Legacy global HITL toggle (used as fallback defaults)
+        enable_llm_hitl: Enable LLM-based HITL checks (verify_input + safety_check)
+        enable_patient_confirmation_hitl: Enable non-LLM patient confirmation HITL
         
     Yields:
         Stage update dictionaries
     """
     graph = get_doctor_graph()
+    llm_hitl = enable_hitl if enable_llm_hitl is None else enable_llm_hitl
+    patient_confirmation_hitl = (
+        enable_hitl
+        if enable_patient_confirmation_hitl is None
+        else enable_patient_confirmation_hitl
+    )
+    cache_mode = f"hitl:llm:{int(bool(llm_hitl))}:pc:{int(bool(patient_confirmation_hitl))}"
 
     # Check cache first (only for queries without images)
     if not image_path and response_cache.enabled:
-        cached = await get_cached_response(query_vi)
+        cached = await get_cached_response(query_vi, query_type=cache_mode)
         if cached:
-            response_vi, response_en = cached
+            response_vi, _ = cached
             logger.info(f"[Graph] Cache HIT for query: {query_vi[:50]}...")
             yield create_stage_message("starting", "Đang tải kết quả...", 0.0)
             yield {
@@ -1176,13 +1507,20 @@ async def process_doctor_query_graph(
                 "message": "Hoàn thành (từ bộ nhớ đệm)",
                 "progress": 1.0,
                 "response": response_vi,
-                "response_en": response_en,
                 "from_cache": True
             }
             return
 
     # Create initial state
-    initial_state = create_initial_doctor_state(query_vi, image_path)
+    initial_state = create_initial_doctor_state(
+        query_vi,
+        image_path,
+        enable_hitl=enable_hitl,
+        enable_llm_hitl=llm_hitl,
+        enable_patient_confirmation_hitl=patient_confirmation_hitl,
+    )
+    if not llm_hitl:
+        logger.info("[Graph] LLM fast path enabled: skipping verify_input and safety_check nodes")
 
     # Config for checkpointing
     config = {"configurable": {"thread_id": thread_id or "default"}}
@@ -1235,10 +1573,11 @@ async def process_doctor_query_graph(
                 response=response_vi,
                 response_en=response_en,
                 patient_ids=patient_ids if patient_ids else None,
-                query_type=str(final_state.get("query_type", "general")),
+                query_type=cache_mode,
                 metadata={
                     "safety_score": final_state.get("safety_score"),
                     "patient_count": len(patient_ids),
+                    "graph_query_type": str(final_state.get("query_type", "general")),
                 }
             )
             logger.info(f"[Graph] Cached response for query: {query_vi[:50]}...")
@@ -1249,7 +1588,6 @@ async def process_doctor_query_graph(
             "message": "Hoàn thành",
             "progress": 1.0,
             "response": response_vi,
-            "response_en": response_en,
             "formatted_response": final_state.get("formatted_response"),
             "mentioned_patients": [
                 {"id": m["id"], "name": m["name"]}

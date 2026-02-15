@@ -38,7 +38,7 @@ import json
 import logging
 import time
 
-from app.services.ollama_client import ollama_client
+from app.services.llm_client import llm_client
 from app.services.rag import get_patient_context, get_patient_record_image_attachments
 from app.services.llm import (
     translate_vi_to_en,
@@ -117,7 +117,7 @@ async def extract_patient_mentions(query_en: str) -> List[str]:
     Returns:
         List of patient names mentioned in the query
     """
-    response = await ollama_client.generate(
+    response = await llm_client.generate(
         model=settings.medical_model,  # Use MedGemma for structured extraction
         prompt=f"Query: {query_en}",
         system=PATIENT_EXTRACTION_SYSTEM,
@@ -374,7 +374,7 @@ async def process_doctor_query(
     }
     
     # Unload medical model to free memory
-    await ollama_client.unload(settings.medical_model)
+    await llm_client.unload(settings.medical_model)
     
     # ========== STEP 4: Get Context ==========
     yield {
@@ -424,7 +424,7 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
     logger.debug(f"[Orchestrator] Step 5: MedGemma prompt: {reasoning_prompt[:500]}...")
     
     start_step_5 = time.perf_counter()
-    response_en = await ollama_client.generate(
+    response_en = await llm_client.generate(
         model=settings.medical_model,
         prompt=reasoning_prompt,
         system=system_prompt,
@@ -444,7 +444,7 @@ Please provide a helpful, accurate response to assist the doctor with patient ma
     }
     
     # Unload medical model
-    await ollama_client.unload(settings.medical_model)
+    await llm_client.unload(settings.medical_model)
     
     # ========== STEP 6: English → Vietnamese ==========
     yield {

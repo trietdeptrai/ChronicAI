@@ -35,7 +35,15 @@ class DoctorChatRequestV2(BaseModel):
     image_path: Optional[str] = None
     enable_hitl: bool = Field(
         default=True,
-        description="Enable human-in-the-loop for ambiguous queries and safety checks"
+        description="Legacy global HITL toggle (fallback default for feature-specific toggles)"
+    )
+    enable_llm_hitl: Optional[bool] = Field(
+        default=None,
+        description="Enable LLM-based HITL (input verification + safety review)"
+    )
+    enable_patient_confirmation_hitl: Optional[bool] = Field(
+        default=None,
+        description="Enable non-LLM HITL for ambiguous patient matching confirmation"
     )
     output_format: Literal["plain", "structured", "markdown"] = Field(
         default="structured",
@@ -79,7 +87,6 @@ class ChatRequestV2(BaseModel):
 class ChatResponse(BaseModel):
     """Non-streaming chat response."""
     response: str
-    response_en: Optional[str] = None
     patient_id: str
 
 
@@ -88,10 +95,7 @@ async def chat(request: ChatRequest):
     """
     Send a message to the medical AI assistant.
     
-    Uses the Translation Sandwich pipeline:
-    1. Vietnamese → English translation
-    2. MedGemma medical reasoning with RAG context
-    3. English → Vietnamese translation
+    Uses the medical reasoning pipeline with RAG context.
     
     Returns full response (non-streaming).
     """
@@ -101,8 +105,6 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Invalid patient_id format")
     
     final_response = None
-    response_en = None
-    
     # Process through pipeline and get final result
     async for update in process_medical_query(
         user_input_vi=request.message,
@@ -111,7 +113,6 @@ async def chat(request: ChatRequest):
     ):
         if update.get("stage") == "complete":
             final_response = update.get("response", "")
-            response_en = update.get("response_en")
     
     if not final_response:
         raise HTTPException(
@@ -121,7 +122,6 @@ async def chat(request: ChatRequest):
     
     return ChatResponse(
         response=final_response,
-        response_en=response_en,
         patient_id=request.patient_id
     )
 
@@ -131,12 +131,7 @@ async def chat_stream(request: ChatRequest):
     """
     Send a message with streaming response.
     
-    Returns Server-Sent Events (SSE) with progress updates:
-    - translating_input: Translating Vietnamese to English
-    - retrieving_context: Searching medical records
-    - medical_reasoning: MedGemma processing
-    - translating_output: Translating response to Vietnamese
-    - complete: Final response ready
+    Returns Server-Sent Events (SSE) with progress updates.
     
     Each event contains:
     - stage: Current processing stage
@@ -224,17 +219,14 @@ async def doctor_chat_stream(request: DoctorChatRequest):
     4. Generate comprehensive response
     
     Returns Server-Sent Events (SSE) with progress updates including:
-    - translating_input: Translating Vietnamese to English
     - extracting_patients: Identifying mentioned patients
     - resolving_patients: Finding patient records
     - retrieving_context: Gathering medical context
     - medical_reasoning: AI processing
-    - translating_output: Translating response to Vietnamese
     - complete: Final response ready
     
     Each 'complete' event includes:
     - response: Vietnamese response
-    - response_en: English response
     - mentioned_patients: List of identified patients
     """
     async def event_generator():
@@ -301,16 +293,13 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
     Args:
         message: Doctor's query in Vietnamese
         image_path: Optional path to medical image
-        enable_hitl: Enable human-in-the-loop (default: true)
+        enable_hitl: Legacy global HITL fallback (default: true)
+        enable_llm_hitl: Enable LLM-based HITL checks
+        enable_patient_confirmation_hitl: Enable non-LLM patient confirmation HITL
         output_format: "plain", "structured", or "markdown"
         thread_id: Optional ID for conversation state persistence
     """
     import uuid as uuid_lib
-    from app.config import settings
-    
-    # Temporarily override HITL setting if specified
-    original_hitl = settings.enable_hitl
-    settings.enable_hitl = request.enable_hitl
     
     # Generate thread ID if not provided
     thread_id = request.thread_id or str(uuid_lib.uuid4())
@@ -321,7 +310,10 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
             async for update in process_doctor_query_graph(
                 query_vi=request.message,
                 image_path=request.image_path,
-                thread_id=thread_id
+                thread_id=thread_id,
+                enable_hitl=request.enable_hitl,
+                enable_llm_hitl=request.enable_llm_hitl,
+                enable_patient_confirmation_hitl=request.enable_patient_confirmation_hitl,
             ):
                 # Add thread_id to updates for HITL resume
                 update["thread_id"] = thread_id
@@ -344,10 +336,6 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
                 "thread_id": thread_id
             }, ensure_ascii=False)
             yield f"data: {error_data}\n\n"
-        finally:
-            # Restore original HITL setting
-            settings.enable_hitl = original_hitl
-    
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -406,7 +394,6 @@ async def doctor_chat_resume_hitl(request: HITLResumeRequest):
                 "message": "Hoàn thành",
                 "progress": 1.0,
                 "response": final_state.get("response_vi", ""),
-                "response_en": final_state.get("reasoning_en", ""),
                 "formatted_response": final_state.get("formatted_response"),
                 "mentioned_patients": [
                     {"id": m["id"], "name": m["name"]}
@@ -493,4 +480,3 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
             "X-Accel-Buffering": "no"
         }
     )
-

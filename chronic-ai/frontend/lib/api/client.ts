@@ -138,12 +138,13 @@ export async function* streamingFetch<T>(
  */
 export async function uploadFile<T>(
     endpoint: string,
-    formData: FormData
+    formData: FormData,
+    method: "POST" | "PUT" | "PATCH" = "POST"
 ): Promise<T> {
     const url = `${API_BASE}${endpoint}`
 
     const response = await fetch(url, {
-        method: "POST",
+        method,
         body: formData,
         // Don't set Content-Type header - browser will set it with boundary
     })

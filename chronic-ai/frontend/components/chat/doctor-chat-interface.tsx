@@ -12,10 +12,10 @@ import { StreamingProgress } from "./streaming-progress"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { X, Search, Users, Sparkles } from "lucide-react"
+import { X, Users, Sparkles } from "lucide-react"
 
 export function DoctorChatInterface() {
-    const [showEnglish, setShowEnglish] = useState(false)
+    const [isResolvingHITL, setIsResolvingHITL] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
     const {
@@ -25,10 +25,19 @@ export function DoctorChatInterface() {
         currentStage,
         currentProgress,
         mentionedPatients,
+        pendingHITL,
         error,
         sendMessage,
+        resumeHITL,
+        dismissHITL,
         clearMessages,
     } = useDoctorChat()
+
+    const pendingPatientMatches = pendingHITL?.type === "patient_confirmation"
+        ? ((pendingHITL.details as {
+            matches?: Array<{ id: string; name: string; match_confidence?: number }>
+        }).matches || [])
+        : []
 
     // Scroll to bottom when messages or streaming state changes
     useEffect(() => {
@@ -51,6 +60,15 @@ export function DoctorChatInterface() {
         }
 
         await sendMessage(message, imagePath)
+    }
+
+    const handleResumeHITL = async (response: Record<string, unknown>) => {
+        try {
+            setIsResolvingHITL(true)
+            await resumeHITL(response)
+        } finally {
+            setIsResolvingHITL(false)
+        }
     }
 
     return (
@@ -89,15 +107,6 @@ export function DoctorChatInterface() {
                             )}
                         </div>
                     )}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowEnglish(!showEnglish)}
-                        className={showEnglish ? "text-primary" : ""}
-                    >
-                        <Search className="w-4 h-4 mr-1" />
-                        <span className="text-xs">EN</span>
-                    </Button>
                     {messages.length > 0 && (
                         <Button
                             variant="ghost"
@@ -121,7 +130,6 @@ export function DoctorChatInterface() {
                             <MessageBubble
                                 key={message.id}
                                 message={message}
-                                showEnglish={showEnglish}
                             />
                         ))}
 
@@ -132,6 +140,70 @@ export function DoctorChatInterface() {
                                 progress={currentProgress}
                                 mode="doctor"
                             />
+                        )}
+
+                        {pendingHITL && (
+                            <Card className="p-4 border-amber-400/40 bg-amber-50/40">
+                                <p className="text-sm font-medium text-amber-700">Cần xác nhận</p>
+                                <p className="text-sm text-muted-foreground mt-1">{pendingHITL.message}</p>
+
+                                {pendingPatientMatches.length > 0 ? (
+                                    <div className="mt-3 space-y-2">
+                                        {pendingPatientMatches.map((match) => (
+                                            <Button
+                                                key={match.id}
+                                                variant="outline"
+                                                size="sm"
+                                                className="w-full justify-start"
+                                                disabled={isResolvingHITL}
+                                                onClick={() => handleResumeHITL({ patient_ids: [match.id] })}
+                                            >
+                                                Chọn: {match.name}
+                                                {typeof match.match_confidence === "number"
+                                                    ? ` (${Math.round(match.match_confidence * 100)}%)`
+                                                    : ""}
+                                            </Button>
+                                        ))}
+                                        <div className="flex gap-2 pt-1">
+                                            <Button
+                                                size="sm"
+                                                disabled={isResolvingHITL}
+                                                onClick={() => handleResumeHITL({
+                                                    patient_ids: pendingPatientMatches.map((m) => m.id),
+                                                })}
+                                            >
+                                                Giữ tất cả
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                disabled={isResolvingHITL}
+                                                onClick={dismissHITL}
+                                            >
+                                                Hủy
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="mt-3 flex gap-2">
+                                        <Button
+                                            size="sm"
+                                            disabled={isResolvingHITL}
+                                            onClick={() => handleResumeHITL({ action: "approve" })}
+                                        >
+                                            Tiếp tục
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            disabled={isResolvingHITL}
+                                            onClick={dismissHITL}
+                                        >
+                                            Hủy
+                                        </Button>
+                                    </div>
+                                )}
+                            </Card>
                         )}
 
                         {/* Error Message */}

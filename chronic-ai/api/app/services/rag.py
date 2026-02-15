@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple
 from uuid import UUID
 import json
 
-from app.services.ollama_client import ollama_client
+from app.services.llm_client import llm_client
 from app.db.database import get_supabase
 from app.config import settings
 
@@ -60,17 +60,23 @@ def chunk_text(
     return chunks
 
 
-async def generate_embedding(text: str) -> List[float]:
+async def generate_embedding(text: str, *, for_query: bool = False) -> List[float]:
     """
-    Generate 768-dimensional embedding for text using nomic-embed-text.
+    Generate embedding for text using configured embedding provider.
     
     Args:
         text: Text to embed
+        for_query: Whether the text is a search query (vs document chunk)
         
     Returns:
-        768-dimensional embedding vector
+        Embedding vector
     """
-    return await ollama_client.embed(text)
+    task_type = (
+        settings.embedding_task_type_query
+        if for_query
+        else settings.embedding_task_type_document
+    )
+    return await llm_client.embed(text, task_type=task_type)
 
 
 async def ingest_document(
@@ -98,7 +104,7 @@ async def ingest_document(
     
     # Generate and store embeddings
     for idx, chunk in enumerate(chunks):
-        embedding = await generate_embedding(chunk)
+        embedding = await generate_embedding(chunk, for_query=False)
         
         # Insert into record_embeddings table
         supabase.table("record_embeddings").insert({
@@ -155,7 +161,7 @@ async def search_similar_records(
     supabase = get_supabase()
     
     # Generate query embedding
-    query_embedding = await generate_embedding(query)
+    query_embedding = await generate_embedding(query, for_query=True)
     
     # Perform vector similarity search via Supabase RPC
     # Note: This requires a custom function in Supabase

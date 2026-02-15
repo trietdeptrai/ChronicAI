@@ -528,6 +528,7 @@ class MedicalRecordBase(BaseModel):
     content_text: Optional[str] = None
     image_path: Optional[str] = Field(None, max_length=500)
     analysis_result: Optional[dict] = None
+    doctor_comment: Optional[str] = None
 
 
 class MedicalRecordCreate(MedicalRecordBase):

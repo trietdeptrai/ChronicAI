@@ -16,15 +16,16 @@ interface StreamingProgressProps {
 
 // Patient-specific chat stages
 const patientStages = [
-    { id: "translating_input", label: "Dịch sang tiếng Anh", icon: Search },
+    { id: "verifying_input", label: "Phân tích câu hỏi", icon: Search },
     { id: "retrieving_context", label: "Tìm kiếm hồ sơ", icon: Search },
+    { id: "triaged", label: "Đánh giá mức độ khẩn cấp", icon: Search },
     { id: "medical_reasoning", label: "Phân tích y tế", icon: Bot },
-    { id: "translating_output", label: "Dịch sang tiếng Việt", icon: Search },
+    { id: "formatting_output", label: "Hoàn thiện phản hồi", icon: Search },
 ]
 
 // Doctor orchestrator stages
 const doctorStages = [
-    { id: "translating_input", label: "Dịch sang tiếng Anh", icon: Search },
+    { id: "translating_input", label: "Phân tích câu hỏi", icon: Search },
     { id: "verifying_input", label: "Kiểm tra độ rõ ràng", icon: Search },
     { id: "extracting_patients", label: "Xác định bệnh nhân", icon: Users },
     { id: "resolving_patients", label: "Tìm hồ sơ bệnh nhân", icon: Search },
@@ -32,7 +33,7 @@ const doctorStages = [
     { id: "medical_reasoning", label: "Phân tích y tế", icon: Bot },
     { id: "safety_check", label: "Kiểm tra an toàn", icon: Search },
     { id: "formatting_output", label: "Định dạng kết quả", icon: Bot },
-    { id: "translating_output", label: "Dịch sang tiếng Việt", icon: Search },
+    { id: "translating_output", label: "Hoàn thiện phản hồi", icon: Search },
 ]
 
 const doctorStageAlias: Partial<Record<StageType, string>> = {
@@ -49,6 +50,15 @@ const doctorStageAlias: Partial<Record<StageType, string>> = {
 }
 
 const doctorStageIds = new Set(doctorStages.map((stageItem) => stageItem.id))
+const patientStageAlias: Partial<Record<StageType, string>> = {
+    starting: "verifying_input",
+    translated_input: "verifying_input",
+    verified_input: "verifying_input",
+    retrieved_history: "retrieving_context",
+    escalated: "medical_reasoning",
+    reasoned: "medical_reasoning",
+    formatted: "formatting_output",
+}
 
 export function StreamingProgress({ stage, progress, mode }: StreamingProgressProps) {
     if (!stage || stage === "complete") return null
@@ -61,7 +71,7 @@ export function StreamingProgress({ stage, progress, mode }: StreamingProgressPr
 
     const normalizedStage = effectiveMode === "doctor"
         ? (doctorStageAlias[stage] || stage)
-        : stage
+        : (patientStageAlias[stage] || stage)
     const currentStageIndex = stages.findIndex(s => s.id === normalizedStage)
 
     return (

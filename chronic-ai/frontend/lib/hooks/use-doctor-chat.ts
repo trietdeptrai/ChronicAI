@@ -11,7 +11,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { sendDoctorChatStreaming } from "@/lib/api"
+import { sendDoctorChatStreaming, resumeDoctorChatStreaming } from "@/lib/api"
 import type { ChatMessage, DoctorChatStreamUpdate, PatientMention } from "@/types"
 
 // HITL Request type (matches backend HITLRequest)
@@ -113,7 +113,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
             messages: [...prev.messages, userMessage],
             isLoading: true,
             isStreaming: true,
-            currentStage: "translating_input" as DoctorChatStreamUpdate["stage"],
+            currentStage: "starting" as DoctorChatStreamUpdate["stage"],
             currentStageMessage: STAGE_MESSAGES.starting,
             currentProgress: 0,
             mentionedPatients: [],
@@ -198,7 +198,6 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                         id: `assistant-${Date.now()}`,
                         role: "assistant",
                         content: update.response,
-                        content_en: update.response_en,
                         timestamp: new Date().toISOString(),
                         attachments: update.attachments,
                     }
@@ -254,6 +253,136 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
     }, [onStreamUpdate, onComplete, onError, onHITLRequest])
 
     /**
+     * Resume a paused HITL conversation.
+     */
+    const resumeHITL = useCallback(async (response: Record<string, unknown>) => {
+        if (!state.threadId) {
+            throw new Error("Không tìm thấy thread để tiếp tục HITL")
+        }
+
+        setState(prev => ({
+            ...prev,
+            isLoading: true,
+            isStreaming: true,
+            error: undefined,
+            pendingHITL: undefined,
+        }))
+
+        try {
+            let finalResponse = ""
+            let mentionedPatients: PatientMention[] = state.mentionedPatients
+            let didComplete = false
+
+            for await (const update of resumeDoctorChatStreaming(state.threadId, response)) {
+                onStreamUpdate?.(update)
+
+                setState(prev => ({
+                    ...prev,
+                    currentStage: update.stage,
+                    currentStageMessage: getStageMessage(update.stage, update.message),
+                    currentProgress: update.progress,
+                }))
+
+                if (update.mentioned_patients) {
+                    mentionedPatients = update.mentioned_patients
+                    setState(prev => ({
+                        ...prev,
+                        mentionedPatients: update.mentioned_patients || [],
+                    }))
+                }
+
+                const extendedUpdate = update as DoctorChatStreamUpdate & {
+                    safety_score?: number
+                    hitl_request?: HITLRequest
+                    thread_id?: string
+                }
+
+                if (extendedUpdate.safety_score !== undefined) {
+                    const score = extendedUpdate.safety_score
+                    const safetyLevel = score >= 0.9 ? "safe" :
+                                       score >= 0.7 ? "caution" :
+                                       score >= 0.5 ? "warning" : "critical"
+                    setState(prev => ({
+                        ...prev,
+                        safetyScore: score,
+                        safetyLevel,
+                    }))
+                }
+                if (extendedUpdate.thread_id) {
+                    setState(prev => ({
+                        ...prev,
+                        threadId: extendedUpdate.thread_id,
+                    }))
+                }
+
+                if ((update.stage as string) === "hitl_required" && extendedUpdate.hitl_request) {
+                    const hitlRequest = extendedUpdate.hitl_request
+                    setState(prev => ({
+                        ...prev,
+                        pendingHITL: hitlRequest,
+                        isStreaming: false,
+                    }))
+                    onHITLRequest?.(hitlRequest)
+                    return
+                }
+
+                if (update.stage === "complete" && update.response) {
+                    if (didComplete) {
+                        continue
+                    }
+                    didComplete = true
+                    finalResponse = update.response
+
+                    const assistantMessage: ChatMessage = {
+                        id: `assistant-${Date.now()}`,
+                        role: "assistant",
+                        content: update.response,
+                        timestamp: new Date().toISOString(),
+                        attachments: update.attachments,
+                    }
+
+                    setState(prev => ({
+                        ...prev,
+                        messages: [...prev.messages, assistantMessage],
+                        isLoading: false,
+                        isStreaming: false,
+                        currentStage: "complete" as DoctorChatStreamUpdate["stage"],
+                        currentStageMessage: STAGE_MESSAGES.complete,
+                        currentProgress: 1,
+                        mentionedPatients: update.mentioned_patients || mentionedPatients,
+                        pendingHITL: undefined,
+                    }))
+
+                    onComplete?.(update.response)
+                }
+
+                if (update.stage === "error") {
+                    throw new Error(update.error || update.message || "Đã xảy ra lỗi không xác định")
+                }
+            }
+
+            return finalResponse
+        } catch (error) {
+            let errorMessage = "Đã xảy ra lỗi khi tiếp tục xác nhận. Vui lòng thử lại."
+
+            if (error instanceof Error && error.message) {
+                errorMessage = error.message
+            }
+
+            setState(prev => ({
+                ...prev,
+                isLoading: false,
+                isStreaming: false,
+                currentStage: "error" as DoctorChatStreamUpdate["stage"],
+                currentStageMessage: errorMessage,
+                error: errorMessage,
+            }))
+            onError?.(error instanceof Error ? error : new Error(errorMessage))
+            throw error
+        }
+    }, [state.threadId, state.mentionedPatients, onStreamUpdate, onComplete, onError, onHITLRequest])
+
+    /**
      * Clear chat history
      */
     const clearMessages = useCallback(() => {
@@ -303,6 +432,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
         isSafeResponse: state.safetyLevel === "safe" || state.safetyLevel === "caution",
         // Actions
         sendMessage,
+        resumeHITL,
         clearMessages,
         clearError,
         dismissHITL,

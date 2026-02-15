@@ -6,7 +6,6 @@ export interface ChatMessage {
     id: string
     role: "user" | "assistant"
     content: string
-    content_en?: string
     timestamp: string
     attachments?: ChatAttachment[]
 }
@@ -30,7 +29,6 @@ export interface ChatRequest {
 
 export interface ChatResponse {
     response: string
-    response_en?: string
     patient_id: string
 }
 
@@ -43,6 +41,9 @@ export interface ChatStreamUpdate {
         | "verified_input"
         | "retrieving_context"
         | "retrieved_context"
+        | "retrieved_history"
+        | "triaged"
+        | "escalated"
         | "medical_reasoning"
         | "reasoned"
         | "translating_output"
@@ -54,7 +55,6 @@ export interface ChatStreamUpdate {
     message: string
     progress: number
     response?: string
-    response_en?: string
     error?: string
     attachments?: ChatAttachment[]
     thread_id?: string
@@ -128,7 +128,6 @@ export interface DoctorChatStreamUpdate {
     message: string
     progress: number
     response?: string
-    response_en?: string
     mentioned_patients?: PatientMention[]
     error?: string
     attachments?: ChatAttachment[]

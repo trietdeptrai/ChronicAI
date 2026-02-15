@@ -6,7 +6,7 @@
 import { useRef, useState, type ChangeEvent } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useAuth } from "@/contexts"
-import { PageHeader, LoadingOverlay } from "@/components/shared"
+import { PageHeader, LoadingOverlay, RecordAIAnalysis, RecordDoctorComment } from "@/components/shared"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,9 +17,20 @@ import { Textarea } from "@/components/ui/textarea"
 import {
     Dialog,
     DialogContent,
+    DialogFooter,
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/alert-dialog"
 import {
     usePatient,
     usePatientRecords,
@@ -27,9 +38,12 @@ import {
     useCreateVitalSign,
     useUploadPatientPhoto,
     useUploadPatientRecordImage,
+    useUpdatePatientRecord,
+    useDeletePatientRecord,
 } from "@/lib/hooks"
-import type { MedicalRecord, VitalSign, VitalSignInput } from "@/types"
+import type { MedicalRecord, MedicalRecordAIAnalysis, VitalSign, VitalSignInput } from "@/types"
 import { Activity, ArrowLeft, FileText, Upload } from "lucide-react"
+import { toast } from "sonner"
 
 type ImagingRecordType =
     | "xray"
@@ -49,6 +63,22 @@ type VitalFormState = {
     oxygenSaturation: string
     weightKg: string
     notes: string
+}
+
+type RecordEditState = {
+    recordId: string
+    title: string
+    recordType:
+        | "prescription"
+        | "lab"
+        | "xray"
+        | "ecg"
+        | "ct"
+        | "mri"
+        | "notes"
+        | "referral"
+    doctorComment: string
+    file: File | null
 }
 
 const imagingTypeOptions: Array<{ value: ImagingRecordType; label: string }> = [
@@ -106,17 +136,20 @@ export default function PatientDetailPage() {
     const [activeRecord, setActiveRecord] = useState<MedicalRecord | null>(null)
 
     const { data, isLoading, error } = usePatient(patientId ?? "")
-    const { data: recordsData, isLoading: recordsLoading, error: recordsError } = usePatientRecords(
-        patientId ?? "",
-        recordFilter || undefined,
-        50
-    )
+    const {
+        data: recordsData,
+        isLoading: recordsLoading,
+        error: recordsError,
+        refetch: refetchRecords,
+    } = usePatientRecords(patientId ?? "", recordFilter || undefined, 50)
     const { data: vitalsData, isLoading: vitalsLoading, error: vitalsError } = usePatientVitals(
         patientId ?? "",
         30
     )
     const photoUploadMutation = useUploadPatientPhoto()
     const recordUploadMutation = useUploadPatientRecordImage()
+    const recordUpdateMutation = useUpdatePatientRecord()
+    const recordDeleteMutation = useDeletePatientRecord()
     const createVitalMutation = useCreateVitalSign()
 
     const [photoFile, setPhotoFile] = useState<File | null>(null)
@@ -127,8 +160,16 @@ export default function PatientDetailPage() {
     const [recordType, setRecordType] = useState<ImagingRecordType>("xray")
     const [recordTitle, setRecordTitle] = useState("")
     const [recordError, setRecordError] = useState<string | null>(null)
-    const [recordSuccess, setRecordSuccess] = useState<string | null>(null)
     const recordInputRef = useRef<HTMLInputElement>(null)
+    const [postUploadRecordId, setPostUploadRecordId] = useState<string | null>(null)
+    const [postUploadComment, setPostUploadComment] = useState("")
+    const [postUploadAiAnalysis, setPostUploadAiAnalysis] = useState<MedicalRecordAIAnalysis | string | null>(null)
+    const [isPostUploadDialogOpen, setIsPostUploadDialogOpen] = useState(false)
+
+    const [editState, setEditState] = useState<RecordEditState | null>(null)
+    const [editError, setEditError] = useState<string | null>(null)
+    const [deleteRecord, setDeleteRecord] = useState<MedicalRecord | null>(null)
+    const [recordListError, setRecordListError] = useState<string | null>(null)
 
     const [vitalForm, setVitalForm] = useState<VitalFormState>({
         recordedAt: "",
@@ -183,12 +224,12 @@ export default function PatientDetailPage() {
         const selected = e.target.files?.[0] ?? null
         setRecordFile(selected)
         setRecordError(null)
-        setRecordSuccess(null)
+        setRecordListError(null)
     }
 
     const handleRecordUpload = () => {
         setRecordError(null)
-        setRecordSuccess(null)
+        setRecordListError(null)
         if (!patientId) {
             setRecordError("Không tìm thấy mã bệnh nhân.")
             return
@@ -210,13 +251,136 @@ export default function PatientDetailPage() {
                 title: recordTitle.trim() || undefined,
             },
             {
-                onSuccess: () => {
+                onSuccess: (response) => {
                     setRecordFile(null)
                     setRecordTitle("")
-                    setRecordSuccess("Đã tải ảnh cận lâm sàng thành công.")
+                    toast.success("Đã tải tệp thành công.")
+                    setPostUploadRecordId(response.record_id)
+                    setPostUploadComment("")
+                    setPostUploadAiAnalysis(response.ai_analysis ?? null)
+                    setIsPostUploadDialogOpen(true)
+                    void refetchRecords()
                     if (recordInputRef.current) {
                         recordInputRef.current.value = ""
                     }
+                },
+            }
+        )
+    }
+
+    const handlePostUploadCommentSave = () => {
+        if (!patientId || !postUploadRecordId) {
+            setIsPostUploadDialogOpen(false)
+            return
+        }
+
+        recordUpdateMutation.mutate(
+            {
+                patientId,
+                recordId: postUploadRecordId,
+                doctorComment: postUploadComment,
+            },
+            {
+                onSuccess: () => {
+                    setIsPostUploadDialogOpen(false)
+                    setPostUploadRecordId(null)
+                    setPostUploadComment("")
+                    setPostUploadAiAnalysis(null)
+                    toast.success("Đã lưu nhận xét bác sĩ.")
+                    void refetchRecords()
+                },
+                onError: (err) => {
+                    setRecordError(getErrorMessage(err, "Không thể lưu nhận xét bác sĩ."))
+                },
+            }
+        )
+    }
+
+    const openEditRecord = (record: MedicalRecord) => {
+        setEditError(null)
+        setRecordListError(null)
+        setEditState({
+            recordId: record.id,
+            title: record.title || "",
+            recordType: record.record_type,
+            doctorComment: record.doctor_comment || "",
+            file: null,
+        })
+    }
+
+    const handleEditRecordFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+        const selected = event.target.files?.[0] ?? null
+        setEditState((prev) => {
+            if (!prev) return prev
+            return {
+                ...prev,
+                file: selected,
+            }
+        })
+    }
+
+    const handleRecordUpdate = () => {
+        if (!patientId || !editState) {
+            return
+        }
+
+        setEditError(null)
+        setRecordListError(null)
+
+        if (editState.file && !editState.file.type.startsWith("image/") && editState.file.type !== "application/pdf") {
+            setEditError("Tệp thay thế phải là ảnh hoặc PDF.")
+            return
+        }
+
+        recordUpdateMutation.mutate(
+            {
+                patientId,
+                recordId: editState.recordId,
+                title: editState.title,
+                recordType: editState.recordType,
+                doctorComment: editState.doctorComment,
+                file: editState.file ?? undefined,
+            },
+            {
+                onSuccess: () => {
+                    setEditState(null)
+                    setEditError(null)
+                    toast.success("Đã cập nhật hồ sơ y khoa.")
+                    if (activeRecord?.id === editState.recordId) {
+                        setActiveRecord(null)
+                    }
+                    void refetchRecords()
+                },
+                onError: (err) => {
+                    setEditError(getErrorMessage(err, "Cập nhật hồ sơ y khoa thất bại."))
+                },
+            }
+        )
+    }
+
+    const handleDeleteRecord = () => {
+        if (!patientId || !deleteRecord) {
+            return
+        }
+
+        setRecordListError(null)
+
+        recordDeleteMutation.mutate(
+            {
+                patientId,
+                recordId: deleteRecord.id,
+            },
+            {
+                onSuccess: () => {
+                    if (activeRecord?.id === deleteRecord.id) {
+                        setActiveRecord(null)
+                    }
+                    setDeleteRecord(null)
+                    toast.success("Đã xóa hồ sơ y khoa thành công.")
+                    void refetchRecords()
+                },
+                onError: (err) => {
+                    setRecordListError(getErrorMessage(err, "Xóa hồ sơ y khoa thất bại."))
                 },
             }
         )
@@ -331,6 +495,10 @@ export default function PatientDetailPage() {
     const patient = data.patient
     const initials = getInitials(patient.full_name)
     const vitals = vitalsData?.vitals ?? data.recent_vitals
+    const postUploadRecord = postUploadRecordId
+        ? recordsData?.records.find((record) => record.id === postUploadRecordId)
+        : null
+    const postUploadAnalysis = postUploadAiAnalysis ?? postUploadRecord?.analysis_result ?? null
 
     return (
         <div className="space-y-6">
@@ -652,6 +820,12 @@ export default function PatientDetailPage() {
                     </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                    {recordListError && (
+                        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                            {recordListError}
+                        </div>
+                    )}
+
                     {recordsLoading && (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                             Đang tải hồ sơ y khoa...
@@ -690,13 +864,36 @@ export default function PatientDetailPage() {
                                             <p className="text-xs text-muted-foreground">
                                                 {formatDateTime(record.created_at)}
                                             </p>
-                                            {record.content_text && (
+                                            {record.content_text && !hasAnalysis(record.analysis_result) && (
                                                 <p className="mt-2 text-sm text-muted-foreground">
                                                     {truncateText(record.content_text, 180)}
                                                 </p>
                                             )}
+                                            <RecordDoctorComment doctorComment={record.doctor_comment} />
+                                            <RecordAIAnalysis analysis={record.analysis_result} />
                                         </div>
                                         <div className="flex flex-col gap-2 items-start md:items-end">
+                                            {role === "doctor" && (
+                                                <div className="flex w-full flex-wrap justify-end gap-2 pb-1">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => openEditRecord(record)}
+                                                    >
+                                                        Chỉnh sửa
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="destructive"
+                                                        onClick={() => {
+                                                            setRecordListError(null)
+                                                            setDeleteRecord(record)
+                                                        }}
+                                                    >
+                                                        Xóa
+                                                    </Button>
+                                                </div>
+                                            )}
                                             {record.file_kind === "image" && record.file_url && (
                                                 <button
                                                     type="button"
@@ -745,7 +942,6 @@ export default function PatientDetailPage() {
                             onChange={(event) => {
                                 setRecordType(event.target.value as ImagingRecordType)
                                 setRecordError(null)
-                                setRecordSuccess(null)
                             }}
                             className="border-input h-9 w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
                         >
@@ -758,14 +954,13 @@ export default function PatientDetailPage() {
                     </div>
 
                     <div className="grid gap-2">
-                        <Label htmlFor="record-title">Tiêu đề (tuỳ chọn)</Label>
+                        <Label htmlFor="record-title">Tiêu đề (tùy chọn)</Label>
                         <Input
                             id="record-title"
                             placeholder="Ví dụ: CT ngực 2026-02-01"
                             value={recordTitle}
                             onChange={(event) => {
                                 setRecordTitle(event.target.value)
-                                setRecordSuccess(null)
                             }}
                         />
                     </div>
@@ -789,9 +984,6 @@ export default function PatientDetailPage() {
                             Tải ảnh thất bại. Vui lòng thử lại.
                         </p>
                     )}
-                    {recordSuccess && (
-                        <p className="text-sm text-emerald-600">{recordSuccess}</p>
-                    )}
 
                     <Button
                         onClick={handleRecordUpload}
@@ -802,6 +994,195 @@ export default function PatientDetailPage() {
                     </Button>
                 </CardContent>
             </Card>
+
+            <Dialog
+                open={isPostUploadDialogOpen}
+                onOpenChange={(open) => {
+                    setIsPostUploadDialogOpen(open)
+                    if (!open) {
+                        setPostUploadRecordId(null)
+                        setPostUploadComment("")
+                        setPostUploadAiAnalysis(null)
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Thêm nhận xét bác sĩ (tùy chọn)</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <p className="text-sm text-muted-foreground">
+                            AI đã phân tích xong. Bạn có thể bổ sung nhận xét bác sĩ cho hồ sơ này.
+                        </p>
+                        {postUploadAnalysis ? (
+                            <RecordAIAnalysis analysis={postUploadAnalysis} />
+                        ) : (
+                            <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                                Chưa có nội dung phân tích AI để tham khảo.
+                            </div>
+                        )}
+                        <Textarea
+                            value={postUploadComment}
+                            onChange={(event) => setPostUploadComment(event.target.value)}
+                            placeholder="Nhập nhận xét bác sĩ..."
+                            rows={4}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setIsPostUploadDialogOpen(false)
+                                setPostUploadRecordId(null)
+                                setPostUploadComment("")
+                                setPostUploadAiAnalysis(null)
+                            }}
+                        >
+                            Bỏ qua
+                        </Button>
+                        <Button
+                            onClick={handlePostUploadCommentSave}
+                            disabled={!postUploadRecordId || recordUpdateMutation.isPending}
+                        >
+                            {recordUpdateMutation.isPending ? "Đang lưu..." : "Lưu nhận xét"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={!!editState}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setEditState(null)
+                        setEditError(null)
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Cập nhật hồ sơ y khoa</DialogTitle>
+                    </DialogHeader>
+                    {editState && (
+                        <div className="space-y-4">
+                            <div className="grid gap-2">
+                                <Label htmlFor="edit-record-title">Tiêu đề</Label>
+                                <Input
+                                    id="edit-record-title"
+                                    value={editState.title}
+                                    onChange={(event) =>
+                                        setEditState((prev) =>
+                                            prev
+                                                ? {
+                                                    ...prev,
+                                                    title: event.target.value,
+                                                }
+                                                : prev
+                                        )
+                                    }
+                                />
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label htmlFor="edit-record-type">Loại hồ sơ</Label>
+                                <select
+                                    id="edit-record-type"
+                                    value={editState.recordType}
+                                    onChange={(event) =>
+                                        setEditState((prev) =>
+                                            prev
+                                                ? {
+                                                    ...prev,
+                                                    recordType: event.target.value as RecordEditState["recordType"],
+                                                }
+                                                : prev
+                                        )
+                                    }
+                                    className="border-input h-9 w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] md:text-sm"
+                                >
+                                    {recordTypeOptions
+                                        .filter((option) => option.value !== "")
+                                        .map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label htmlFor="edit-record-file">Thay tệp (tùy chọn)</Label>
+                                <Input
+                                    id="edit-record-file"
+                                    type="file"
+                                    accept="image/png,image/jpeg,image/jpg,image/bmp,image/tiff,application/pdf"
+                                    onChange={handleEditRecordFileChange}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Nếu thay tệp, hệ thống sẽ chạy lại phân tích AI.
+                                </p>
+                            </div>
+
+                            <div className="grid gap-2">
+                                <Label htmlFor="edit-record-comment">Nhận xét bác sĩ</Label>
+                                <Textarea
+                                    id="edit-record-comment"
+                                    value={editState.doctorComment}
+                                    onChange={(event) =>
+                                        setEditState((prev) =>
+                                            prev
+                                                ? {
+                                                    ...prev,
+                                                    doctorComment: event.target.value,
+                                                }
+                                                : prev
+                                        )
+                                    }
+                                    rows={4}
+                                    placeholder="Nhập nhận xét bác sĩ..."
+                                />
+                            </div>
+
+                            {editError && <p className="text-sm text-destructive">{editError}</p>}
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setEditState(null)}>
+                            Hủy
+                        </Button>
+                        <Button onClick={handleRecordUpdate} disabled={!editState || recordUpdateMutation.isPending}>
+                            {recordUpdateMutation.isPending ? "Đang cập nhật..." : "Lưu thay đổi"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <AlertDialog
+                open={!!deleteRecord}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setDeleteRecord(null)
+                    }
+                }}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Xóa hồ sơ y khoa?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bị xóa.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Hủy</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={handleDeleteRecord}
+                            disabled={recordDeleteMutation.isPending}
+                        >
+                            {recordDeleteMutation.isPending ? "Đang xóa..." : "Xóa"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <Dialog
                 open={!!activeRecord}
@@ -822,15 +1203,17 @@ export default function PatientDetailPage() {
                                 alt={activeRecord.title}
                                 className="w-full rounded-lg border object-contain"
                             />
-                            {activeRecord.content_text && (
+                            {activeRecord.content_text && !hasAnalysis(activeRecord.analysis_result) && (
                                 <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground whitespace-pre-line">
                                     {activeRecord.content_text}
                                 </div>
                             )}
+                            <RecordDoctorComment doctorComment={activeRecord.doctor_comment} />
+                            <RecordAIAnalysis analysis={activeRecord.analysis_result} />
                         </div>
                     ) : (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Không có ảnh để hiển thị.
+                            Không có ảnh để hiển thị
                         </div>
                     )}
                 </DialogContent>
@@ -924,3 +1307,19 @@ function truncateText(text: string, maxLength: number): string {
     if (text.length <= maxLength) return text
     return `${text.slice(0, maxLength)}...`
 }
+
+function hasAnalysis(value: unknown): boolean {
+    if (!value) return false
+    if (typeof value === "string") return value.trim().length > 0
+    if (typeof value === "object") return true
+    return false
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+    if (error && typeof error === "object" && "message" in error) {
+        const message = String((error as { message?: unknown }).message || "").trim()
+        if (message) return message
+    }
+    return fallback
+}
+

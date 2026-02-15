@@ -30,7 +30,12 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
 export async function* sendChatMessageStreaming(
     request: ChatRequest
 ): AsyncGenerator<ChatStreamUpdate> {
-    yield* streamingFetch<ChatStreamUpdate>("/chat/stream", request)
+    yield* streamingFetch<ChatStreamUpdate>("/chat/patient/v2/stream", {
+        patient_id: request.patient_id,
+        message: request.message,
+        image_path: request.image_path,
+        output_format: "structured",
+    })
 }
 
 /**
@@ -115,6 +120,21 @@ export async function* sendDoctorChatStreaming(
         message,
         image_path: imagePath,
         enable_hitl: false,
+        enable_llm_hitl: false,
+        enable_patient_confirmation_hitl: true,
         output_format: "structured",
+    })
+}
+
+/**
+ * Resume doctor orchestrator stream after a HITL interrupt.
+ */
+export async function* resumeDoctorChatStreaming(
+    threadId: string,
+    response: Record<string, unknown>
+): AsyncGenerator<DoctorChatStreamUpdate> {
+    yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/v2/resume", {
+        thread_id: threadId,
+        response,
     })
 }

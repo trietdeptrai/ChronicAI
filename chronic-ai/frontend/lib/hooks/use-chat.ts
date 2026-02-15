@@ -88,7 +88,6 @@ export function useChat({ patientId, onStreamUpdate, onComplete, onError }: UseC
                         id: `assistant-${Date.now()}`,
                         role: "assistant",
                         content: update.response,
-                        content_en: update.response_en,
                         timestamp: new Date().toISOString(),
                         attachments: update.attachments,
                     }
