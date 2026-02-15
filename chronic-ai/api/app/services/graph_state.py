@@ -82,7 +82,9 @@ class DoctorOrchestratorState(TypedDict):
     query_en: str  # Translated English query
     image_path: Optional[str]  # Path to uploaded image (if any)
     image_base64: Optional[str]  # Base64 encoded image (user-uploaded)
-    enable_hitl: bool  # Per-request HITL toggle (also controls fast-path checks)
+    enable_hitl: bool  # Legacy global HITL toggle (backward compatibility)
+    enable_llm_hitl: bool  # Enable LLM-based HITL (verify_input + safety review)
+    enable_patient_confirmation_hitl: bool  # Enable non-LLM patient confirmation HITL
 
     # === Patient Record Images ===
     patient_record_images_base64: List[str]  # Base64 encoded patient record images from DB
@@ -170,8 +172,17 @@ def create_initial_doctor_state(
     query_vi: str,
     image_path: Optional[str] = None,
     enable_hitl: bool = True,
+    enable_llm_hitl: Optional[bool] = None,
+    enable_patient_confirmation_hitl: Optional[bool] = None,
 ) -> DoctorOrchestratorState:
     """Create initial state for doctor orchestrator graph."""
+    # Backward-compatible defaults:
+    # - If feature-specific flags are omitted, inherit from legacy enable_hitl.
+    resolved_enable_llm_hitl = enable_hitl if enable_llm_hitl is None else enable_llm_hitl
+    resolved_enable_patient_confirmation_hitl = (
+        enable_hitl if enable_patient_confirmation_hitl is None else enable_patient_confirmation_hitl
+    )
+
     return DoctorOrchestratorState(
         # Input
         query_vi=query_vi,
@@ -179,6 +190,8 @@ def create_initial_doctor_state(
         image_path=image_path,
         image_base64=None,
         enable_hitl=enable_hitl,
+        enable_llm_hitl=resolved_enable_llm_hitl,
+        enable_patient_confirmation_hitl=resolved_enable_patient_confirmation_hitl,
 
         # Patient record images
         patient_record_images_base64=[],

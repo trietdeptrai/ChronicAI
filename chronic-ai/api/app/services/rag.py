@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple
 from uuid import UUID
 import json
 
-from app.services.ollama_client import ollama_client
+from app.services.llm_client import llm_client
 from app.db.database import get_supabase
 from app.config import settings
 
@@ -76,7 +76,7 @@ async def generate_embedding(text: str, *, for_query: bool = False) -> List[floa
         if for_query
         else settings.embedding_task_type_document
     )
-    return await ollama_client.embed(text, task_type=task_type)
+    return await llm_client.embed(text, task_type=task_type)
 
 
 async def ingest_document(

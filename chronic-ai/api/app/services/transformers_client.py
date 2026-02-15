@@ -194,7 +194,7 @@ def reconstruct_formatted_text(translated_segments: list) -> str:
             # Add extra newline before header for spacing
             if lines and lines[-1] != '':
                 lines.append('')
-            lines.append(f"**{content}**")  # Use bold instead of # for better rendering
+            lines.append(f"## {content}")  # Use proper markdown headers
             lines.append('')
         elif seg_type == 'bullet':
             lines.append(f"• {content}")

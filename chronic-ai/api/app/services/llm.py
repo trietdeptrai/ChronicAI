@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import uuid
 
-from app.services.ollama_client import ollama_client
+from app.services.llm_client import llm_client
 from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.config import settings
@@ -255,7 +255,7 @@ Rules:
 - Return valid JSON only.
 """
 
-    model_available = await ollama_client.check_model_available(settings.medical_model)
+    model_available = await llm_client.check_model_available(settings.medical_model)
     if not model_available:
         logger.error(
             "[upload-analysis] model unavailable id=%s provider=%s model=%s",
@@ -280,7 +280,7 @@ Rules:
 
         if images:
             try:
-                raw = await ollama_client.generate(
+                raw = await llm_client.generate(
                     model=settings.medical_model,
                     prompt=prompt,
                     system=UPLOAD_ANALYSIS_SYSTEM,
@@ -303,7 +303,7 @@ Rules:
                     len(image_base64 or ""),
                 )
         else:
-            raw = await ollama_client.generate(
+            raw = await llm_client.generate(
                 model=settings.medical_model,
                 prompt=prompt,
                 system=UPLOAD_ANALYSIS_SYSTEM,
@@ -324,7 +324,7 @@ Rules:
                 request_id,
                 "multimodal_error" if multimodal_error else "short_or_empty_response",
             )
-            raw = await ollama_client.generate(
+            raw = await llm_client.generate(
                 model=settings.medical_model,
                 prompt=prompt,
                 system=UPLOAD_ANALYSIS_SYSTEM,
@@ -406,7 +406,7 @@ Rules:
         }
     finally:
         # Keep memory usage stable after one-shot upload analysis.
-        await ollama_client.unload(settings.medical_model)
+        await llm_client.unload(settings.medical_model)
 
 
 async def translate_vi_to_en(text: str) -> str:
@@ -465,7 +465,7 @@ Please provide a helpful, accurate medical response based on the patient's conte
 
     images = [image_base64] if image_base64 else None
     
-    response = await ollama_client.generate(
+    response = await llm_client.generate(
         model=settings.medical_model,
         prompt=prompt,
         system=MEDICAL_REASONING_SYSTEM,
@@ -567,7 +567,7 @@ async def process_medical_query(
     }
     
     # ========== Memory Optimization: Unload MedGemma ==========
-    await ollama_client.unload(settings.medical_model)
+    await llm_client.unload(settings.medical_model)
     
     # ========== STEP C: English → Vietnamese ==========
     yield {
@@ -655,14 +655,14 @@ Format the summary professionally for medical records."""
     # Note: Translation models are kept persistent for performance
 
     # Generate summary with MedGemma
-    summary_en = await ollama_client.generate(
+    summary_en = await llm_client.generate(
         model=settings.medical_model,
         prompt=prompt_en,
         system="You are a medical documentation specialist. Generate professional clinical notes.",
         stream=False
     )
     
-    await ollama_client.unload(settings.medical_model)
+    await llm_client.unload(settings.medical_model)
     
     # Translate back to Vietnamese
     summary_vi = await translate_en_to_vi(summary_en)
@@ -677,7 +677,7 @@ async def check_system_health() -> dict:
     Returns:
         Health status dict
     """
-    llm_ok = await ollama_client.health_check()
+    llm_ok = await llm_client.health_check()
     provider = (settings.llm_provider or "vertex").lower()
 
     if not llm_ok:
@@ -692,10 +692,10 @@ async def check_system_health() -> dict:
     models_status = {
         "vinai_vi2en": transformers_client.is_vi2en_loaded(),
         "vinai_en2vi": transformers_client.is_en2vi_loaded(),
-        "medical_model": await ollama_client.check_model_available(
+        "medical_model": await llm_client.check_model_available(
             settings.medical_model
         ),
-        "embedding_model": await ollama_client.check_model_available(
+        "embedding_model": await llm_client.check_model_available(
             settings.embedding_model
         )
     }

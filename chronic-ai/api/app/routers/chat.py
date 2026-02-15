@@ -35,7 +35,15 @@ class DoctorChatRequestV2(BaseModel):
     image_path: Optional[str] = None
     enable_hitl: bool = Field(
         default=True,
-        description="Enable human-in-the-loop for ambiguous queries and safety checks"
+        description="Legacy global HITL toggle (fallback default for feature-specific toggles)"
+    )
+    enable_llm_hitl: Optional[bool] = Field(
+        default=None,
+        description="Enable LLM-based HITL (input verification + safety review)"
+    )
+    enable_patient_confirmation_hitl: Optional[bool] = Field(
+        default=None,
+        description="Enable non-LLM HITL for ambiguous patient matching confirmation"
     )
     output_format: Literal["plain", "structured", "markdown"] = Field(
         default="structured",
@@ -301,7 +309,9 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
     Args:
         message: Doctor's query in Vietnamese
         image_path: Optional path to medical image
-        enable_hitl: Enable human-in-the-loop (default: true)
+        enable_hitl: Legacy global HITL fallback (default: true)
+        enable_llm_hitl: Enable LLM-based HITL checks
+        enable_patient_confirmation_hitl: Enable non-LLM patient confirmation HITL
         output_format: "plain", "structured", or "markdown"
         thread_id: Optional ID for conversation state persistence
     """
@@ -318,6 +328,8 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
                 image_path=request.image_path,
                 thread_id=thread_id,
                 enable_hitl=request.enable_hitl,
+                enable_llm_hitl=request.enable_llm_hitl,
+                enable_patient_confirmation_hitl=request.enable_patient_confirmation_hitl,
             ):
                 # Add thread_id to updates for HITL resume
                 update["thread_id"] = thread_id
@@ -485,4 +497,3 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
             "X-Accel-Buffering": "no"
         }
     )
-

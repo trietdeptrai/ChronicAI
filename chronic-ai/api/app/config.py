@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     translation_batch_size: int = 8  # Max texts per batch
     translation_adaptive_beams: bool = True  # Use fewer beams for short texts
     translation_short_text_threshold: int = 50  # tokens - below this use 3 beams
+    # Temporary toggle for direct MedGemma evaluation without translation model.
+    doctor_graph_use_translation_model: bool = True
 
     # Deprecated: EnviT5 settings (kept for backward compatibility)
     envit5_model: str = "VietAI/envit5-translation"  # deprecated

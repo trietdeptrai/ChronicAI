@@ -1,7 +1,7 @@
 """Services module.
 
 Contains core business logic for ChronicAI:
-- ollama_client: Async Ollama API wrapper
+- llm_client: Provider-routed LLM API wrapper (Vertex/Ollama)
 - rag: RAG pipeline (chunking, embeddings, search)
 - llm: Translation Sandwich pipeline
 - ocr: PaddleOCR integration
@@ -11,7 +11,7 @@ Contains core business logic for ChronicAI:
 - output_formatter: Structured response formatting
 - resilience: Retry logic, circuit breakers, and defensive responses (NEW)
 """
-from app.services.ollama_client import ollama_client, OllamaClient
+from app.services.llm_client import llm_client, LLMClient, ollama_client, OllamaClient
 from app.services.rag import (
     chunk_text,
     generate_embedding,
@@ -88,7 +88,10 @@ from app.services.graph_state import (
 )
 
 __all__ = [
-    # Ollama Client
+    # LLM Client (preferred names)
+    "llm_client",
+    "LLMClient",
+    # Legacy aliases
     "ollama_client",
     "OllamaClient",
     # RAG Pipeline
@@ -153,4 +156,3 @@ __all__ = [
     "cache_response",
     "invalidate_patient_cache",
 ]
-

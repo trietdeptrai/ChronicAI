@@ -13,7 +13,7 @@ import json
 import logging
 from typing import List, Optional, Tuple
 
-from app.services.ollama_client import ollama_client
+from app.services.llm_client import llm_client
 from app.services.graph_state import VerificationResult
 from app.services.resilience import (
     retry_async,
@@ -106,7 +106,7 @@ async def verify_input(query_en: str) -> VerificationResult:
         logger.info(f"[Verification] Analyzing query: {query_en[:100]}...")
 
         async def _verify_call():
-            return await ollama_client.generate(
+            return await llm_client.generate(
                 model=settings.verification_model,
                 prompt=f"Query to analyze: {query_en}",
                 system=VERIFICATION_SYSTEM,
@@ -169,7 +169,7 @@ async def check_response_safety(response_en: str) -> Tuple[float, List[str], boo
         logger.info(f"[Safety] Checking response: {response_en[:100]}...")
 
         async def _safety_call():
-            return await ollama_client.generate(
+            return await llm_client.generate(
                 model=settings.verification_model,
                 prompt=f"Medical AI response to review:\n\n{response_en}",
                 system=SAFETY_CHECK_SYSTEM,
@@ -304,7 +304,7 @@ def _parse_safety_response(response: str) -> Tuple[float, List[str], bool]:
 async def _llm_extract_names(query_en: str) -> List[str]:
     """Extract patient names using LLM when patterns fail."""
     try:
-        response = await ollama_client.generate(
+        response = await llm_client.generate(
             model=settings.verification_model,
             prompt=f"Extract patient names from: {query_en}",
             system="Extract patient names. Output JSON array: [\"Name1\", \"Name2\"] or [] if none.",

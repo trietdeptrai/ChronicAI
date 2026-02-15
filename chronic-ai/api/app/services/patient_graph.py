@@ -29,7 +29,7 @@ from app.services.graph_state import (
     VerificationResult,
     HITLRequest
 )
-from app.services.ollama_client import ollama_client
+from app.services.llm_client import llm_client
 from app.services.transformers_client import transformers_client
 from app.services.rag import get_patient_context
 from app.services.verification_service import (
@@ -54,7 +54,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Circuit breakers for external services
-_ollama_breaker = get_circuit_breaker("ollama_patient", failure_threshold=3, recovery_timeout=60.0)
+_llm_breaker = get_circuit_breaker("llm_patient", failure_threshold=3, recovery_timeout=60.0)
 _db_breaker = get_circuit_breaker("database_patient", failure_threshold=5, recovery_timeout=30.0)
 
 # Retry configuration for LLM calls
@@ -206,7 +206,7 @@ Query: {state['query_en']}"""
     try:
         # Use circuit breaker and retry logic
         async def _triage_call():
-            return await ollama_client.generate(
+            return await llm_client.generate(
                 model=settings.medical_model,
                 prompt=triage_prompt,
                 system=triage_system,
@@ -215,7 +215,7 @@ Query: {state['query_en']}"""
             )
 
         response = await with_circuit_breaker(
-            _ollama_breaker,
+            _llm_breaker,
             retry_async,
             _triage_call,
             config=LLM_RETRY_CONFIG,
@@ -328,7 +328,7 @@ Query: {state['query_en']}"""
 
     try:
         async def _reasoning_call():
-            return await ollama_client.generate(
+            return await llm_client.generate(
                 model=settings.medical_model,
                 prompt=prompt,
                 system=system_prompt,
@@ -336,7 +336,7 @@ Query: {state['query_en']}"""
             )
 
         response_en = await with_circuit_breaker(
-            _ollama_breaker,
+            _llm_breaker,
             retry_async,
             _reasoning_call,
             config=LLM_RETRY_CONFIG,
