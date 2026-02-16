@@ -39,6 +39,7 @@ import logging
 import time
 
 from app.services.llm_client import llm_client
+from app.services.json_utils import strip_markdown_code_fence
 from app.services.rag import get_patient_context, get_patient_record_image_attachments
 from app.services.llm import (
     translate_vi_to_en,
@@ -127,10 +128,7 @@ async def extract_patient_mentions(query_en: str) -> List[str]:
     # Parse JSON response
     try:
         # Clean up response (remove markdown code blocks if present)
-        clean_response = response.strip()
-        if clean_response.startswith("```"):
-            clean_response = clean_response.split("\n", 1)[1]
-            clean_response = clean_response.rsplit("```", 1)[0]
+        clean_response = strip_markdown_code_fence(response)
         
         names = json.loads(clean_response)
         return names if isinstance(names, list) else []

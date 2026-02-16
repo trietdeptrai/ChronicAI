@@ -35,6 +35,7 @@ from app.services.graph_state import (
     HITLRequest,
 )
 from app.services.llm_client import llm_client
+from app.services.json_utils import strip_markdown_code_fence
 from app.services.rag import (
     get_patient_context,
     get_patient_record_images_base64,
@@ -475,10 +476,7 @@ Examples:
         )
 
         # Parse response
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1]
-            clean = clean.rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         names = json.loads(clean)
         mentioned_names = names if isinstance(names, list) else []
 
@@ -788,6 +786,15 @@ def _add_paragraph_breaks(text: str) -> str:
     # If the text already has reasonable formatting, leave it alone
     if text.count("\n\n") >= 3:
         return text
+    # Fix missing space after sentence-ending punctuation.
+    # Keep single-letter abbreviation chains intact (e.g., "H.A.T.T", "U.S.A.").
+    # Example: "dùng.Chị" -> "dùng. Chị", "Amlodipine.Metformin" -> "Amlodipine. Metformin"
+    text = re.sub(
+        r'(?<!\b[A-ZÀ-ỴĐ])([.!?])(\*\*[A-ZÀ-ỴĐ]|\*[A-ZÀ-ỴĐ]|[A-ZÀ-ỴĐ])',
+        r'\1 \2',
+        text
+    )
+
 
     # ---- Step 1: Normalize inline markdown and list markers ----
     # Handle inline markdown headers: "...ổn định.## Phân tích" → split before ##

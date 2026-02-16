@@ -31,6 +31,7 @@ from app.services.graph_state import (
     HITLRequest
 )
 from app.services.llm_client import llm_client
+from app.services.json_utils import strip_markdown_code_fence
 from app.services.rag import get_patient_context
 from app.services.verification_service import (
     verify_input,
@@ -216,6 +217,7 @@ Classify as:
 4. LOW: General questions or mild symptoms (health inquiries, mild symptoms)
 
 IMPORTANT: When in doubt, err on the side of caution and classify higher.
+Return the "reason" field in Vietnamese.
 
 Output ONLY valid JSON: {"urgency": "level", "reason": "brief reason", "confidence": 0.0-1.0}"""
 
@@ -228,7 +230,7 @@ Query: {state['query_en']}"""
     # Hard safety override: never allow self-harm/suicide intent to be downgraded by the model.
     if _contains_self_harm_emergency(query_text):
         urgency = "emergency"
-        reason = "Self-harm/suicide intent detected"
+        reason = "Phát hiện dấu hiệu tự gây hại hoặc ý định tự tử"
         confidence = 1.0
         safety_audit.log_decision(
             event_type="symptom_triage",
@@ -248,7 +250,7 @@ Query: {state['query_en']}"""
         }
 
     urgency = "medium"  # Safe default
-    reason = "Unable to assess"
+    reason = "Chưa đủ thông tin để đánh giá chính xác"
     confidence = 0.5
 
     try:
@@ -270,13 +272,11 @@ Query: {state['query_en']}"""
             operation_name="symptom_triage"
         )
 
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1].rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         result = json.loads(clean)
 
         urgency = result.get("urgency", "MEDIUM").lower()
-        reason = result.get("reason", "Triage assessment")
+        reason = result.get("reason", "Đánh giá mức độ triệu chứng")
         confidence = float(result.get("confidence", 0.7))
 
         # Log the triage decision for audit
@@ -291,20 +291,20 @@ Query: {state['query_en']}"""
         )
 
     except CircuitBreakerOpen:
-        logger.error("[PatientGraph] Ollama circuit breaker open - defaulting to safe escalation")
+        logger.error("[PatientGraph] LLM circuit breaker open - defaulting to safe escalation")
         urgency = "high"
-        reason = "System unavailable - recommending medical consultation as precaution"
+        reason = "Hệ thống tạm thời không khả dụng, khuyến nghị thăm khám để đảm bảo an toàn"
 
     except json.JSONDecodeError as e:
         logger.warning(f"[PatientGraph] Triage JSON parse failed: {e}. Using safe default.")
         # When we can't parse, be cautious
         urgency = "medium"
-        reason = "Unable to parse triage response - please describe symptoms in more detail"
+        reason = "Không đọc được kết quả phân loại. Vui lòng mô tả triệu chứng chi tiết hơn"
 
     except Exception as e:
         logger.warning(f"[PatientGraph] Triage failed: {e}. Defaulting to MEDIUM for safety.")
         urgency = "medium"
-        reason = "Triage analysis encountered an error"
+        reason = "Đã xảy ra lỗi khi đánh giá mức độ triệu chứng"
 
     # Safety-first: escalate on emergency or high urgency
     escalation = urgency in ["emergency", "high"]
@@ -326,10 +326,19 @@ async def escalation_handler_node(state: PatientChatState) -> dict:
     """
     logger.info("[PatientGraph] escalation_handler: Generating escalation message...")
     
-    msg_en = f"Based on your symptoms ({state['escalation_reason']}), please go to a hospital or see a doctor immediately. Do not rely on AI for this."
-    
-    if state["urgency_level"] == "emergency":
-        msg_en = f"EMERGENCY WARNING: These symptoms suggest a serious condition. Please call emergency services or go to the nearest hospital immediately.\n\nReason: {state['escalation_reason']}"
+    reason = state.get("escalation_reason") or "Có dấu hiệu cần được bác sĩ đánh giá ngay."
+    msg_en = (
+        "Cảnh báo khẩn cấp: Triệu chứng của bạn có thể nghiêm trọng.\n\n"
+        "Vui lòng đến cơ sở y tế gần nhất hoặc liên hệ cấp cứu ngay lập tức.\n\n"
+        f"Lý do: {reason}"
+    )
+
+    if state["urgency_level"] != "emergency":
+        msg_en = (
+            "Triệu chứng của bạn cần được bác sĩ thăm khám sớm.\n\n"
+            "Vui lòng đến bệnh viện/phòng khám trong thời gian sớm nhất và không tự điều trị theo tư vấn AI.\n\n"
+            f"Lý do: {reason}"
+        )
         
     return {
         "reasoning_en": msg_en,
@@ -395,33 +404,33 @@ Query: {state['query_en']}"""
         )
 
         # Check for uncertainty in response
-        if detect_uncertainty_in_response(response_en, language="en"):
+        if detect_uncertainty_in_response(response_en, language="vi"):
             logger.info("[PatientGraph] Detected uncertainty in response - adding disclaimer")
-            response_en += "\n\n⚠️ Please note: This information is general guidance only. Always consult your healthcare provider for personalized medical advice."
+            response_en += "\n\n⚠️ Lưu ý: Đây chỉ là thông tin tham khảo chung. Vui lòng trao đổi trực tiếp với bác sĩ để được tư vấn phù hợp."
 
     except CircuitBreakerOpen:
-        logger.error("[PatientGraph] Ollama circuit breaker open")
+        logger.error("[PatientGraph] LLM circuit breaker open")
         response_en = create_idk_response(
-            reason="The medical AI service is temporarily unavailable",
+            reason="Dịch vụ AI y tế đang tạm thời không khả dụng",
             original_query=state['query_en'],
-            language="en",
+            language="vi",
             suggestions=[
-                "Please try again in a few minutes",
-                "Contact your healthcare provider directly if urgent",
-                "Visit a local clinic or hospital for immediate concerns"
+                "Vui lòng thử lại sau vài phút",
+                "Nếu khẩn cấp, hãy liên hệ bác sĩ hoặc cơ sở y tế gần nhất",
+                "Đến phòng khám hoặc bệnh viện nếu triệu chứng nặng hơn"
             ]
         )
 
     except Exception as e:
         logger.error(f"[PatientGraph] Reasoning failed: {e}")
         response_en = create_idk_response(
-            reason=f"An error occurred while processing your question",
+            reason="Đã xảy ra lỗi khi xử lý câu hỏi của bạn",
             original_query=state['query_en'],
-            language="en",
+            language="vi",
             suggestions=[
-                "Please rephrase your question",
-                "Provide more specific details about your symptoms",
-                "Contact your healthcare provider if symptoms persist"
+                "Vui lòng diễn đạt lại câu hỏi",
+                "Mô tả cụ thể hơn về triệu chứng của bạn",
+                "Liên hệ bác sĩ nếu triệu chứng kéo dài"
             ]
         )
 
@@ -449,7 +458,7 @@ async def format_patient_output_node(state: PatientChatState) -> dict:
     """Node: Format output."""
     formatted = format_response(
         response_text=state["reasoning_en"],
-        language="en",
+        language="vi",
         confidence=0.9 if not state["escalation_needed"] else 1.0
     )
     
