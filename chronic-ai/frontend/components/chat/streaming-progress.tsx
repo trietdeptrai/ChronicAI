@@ -17,7 +17,6 @@ interface StreamingProgressProps {
 // Patient-specific chat stages
 const patientStages = [
     { id: "verifying_input", label: "Phân tích câu hỏi", icon: Search },
-    { id: "retrieving_context", label: "Tìm kiếm hồ sơ", icon: Search },
     { id: "triaged", label: "Đánh giá mức độ khẩn cấp", icon: Search },
     { id: "medical_reasoning", label: "Phân tích y tế", icon: Bot },
     { id: "formatting_output", label: "Hoàn thiện phản hồi", icon: Search },
@@ -54,7 +53,8 @@ const patientStageAlias: Partial<Record<StageType, string>> = {
     starting: "verifying_input",
     translated_input: "verifying_input",
     verified_input: "verifying_input",
-    retrieved_history: "retrieving_context",
+    retrieved_history: "triaged",
+    retrieving_context: "triaged",
     escalated: "medical_reasoning",
     reasoned: "medical_reasoning",
     formatted: "formatting_output",
