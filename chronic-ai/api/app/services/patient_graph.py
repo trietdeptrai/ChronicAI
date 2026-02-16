@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from typing import AsyncGenerator, Literal, Optional
 from uuid import UUID
+import re
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -37,6 +38,7 @@ from app.services.verification_service import (
     should_require_safety_review
 )
 from app.services.output_formatter import format_response, get_urgency_indicator
+from app.services.doctor_graph import _add_paragraph_breaks
 from app.services.resilience import (
     retry_async,
     RetryConfig,
@@ -64,10 +66,34 @@ LLM_RETRY_CONFIG = RetryConfig(
     retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
 )
 
+# Safety-first override for self-harm/suicide content.
+# If any of these appear in the patient query, we always escalate.
+SELF_HARM_EMERGENCY_KEYWORDS = [
+    "suicide",
+    "suicidal",
+    "kill myself",
+    "end my life",
+    "self-harm",
+    "hurt myself",
+    "tự tử",
+    "ý định tự tử",
+    "muốn chết",
+    "không muốn sống",
+    "tự hại",
+    "hại bản thân",
+]
+
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def _contains_self_harm_emergency(text: str) -> bool:
+    """Return True when text contains self-harm/suicide emergency signals."""
+    if not text:
+        return False
+    lower_text = text.lower()
+    return any(keyword in lower_text for keyword in SELF_HARM_EMERGENCY_KEYWORDS)
 
 def create_initial_patient_state(
     patient_id: str,
@@ -184,7 +210,7 @@ async def symptom_triage_node(state: PatientChatState) -> dict:
     triage_system = """You are a medical triage assistant. Analyze the patient query for urgency.
 
 Classify as:
-1. EMERGENCY: Life-threatening (chest pain, stroke signs, heavy bleeding, difficulty breathing, loss of consciousness) -> requires immediate hospital
+1. EMERGENCY: Life-threatening (chest pain, stroke signs, heavy bleeding, difficulty breathing, loss of consciousness) OR ANY suicide/self-harm intent -> requires immediate hospital/emergency support
 2. HIGH: Severe symptoms needing doctor visit in 24h (high fever, severe pain, significant bleeding)
 3. MEDIUM: Bothersome symptoms needing appointment (persistent symptoms, moderate discomfort)
 4. LOW: General questions or mild symptoms (health inquiries, mild symptoms)
@@ -196,6 +222,30 @@ Output ONLY valid JSON: {"urgency": "level", "reason": "brief reason", "confiden
     triage_prompt = f"""Patient Profile: {state['patient_profile'].get('age')}yo {state['patient_profile'].get('gender')}
 Conditions: {state['patient_profile'].get('chronic_conditions')}
 Query: {state['query_en']}"""
+
+    query_text = f"{state.get('query_vi', '')} {state.get('query_en', '')}"
+
+    # Hard safety override: never allow self-harm/suicide intent to be downgraded by the model.
+    if _contains_self_harm_emergency(query_text):
+        urgency = "emergency"
+        reason = "Self-harm/suicide intent detected"
+        confidence = 1.0
+        safety_audit.log_decision(
+            event_type="symptom_triage",
+            query=state.get("query_en", ""),
+            decision=urgency,
+            confidence=confidence,
+            risk_factors=[reason],
+            patient_id=state.get("patient_id"),
+            human_review_required=True,
+        )
+        return {
+            "urgency_level": urgency,
+            "escalation_needed": True,
+            "escalation_reason": reason,
+            "current_stage": "triaged",
+            "progress": 0.50
+        }
 
     urgency = "medium"  # Safe default
     reason = "Unable to assess"
@@ -298,6 +348,15 @@ async def patient_reasoning_node(state: PatientChatState) -> dict:
 
     system_prompt = """You are a supportive medical AI assistant for patients.
 
+FORMATTING (very important):
+- Greet the patient warmly using their name at the start
+- Use **bold** for key medical terms, medication names, or important values
+- Break your answer into short paragraphs separated by blank lines
+- Use bullet lists (- item) when listing multiple things (e.g. medications, symptoms, advice)
+- DO NOT write one continuous block of text
+- Keep language simple, warm, and easy to understand
+- Respond entirely in Vietnamese
+
 CRITICAL GUIDELINES:
 - Be empathetic and clear
 - Use simple, non-technical language
@@ -306,12 +365,6 @@ CRITICAL GUIDELINES:
 - Do NOT give definitive diagnoses
 - If you are uncertain or don't have enough information, say "Tôi không có đủ thông tin để trả lời chính xác" (I don't have enough information)
 - NEVER make up information - only use what's in the patient context
-
-Format response with:
-1. Understanding (empathic acknowledgment)
-2. Explanation (simple terms, based ONLY on provided context)
-3. Self-care suggestions (safe home remedies only)
-4. When to see a doctor (always include this)
 
 IMPORTANT: If the query is outside your medical knowledge or you're uncertain, respond with:
 "Tôi không thể đưa ra lời khuyên cụ thể về vấn đề này. Vui lòng tham khảo ý kiến bác sĩ."
@@ -371,6 +424,19 @@ Query: {state['query_en']}"""
                 "Contact your healthcare provider if symptoms persist"
             ]
         )
+
+    # Insert line break after Vietnamese greeting (e.g. "Chào chị Trần Thị Bình,")
+    response_en = re.sub(
+        r'^(Chào\s+(?:chị|anh|bạn|em|cô|chú|bác)\s+[^,\n]+,)\s*',
+        r'\1\n\n',
+        response_en,
+        count=1,
+        flags=re.IGNORECASE
+    )
+
+    # Apply paragraph breaks for readability (safety net for dense LLM output)
+    response_en = _add_paragraph_breaks(response_en)
+    logger.info("[PatientGraph] reasoning: Applied paragraph formatting to response")
 
     return {
         "reasoning_en": response_en,
