@@ -8,7 +8,7 @@ import { Toaster } from "@/components/sonner";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "MediCare Pro - Chronic Care Management",
+  title: "ChronicAI - Chronic Care Management",
   description: "Remote Chronic Disease Management System",
 };
 

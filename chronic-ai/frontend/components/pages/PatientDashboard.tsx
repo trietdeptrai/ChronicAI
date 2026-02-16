@@ -43,7 +43,7 @@ export function PatientDashboard({
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-800">
-                  MediCare Pro
+                  ChronicAI
                 </h1>
                 <p className="text-sm text-gray-600">
                   Hồ sơ sức khỏe của bạn

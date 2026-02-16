@@ -29,7 +29,7 @@ export default function Home() {
               <Stethoscope className="w-8 h-8 text-white" />
             </div>
             <h1 className="text-4xl font-bold text-[#1e2939]">
-              MediCare Pro
+              ChronicAI
             </h1>
           </div>
           <p className="text-lg text-[#4a5565] max-w-2xl mx-auto">
