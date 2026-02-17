@@ -4,8 +4,12 @@
 
 import { apiClient, uploadFile } from "./client"
 import type {
+    DeletePatientResponse,
     PatientListResponse,
     PatientDetailResponse,
+    PatientCreateInput,
+    PatientMutationResponse,
+    PatientUpdateInput,
     MedicalRecordsResponse,
     DashboardStats,
     PatientPhotoUploadResponse,
@@ -46,6 +50,38 @@ export async function getPatients(params: ListPatientsParams = {}): Promise<Pati
  */
 export async function getPatientDetail(patientId: string): Promise<PatientDetailResponse> {
     return apiClient<PatientDetailResponse>(`/doctor/patients/${patientId}`)
+}
+
+/**
+ * Create patient profile (general patient info only)
+ */
+export async function createPatient(payload: PatientCreateInput): Promise<PatientMutationResponse> {
+    return apiClient<PatientMutationResponse>("/doctor/patients", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    })
+}
+
+/**
+ * Update patient profile (general patient info only)
+ */
+export async function updatePatient(
+    patientId: string,
+    payload: PatientUpdateInput
+): Promise<PatientMutationResponse> {
+    return apiClient<PatientMutationResponse>(`/doctor/patients/${patientId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+    })
+}
+
+/**
+ * Delete patient profile
+ */
+export async function deletePatient(patientId: string): Promise<DeletePatientResponse> {
+    return apiClient<DeletePatientResponse>(`/doctor/patients/${patientId}`, {
+        method: "DELETE",
+    })
 }
 
 /**

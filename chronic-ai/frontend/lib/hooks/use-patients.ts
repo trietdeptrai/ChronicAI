@@ -5,20 +5,27 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
+    createPatient,
+    deletePatient,
     getPatients,
     getPatientDetail,
     getPatientRecords,
     getDashboardStats,
     uploadPatientPhoto,
     uploadPatientRecordImage,
+    updatePatient,
     updatePatientRecord,
     deletePatientRecord,
     getPatientVitals,
     createPatientVital,
 } from "@/lib/api"
 import type {
+    DeletePatientResponse,
     PatientListResponse,
     PatientDetailResponse,
+    PatientCreateInput,
+    PatientMutationResponse,
+    PatientUpdateInput,
     MedicalRecordsResponse,
     DashboardStats,
     VitalSignsResponse,
@@ -100,6 +107,54 @@ export function useInvalidatePatients() {
             queryClient.invalidateQueries({ queryKey: ["patients", patientId] }),
         invalidateAll: () => queryClient.invalidateQueries({ queryKey: ["patients"] }),
     }
+}
+
+/**
+ * Hook for creating patient profile info
+ */
+export function useCreatePatient() {
+    const queryClient = useQueryClient()
+
+    return useMutation<PatientMutationResponse, Error, PatientCreateInput>({
+        mutationFn: createPatient,
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ["patients"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", data.patient.id] })
+            queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
+        },
+    })
+}
+
+/**
+ * Hook for updating patient profile info
+ */
+export function useUpdatePatient() {
+    const queryClient = useQueryClient()
+
+    return useMutation<PatientMutationResponse, Error, { patientId: string; data: PatientUpdateInput }>({
+        mutationFn: ({ patientId, data }) => updatePatient(patientId, data),
+        onSuccess: (data) => {
+            queryClient.invalidateQueries({ queryKey: ["patients"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", data.patient.id] })
+            queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
+        },
+    })
+}
+
+/**
+ * Hook for deleting patient profile info
+ */
+export function useDeletePatientProfile() {
+    const queryClient = useQueryClient()
+
+    return useMutation<DeletePatientResponse, Error, { patientId: string }>({
+        mutationFn: ({ patientId }) => deletePatient(patientId),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+            queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
+        },
+    })
 }
 
 /**
