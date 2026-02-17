@@ -2,3 +2,4 @@
 export * from "./client"
 export * from "./patients"
 export * from "./chat"
+export * from "./appointments"

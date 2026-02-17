@@ -6,6 +6,7 @@ for patient medical records using pgvector.
 """
 import base64
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import UUID
 import json
@@ -239,7 +240,59 @@ async def get_patient_context(
                 f"SpO2: {vital.get('oxygen_saturation', 'N/A')}%"
             )
     
-    # 3. Get relevant medical records via similarity search
+    # 3. Get upcoming appointments and reminder-relevant scheduling context
+    now_utc = datetime.now(timezone.utc)
+    try:
+        upcoming_result = supabase.table("appointments").select(
+            "start_at, end_at, status, appointment_type, chief_complaint, "
+            "is_follow_up, doctor_response_note, rejection_reason"
+        ).eq(
+            "patient_id", str(patient_id)
+        ).gte(
+            "start_at", now_utc.isoformat()
+        ).order(
+            "start_at", desc=False
+        ).limit(6).execute()
+    except Exception:
+        upcoming_result = None
+
+    if upcoming_result and upcoming_result.data:
+        context_parts.append("\n## L盻議ch h蘯ｹn vﾃ nh蘯ｯc tﾃ｡i khﾃ｡m (Appointments & Follow-up Reminders)")
+        for appointment in upcoming_result.data:
+            start_at_raw = appointment.get("start_at")
+            start_at = None
+            if isinstance(start_at_raw, str):
+                try:
+                    start_at = datetime.fromisoformat(start_at_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                except ValueError:
+                    start_at = None
+
+            reminder_hint = ""
+            if start_at:
+                hours_until = (start_at - now_utc).total_seconds() / 3600
+                if 0 <= hours_until <= 48:
+                    reminder_hint = f" [Nh蘯ｯc h蘯ｹn: cﾃｲn {hours_until:.1f} gi盻拵]"
+
+            status = appointment.get("status", "N/A")
+            appointment_type = appointment.get("appointment_type", "N/A")
+            chief_complaint = appointment.get("chief_complaint", "")
+            follow_up_flag = "tﾃ｡i khﾃ｡m" if appointment.get("is_follow_up") else "khﾃｴng ph蘯｣i tﾃ｡i khﾃ｡m"
+
+            line = (
+                f"- {start_at_raw}: {status}, lo蘯｡i={appointment_type}, "
+                f"lﾃｽ do={chief_complaint}, {follow_up_flag}{reminder_hint}"
+            )
+
+            doctor_note = appointment.get("doctor_response_note")
+            rejection_reason = appointment.get("rejection_reason")
+            if doctor_note:
+                line += f", ghi chﾃｺ bﾃ｡c sﾄｩ={doctor_note}"
+            if rejection_reason:
+                line += f", lﾃｽ do t盻ｫ ch盻訴={rejection_reason}"
+
+            context_parts.append(line)
+
+    # 4. Get relevant medical records via similarity search
     if query:
         similar_records = await search_similar_records(
             query=query,
