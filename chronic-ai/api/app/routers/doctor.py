@@ -3,14 +3,19 @@ Doctor Router - Endpoints for doctor-specific functionality.
 """
 from __future__ import annotations
 
+import io
+import json
 import logging
+import re
+import textwrap
+import zipfile
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.config import settings
@@ -47,6 +52,11 @@ PATIENT_OPTIONAL_TEXT_FIELDS = {
     "address_street",
     "primary_diagnosis",
 }
+
+
+class PatientTextExportFormat(str, Enum):
+    json = "json"
+    pdf = "pdf"
 
 
 def _extract_signed_url(signed: object) -> Optional[str]:
@@ -189,6 +199,299 @@ def _remove_storage_paths(supabase: object, paths: list[str]) -> int:
             logger.exception("Failed to remove storage paths batch size=%s", len(batch))
             failed_count += len(batch)
     return failed_count
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+def _as_export_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, default=_json_default)
+    except Exception:
+        return str(value)
+
+
+def _safe_filename_component(value: Optional[str], default: str) -> str:
+    raw = (value or "").strip()
+    candidate = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-")
+    return candidate or default
+
+
+def _safe_slug(value: Optional[str], default: str) -> str:
+    raw = (value or "").strip().lower()
+    candidate = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return candidate or default
+
+
+def _build_patient_export_basename(patient: dict, patient_uuid: UUID) -> str:
+    patient_slug = _safe_slug(patient.get("full_name"), "patient")
+    return f"{patient_slug}-{patient_uuid}"
+
+
+def _ensure_file_extension(filename: str, extension: str) -> str:
+    ext = extension.strip()
+    if not ext:
+        return filename
+    if not ext.startswith("."):
+        ext = f".{ext}"
+    return filename if filename.lower().endswith(ext.lower()) else f"{filename}{ext}"
+
+
+def _fetch_patient_records_for_export(supabase: object, patient_uuid: UUID) -> list[dict]:
+    def _run_query(include_doctor_comment: bool):
+        select_cols = (
+            "id, record_type, title, content_text, analysis_result, "
+            "is_verified, created_at, updated_at, image_path"
+        )
+        if include_doctor_comment:
+            select_cols += ", doctor_comment"
+        return supabase.table("medical_records").select(select_cols).eq(
+            "patient_id", str(patient_uuid)
+        ).order(
+            "created_at", desc=True
+        ).execute()
+
+    try:
+        result = _run_query(include_doctor_comment=True)
+        records = result.data or []
+    except Exception:
+        result = _run_query(include_doctor_comment=False)
+        records = result.data or []
+        for record in records:
+            record["doctor_comment"] = None
+
+    for record in records:
+        record["doctor_comment"] = _extract_record_doctor_comment(record)
+
+    return records
+
+
+def _build_patient_export_payload(supabase: object, patient_uuid: UUID) -> dict[str, Any]:
+    patient_result = supabase.table("patients").select("*").eq(
+        "id", str(patient_uuid)
+    ).maybe_single().execute()
+    patient_data = patient_result.data if patient_result else None
+    if not isinstance(patient_data, dict):
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    vitals_result = supabase.table("vital_signs").select("*").eq(
+        "patient_id", str(patient_uuid)
+    ).order("recorded_at", desc=True).execute()
+
+    consultations_result = supabase.table("consultations").select(
+        "id, chief_complaint, status, priority, started_at, summary"
+    ).eq(
+        "patient_id", str(patient_uuid)
+    ).order("started_at", desc=True).execute()
+
+    records = _fetch_patient_records_for_export(supabase, patient_uuid)
+    for record in records:
+        image_path = record.get("image_path")
+        if isinstance(image_path, str):
+            record["file_extension"] = Path(image_path).suffix.lower()
+        else:
+            record["file_extension"] = None
+
+    return {
+        "schema_version": 1,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "patient_id": str(patient_uuid),
+        "patient": patient_data,
+        "vitals": vitals_result.data or [],
+        "consultations": consultations_result.data or [],
+        "records": records,
+    }
+
+
+def _patient_payload_to_pdf_lines(payload: dict[str, Any]) -> list[str]:
+    lines: list[str] = [
+        "ChronicAI Patient Export",
+        f"Exported at: {payload.get('exported_at', '')}",
+        f"Patient ID: {payload.get('patient_id', '')}",
+        "",
+        "Patient Profile",
+    ]
+
+    patient = payload.get("patient") if isinstance(payload.get("patient"), dict) else {}
+    if patient:
+        for key in sorted(patient.keys()):
+            lines.append(f"{key}: {_as_export_text(patient.get(key))}")
+    else:
+        lines.append("No patient profile data.")
+
+    lines.append("")
+    vitals = payload.get("vitals") if isinstance(payload.get("vitals"), list) else []
+    lines.append(f"Vital Signs ({len(vitals)})")
+    if not vitals:
+        lines.append("No vital signs data.")
+    for index, vital in enumerate(vitals, start=1):
+        lines.append(f"Vital #{index}")
+        if isinstance(vital, dict):
+            for key in sorted(vital.keys()):
+                lines.append(f"  {key}: {_as_export_text(vital.get(key))}")
+        else:
+            lines.append(f"  {_as_export_text(vital)}")
+
+    lines.append("")
+    consultations = payload.get("consultations") if isinstance(payload.get("consultations"), list) else []
+    lines.append(f"Consultations ({len(consultations)})")
+    if not consultations:
+        lines.append("No consultations data.")
+    for index, consultation in enumerate(consultations, start=1):
+        lines.append(f"Consultation #{index}")
+        if isinstance(consultation, dict):
+            for key in sorted(consultation.keys()):
+                lines.append(f"  {key}: {_as_export_text(consultation.get(key))}")
+        else:
+            lines.append(f"  {_as_export_text(consultation)}")
+
+    lines.append("")
+    records = payload.get("records") if isinstance(payload.get("records"), list) else []
+    lines.append(f"Medical Records ({len(records)})")
+    if not records:
+        lines.append("No medical records data.")
+    for index, record in enumerate(records, start=1):
+        lines.append(f"Record #{index}")
+        if isinstance(record, dict):
+            for key in sorted(record.keys()):
+                lines.append(f"  {key}: {_as_export_text(record.get(key))}")
+        else:
+            lines.append(f"  {_as_export_text(record)}")
+        lines.append("")
+
+    return lines
+
+
+def _escape_pdf_text(value: str) -> str:
+    # Type-1 font streams are single-byte, so keep non-Latin characters as \uXXXX escapes.
+    clean = value.replace("\r", " ").replace("\n", " ")
+    ascii_safe = clean.encode("unicode_escape").decode("ascii")
+    escaped = ascii_safe.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    return escaped
+
+
+def _render_text_pdf(lines: list[str]) -> bytes:
+    normalized_lines: list[str] = []
+    for line in lines:
+        text = str(line or "").replace("\r", " ").replace("\n", " ").replace("\t", " ")
+        wrapped = textwrap.wrap(
+            text,
+            width=96,
+            break_long_words=True,
+            break_on_hyphens=False,
+        )
+        if wrapped:
+            normalized_lines.extend(wrapped)
+        else:
+            normalized_lines.append("")
+
+    page_width = 612
+    page_height = 792
+    top = 742
+    leading = 14
+    bottom = 50
+    lines_per_page = max(1, int((top - bottom) / leading))
+
+    pages = [
+        normalized_lines[index:index + lines_per_page]
+        for index in range(0, len(normalized_lines), lines_per_page)
+    ] or [[""]]
+
+    content_ids: list[int] = []
+    page_ids: list[int] = []
+    next_id = 4
+    for _ in pages:
+        content_ids.append(next_id)
+        next_id += 1
+        page_ids.append(next_id)
+        next_id += 1
+
+    objects: dict[int, bytes] = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    }
+
+    kids_refs = " ".join(f"{page_id} 0 R" for page_id in page_ids)
+    objects[2] = (
+        f"<< /Type /Pages /Kids [{kids_refs}] /Count {len(page_ids)} >>"
+    ).encode("ascii")
+
+    for index, page_lines in enumerate(pages):
+        content_commands = [
+            "BT",
+            "/F1 11 Tf",
+            f"50 {top} Td",
+            f"{leading} TL",
+        ]
+        if page_lines:
+            content_commands.append(f"({_escape_pdf_text(page_lines[0])}) Tj")
+            for line in page_lines[1:]:
+                content_commands.append(f"T* ({_escape_pdf_text(line)}) Tj")
+        content_commands.append("ET")
+
+        content_stream = "\n".join(content_commands).encode("latin-1", "replace")
+        content_id = content_ids[index]
+        page_id = page_ids[index]
+
+        objects[content_id] = (
+            b"<< /Length "
+            + str(len(content_stream)).encode("ascii")
+            + b" >>\nstream\n"
+            + content_stream
+            + b"\nendstream"
+        )
+        objects[page_id] = (
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] "
+            f"/Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>"
+        ).encode("ascii")
+
+    document = bytearray()
+    document.extend(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0] * next_id
+
+    for obj_id in range(1, next_id):
+        offsets[obj_id] = len(document)
+        document.extend(f"{obj_id} 0 obj\n".encode("ascii"))
+        document.extend(objects[obj_id])
+        document.extend(b"\nendobj\n")
+
+    xref_offset = len(document)
+    document.extend(f"xref\n0 {next_id}\n".encode("ascii"))
+    document.extend(b"0000000000 65535 f \n")
+    for obj_id in range(1, next_id):
+        document.extend(f"{offsets[obj_id]:010d} 00000 n \n".encode("ascii"))
+
+    document.extend(
+        f"trailer\n<< /Size {next_id} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode(
+            "ascii"
+        )
+    )
+    return bytes(document)
+
+
+def _unique_zip_name(base_name: str, used_names: set[str]) -> str:
+    candidate = base_name
+    stem = Path(base_name).stem
+    extension = Path(base_name).suffix
+    counter = 1
+    while candidate in used_names:
+        candidate = f"{stem}_{counter}{extension}"
+        counter += 1
+    used_names.add(candidate)
+    return candidate
 
 
 class ClinicalSummaryRequest(BaseModel):
@@ -855,6 +1158,155 @@ async def get_patient_records(
         "patient_id": patient_id,
         "records": records,
     }
+
+
+@router.get("/patients/{patient_id}/export")
+async def export_patient_text(
+    patient_id: str,
+    export_format: PatientTextExportFormat = Query(
+        default=PatientTextExportFormat.json,
+        alias="format",
+        description="Export format for patient textual data (json or pdf).",
+    ),
+):
+    """
+    Export patient textual data as JSON or PDF.
+
+    Includes patient profile, vitals, consultations, and record metadata/text.
+    Binary record files are exported through /patients/{patient_id}/export/files.
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    supabase = get_supabase()
+    payload = _build_patient_export_payload(supabase, patient_uuid)
+    patient = payload.get("patient") if isinstance(payload.get("patient"), dict) else {}
+    base_name = _build_patient_export_basename(patient, patient_uuid)
+
+    if export_format == PatientTextExportFormat.json:
+        json_bytes = json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            default=_json_default,
+        ).encode("utf-8")
+        filename = f"{base_name}.json"
+        return Response(
+            content=json_bytes,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    pdf_lines = _patient_payload_to_pdf_lines(payload)
+    pdf_bytes = _render_text_pdf(pdf_lines)
+    filename = f"{base_name}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/patients/{patient_id}/export/files")
+async def export_patient_record_files(patient_id: str):
+    """
+    Export patient record files as a ZIP archive.
+
+    Files are copied byte-for-byte from storage with original extensions.
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    supabase = get_supabase()
+    patient_result = supabase.table("patients").select("id, full_name").eq(
+        "id", str(patient_uuid)
+    ).maybe_single().execute()
+    patient_data = patient_result.data if patient_result else None
+    if not isinstance(patient_data, dict):
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    records_result = supabase.table("medical_records").select(
+        "id, title, image_path, record_type, created_at"
+    ).eq("patient_id", str(patient_uuid)).not_.is_(
+        "image_path", "null"
+    ).order("created_at", desc=False).execute()
+
+    records = records_result.data or []
+    if not records:
+        raise HTTPException(status_code=404, detail="No file attachments found for this patient")
+
+    zip_buffer = io.BytesIO()
+    used_names: set[str] = set()
+    exported_count = 0
+
+    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for index, record in enumerate(records, start=1):
+            storage_path = record.get("image_path")
+            if not isinstance(storage_path, str) or not storage_path.strip():
+                continue
+
+            try:
+                file_bytes = supabase.storage.from_(settings.patient_photo_bucket).download(storage_path)
+            except Exception:
+                logger.exception(
+                    "Failed to export record file patient_id=%s record_id=%s path=%s",
+                    patient_id,
+                    record.get("id"),
+                    storage_path,
+                )
+                continue
+
+            if not file_bytes:
+                continue
+
+            extension = Path(storage_path).suffix
+            default_name = f"record_{index}"
+            name_hint = _safe_filename_component(record.get("title"), default_name)
+            entry_name = _ensure_file_extension(name_hint, extension)
+            entry_name = _unique_zip_name(entry_name, used_names)
+
+            archive.writestr(entry_name, file_bytes)
+            exported_count += 1
+
+        manifest = {
+            "patient_id": str(patient_uuid),
+            "exported_at": datetime.utcnow().isoformat() + "Z",
+            "files_exported": exported_count,
+            "records": [
+                {
+                    "record_id": str(record.get("id")),
+                    "record_type": record.get("record_type"),
+                    "title": record.get("title"),
+                    "image_path": record.get("image_path"),
+                    "created_at": record.get("created_at"),
+                }
+                for record in records
+            ],
+        }
+        archive.writestr(
+            "manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2, default=_json_default),
+        )
+
+    if exported_count == 0:
+        raise HTTPException(
+            status_code=500,
+            detail="No files could be exported. Check storage paths and bucket access.",
+        )
+
+    zip_bytes = zip_buffer.getvalue()
+    patient_slug = _safe_slug(patient_data.get("full_name"), "patient")
+    filename = f"{patient_slug}-{patient_uuid}-files.zip"
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/stats")

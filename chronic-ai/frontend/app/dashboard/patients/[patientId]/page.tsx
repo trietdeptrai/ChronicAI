@@ -3,10 +3,16 @@
  */
 "use client"
 
-import { useRef, useState, type ChangeEvent } from "react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useAuth } from "@/contexts"
-import { PageHeader, LoadingOverlay, RecordAIAnalysis, RecordDoctorComment } from "@/components/shared"
+import {
+    PageHeader,
+    LoadingOverlay,
+    RecordAIAnalysis,
+    RecordDoctorComment,
+    UploadProgressOverlay,
+} from "@/components/shared"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -126,6 +132,30 @@ const glucoseTimingOptions = [
     { value: "random", label: "Ngẫu nhiên" },
 ]
 
+function getRecordUploadStage(progress: number, recordType: ImagingRecordType): string {
+    if (progress < 18) return "Dang tai tep len may chu..."
+    if (progress < 34) return "Dang xac thuc va luu tep..."
+
+    if (recordType === "ecg") {
+        if (progress < 52) return "Dang tao ECG embedding (MedSigLIP)..."
+        if (progress < 68) return "Dang chay ECG classifier..."
+    } else {
+        if (progress < 68) return "Dang phan tich hinh anh..."
+    }
+
+    if (progress < 88) return "Dang phan tich AI bang MedGemma..."
+    return "Dang luu ket qua vao ho so..."
+}
+
+function nextRecordUploadProgress(current: number): number {
+    if (current < 20) return Math.min(97, current + 4.0)
+    if (current < 40) return Math.min(97, current + 2.6)
+    if (current < 60) return Math.min(97, current + 1.8)
+    if (current < 80) return Math.min(97, current + 1.0)
+    if (current < 92) return Math.min(97, current + 0.6)
+    return Math.min(97, current + 0.25)
+}
+
 export default function PatientDetailPage() {
     const router = useRouter()
     const { role, user } = useAuth()
@@ -165,6 +195,12 @@ export default function PatientDetailPage() {
     const [postUploadComment, setPostUploadComment] = useState("")
     const [postUploadAiAnalysis, setPostUploadAiAnalysis] = useState<MedicalRecordAIAnalysis | string | null>(null)
     const [isPostUploadDialogOpen, setIsPostUploadDialogOpen] = useState(false)
+    const [isUploadProgressOpen, setIsUploadProgressOpen] = useState(false)
+    const [uploadProgressValue, setUploadProgressValue] = useState(0)
+    const [uploadProgressStage, setUploadProgressStage] = useState("")
+    const [uploadProgressType, setUploadProgressType] = useState<ImagingRecordType>("xray")
+    const uploadProgressTimerRef = useRef<number | null>(null)
+    const uploadProgressHideTimeoutRef = useRef<number | null>(null)
 
     const [editState, setEditState] = useState<RecordEditState | null>(null)
     const [editError, setEditError] = useState<string | null>(null)
@@ -186,6 +222,70 @@ export default function PatientDetailPage() {
     })
     const [vitalError, setVitalError] = useState<string | null>(null)
     const [vitalSuccess, setVitalSuccess] = useState<string | null>(null)
+
+    const clearUploadProgressTimer = () => {
+        if (uploadProgressTimerRef.current !== null) {
+            window.clearInterval(uploadProgressTimerRef.current)
+            uploadProgressTimerRef.current = null
+        }
+    }
+
+    const clearUploadProgressHideTimeout = () => {
+        if (uploadProgressHideTimeoutRef.current !== null) {
+            window.clearTimeout(uploadProgressHideTimeoutRef.current)
+            uploadProgressHideTimeoutRef.current = null
+        }
+    }
+
+    const startUploadProgress = (recordTypeForUpload: ImagingRecordType) => {
+        clearUploadProgressTimer()
+        clearUploadProgressHideTimeout()
+        setUploadProgressType(recordTypeForUpload)
+        setUploadProgressValue(4)
+        setUploadProgressStage(getRecordUploadStage(4, recordTypeForUpload))
+        setIsUploadProgressOpen(true)
+
+        uploadProgressTimerRef.current = window.setInterval(() => {
+            setUploadProgressValue((prev) => nextRecordUploadProgress(prev))
+        }, 450)
+    }
+
+    const finishUploadProgress = (status: "success" | "error") => {
+        clearUploadProgressTimer()
+
+        if (status === "success") {
+            setUploadProgressValue(100)
+            setUploadProgressStage("Hoan tat. Dang cap nhat du lieu...")
+            clearUploadProgressHideTimeout()
+            uploadProgressHideTimeoutRef.current = window.setTimeout(() => {
+                setIsUploadProgressOpen(false)
+                setUploadProgressValue(0)
+                setUploadProgressStage("")
+            }, 800)
+            return
+        }
+
+        setUploadProgressStage("Tai len that bai.")
+        clearUploadProgressHideTimeout()
+        uploadProgressHideTimeoutRef.current = window.setTimeout(() => {
+            setIsUploadProgressOpen(false)
+            setUploadProgressValue(0)
+            setUploadProgressStage("")
+        }, 1200)
+    }
+
+    useEffect(() => {
+        if (!isUploadProgressOpen) return
+        if (uploadProgressValue >= 100) return
+        setUploadProgressStage(getRecordUploadStage(uploadProgressValue, uploadProgressType))
+    }, [isUploadProgressOpen, uploadProgressType, uploadProgressValue])
+
+    useEffect(() => {
+        return () => {
+            clearUploadProgressTimer()
+            clearUploadProgressHideTimeout()
+        }
+    }, [])
 
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
         const selected = e.target.files?.[0] ?? null
@@ -243,6 +343,8 @@ export default function PatientDetailPage() {
             return
         }
 
+        startUploadProgress(recordType)
+
         recordUploadMutation.mutate(
             {
                 patientId,
@@ -252,6 +354,7 @@ export default function PatientDetailPage() {
             },
             {
                 onSuccess: (response) => {
+                    finishUploadProgress("success")
                     setRecordFile(null)
                     setRecordTitle("")
                     toast.success("Đã tải tệp thành công.")
@@ -263,6 +366,10 @@ export default function PatientDetailPage() {
                     if (recordInputRef.current) {
                         recordInputRef.current.value = ""
                     }
+                },
+                onError: (err) => {
+                    finishUploadProgress("error")
+                    setRecordError(getErrorMessage(err, "Tai anh that bai. Vui long thu lai."))
                 },
             }
         )
@@ -994,6 +1101,13 @@ export default function PatientDetailPage() {
                     </Button>
                 </CardContent>
             </Card>
+
+            <UploadProgressOverlay
+                open={isUploadProgressOpen}
+                title="Dang xu ly tai anh can lam sang"
+                stage={uploadProgressStage}
+                progress={uploadProgressValue}
+            />
 
             <Dialog
                 open={isPostUploadDialogOpen}

@@ -2,7 +2,7 @@
  * Patient API functions
  */
 
-import { apiClient, uploadFile } from "./client"
+import { apiClient, downloadFile, uploadFile } from "./client"
 import type {
     DeletePatientResponse,
     PatientListResponse,
@@ -201,4 +201,23 @@ export async function deletePatientRecord(patientId: string, recordId: string): 
     return apiClient<{ status: string; record_id: string; patient_id: string; message: string }>(endpoint, {
         method: "DELETE",
     })
+}
+
+/**
+ * Export patient textual data (profile, vitals, consultations, records metadata).
+ */
+export async function exportPatientText(
+    patientId: string,
+    format: "json" | "pdf" = "json"
+) {
+    const endpoint = `/doctor/patients/${patientId}/export?format=${encodeURIComponent(format)}`
+    return downloadFile(endpoint)
+}
+
+/**
+ * Export original patient record files as ZIP.
+ */
+export async function exportPatientFiles(patientId: string) {
+    const endpoint = `/doctor/patients/${patientId}/export/files`
+    return downloadFile(endpoint)
 }

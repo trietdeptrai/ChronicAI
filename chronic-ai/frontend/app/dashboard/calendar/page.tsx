@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { PageHeader } from "@/components/shared"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/popover"
 import {
   Dialog,
   DialogContent,
@@ -197,6 +198,8 @@ const COPY = {
   },
 } as const
 
+type CalendarCopy = (typeof COPY)["vi"]
+
 export default function CalendarPage() {
   const { role, user } = useAuth()
   const { language } = useDashboardLanguage()
@@ -374,6 +377,7 @@ export default function CalendarPage() {
   }
 
   function openDecision(target: Appointment, type: DecisionType) {
+    setFocusedAppointment(null)
     setDecisionTarget(target)
     setDecisionType(type)
     setDecisionNote(target.doctor_response_note ?? "")
@@ -381,6 +385,17 @@ export default function CalendarPage() {
     setDecisionOpen(true)
     setMessage(null)
     setError(null)
+  }
+
+  function handleEventPopoverOpen(appointment: Appointment, open: boolean) {
+    if (open) {
+      setFocusedAppointment(appointment)
+      return
+    }
+    setFocusedAppointment((current) => {
+      if (!current) return current
+      return current.id === appointment.id ? null : current
+    })
   }
 
   async function submitDecision() {
@@ -510,9 +525,12 @@ export default function CalendarPage() {
                 appointments={appointmentsByDay.get(dayKey(currentDays[0])) ?? []}
                 language={language}
                 isPatient={isPatient}
+                isDoctor={isDoctor}
+                copy={t}
                 focusedAppointmentId={focusedAppointment?.id}
                 onSlotClick={openBooking}
-                onEventClick={setFocusedAppointment}
+                onEventOpenChange={handleEventPopoverOpen}
+                onDecision={openDecision}
               />
             )}
 
@@ -523,34 +541,18 @@ export default function CalendarPage() {
                 selectedDate={selectedDate}
                 language={language}
                 isPatient={isPatient}
+                isDoctor={isDoctor}
+                copy={t}
                 focusedAppointmentId={focusedAppointment?.id}
                 onSelectDate={selectDate}
                 onSlotClick={openBooking}
-                onEventClick={setFocusedAppointment}
+                onEventOpenChange={handleEventPopoverOpen}
+                onDecision={openDecision}
               />
             )}
 
             {!isLoading && rangeAppointments.length === 0 && (
               <p className="mt-4 text-sm text-muted-foreground">{t.noAppointments}</p>
-            )}
-
-            {focusedAppointment && (
-              <div className="mt-4 rounded-lg border bg-background p-4 text-sm">
-                <div className="mb-2 flex items-center gap-2">
-                  <Badge variant={statusBadgeVariant(focusedAppointment.status)}>{t.status[focusedAppointment.status]}</Badge>
-                  <span className="font-medium">{formatDateTime(focusedAppointment.start_at, language)}</span>
-                </div>
-                <p><span className="font-medium">{t.type}: </span>{t.types[focusedAppointment.appointment_type]}</p>
-                <p><span className="font-medium">{t.reason}: </span>{focusedAppointment.chief_complaint}</p>
-                {focusedAppointment.patient_name && <p><span className="font-medium">{t.patient}: </span>{focusedAppointment.patient_name}</p>}
-                {focusedAppointment.doctor_name && <p><span className="font-medium">{t.doctor}: </span>{focusedAppointment.doctor_name}</p>}
-                {isDoctor && focusedAppointment.status === "pending" && (
-                  <div className="mt-3 flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openDecision(focusedAppointment, "accepted")}>{t.accept}</Button>
-                    <Button size="sm" variant="destructive" onClick={() => openDecision(focusedAppointment, "rejected")}>{t.reject}</Button>
-                  </div>
-                )}
-              </div>
             )}
           </CardContent>
         </Card>
@@ -689,22 +691,85 @@ export default function CalendarPage() {
   )
 }
 
+function AppointmentEventPopover({
+  appointment,
+  language,
+  copy,
+  isDoctor,
+  isFocused,
+  onOpenChange,
+  onDecision,
+  className,
+  style,
+}: {
+  appointment: Appointment
+  language: DashboardLanguage
+  copy: CalendarCopy
+  isDoctor: boolean
+  isFocused: boolean
+  onOpenChange: (appointment: Appointment, open: boolean) => void
+  onDecision: (appointment: Appointment, type: DecisionType) => void
+  className: string
+  style: CSSProperties
+}) {
+  return (
+    <Popover open={isFocused} onOpenChange={(open) => onOpenChange(appointment, open)}>
+      <PopoverTrigger asChild>
+        <button type="button" className={className} style={style}>
+          <p className="truncate font-semibold">
+            {formatTime(appointment.start_at, language)} - {formatTime(appointment.end_at, language)}
+          </p>
+          <p className="truncate">{appointment.chief_complaint}</p>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={10} className="w-80 space-y-3 p-3">
+        <div className="flex items-center gap-2">
+          <Badge variant={statusBadgeVariant(appointment.status)}>{copy.status[appointment.status]}</Badge>
+          <span className="text-xs font-medium text-muted-foreground">
+            {formatDateTime(appointment.start_at, language)}
+          </span>
+        </div>
+
+        <div className="space-y-1 text-sm">
+          <p><span className="font-medium">{copy.type}: </span>{copy.types[appointment.appointment_type]}</p>
+          <p><span className="font-medium">{copy.reason}: </span>{appointment.chief_complaint}</p>
+          {appointment.patient_name && <p><span className="font-medium">{copy.patient}: </span>{appointment.patient_name}</p>}
+          {appointment.doctor_name && <p><span className="font-medium">{copy.doctor}: </span>{appointment.doctor_name}</p>}
+        </div>
+
+        {isDoctor && appointment.status === "pending" && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => onDecision(appointment, "accepted")}>{copy.accept}</Button>
+            <Button size="sm" variant="destructive" onClick={() => onDecision(appointment, "rejected")}>{copy.reject}</Button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function DayGrid({
   date,
   appointments,
   language,
   isPatient,
+  isDoctor,
+  copy,
   focusedAppointmentId,
   onSlotClick,
-  onEventClick,
+  onEventOpenChange,
+  onDecision,
 }: {
   date: Date
   appointments: Appointment[]
   language: DashboardLanguage
   isPatient: boolean
+  isDoctor: boolean
+  copy: CalendarCopy
   focusedAppointmentId?: string
   onSlotClick: (slotDateTime: Date) => void
-  onEventClick: (appointment: Appointment) => void
+  onEventOpenChange: (appointment: Appointment, open: boolean) => void
+  onDecision: (appointment: Appointment, type: DecisionType) => void
 }) {
   const rows = useMemo(() => buildTimeRows(DAY_START_MIN, DAY_END_MIN), [])
   const layouts = useMemo(() => buildEventLayouts(appointments), [appointments])
@@ -757,10 +822,15 @@ function DayGrid({
             {layouts.map((layout) => {
               const isFocused = focusedAppointmentId === layout.appointment.id
               return (
-                <button
+                <AppointmentEventPopover
                   key={layout.appointment.id}
-                  type="button"
-                  onClick={() => onEventClick(layout.appointment)}
+                  appointment={layout.appointment}
+                  language={language}
+                  copy={copy}
+                  isDoctor={isDoctor}
+                  isFocused={isFocused}
+                  onOpenChange={onEventOpenChange}
+                  onDecision={onDecision}
                   className={`pointer-events-auto absolute rounded-md border px-2 py-1 text-left text-[11px] shadow-sm ${statusBlockClass(layout.appointment.status)} ${isFocused ? "ring-2 ring-primary" : ""}`}
                   style={{
                     top: layout.top,
@@ -768,12 +838,7 @@ function DayGrid({
                     left: `calc(${(layout.column / layout.columnCount) * 100}% + 3px)`,
                     width: `calc(${100 / layout.columnCount}% - 6px)`,
                   }}
-                >
-                  <p className="truncate font-semibold">
-                    {formatTime(layout.appointment.start_at, language)} - {formatTime(layout.appointment.end_at, language)}
-                  </p>
-                  <p className="truncate">{layout.appointment.chief_complaint}</p>
-                </button>
+                />
               )
             })}
           </div>
@@ -789,20 +854,26 @@ function WeekGrid({
   selectedDate,
   language,
   isPatient,
+  isDoctor,
+  copy,
   focusedAppointmentId,
   onSelectDate,
   onSlotClick,
-  onEventClick,
+  onEventOpenChange,
+  onDecision,
 }: {
   days: Date[]
   appointmentsByDay: Map<string, Appointment[]>
   selectedDate: Date
   language: DashboardLanguage
   isPatient: boolean
+  isDoctor: boolean
+  copy: CalendarCopy
   focusedAppointmentId?: string
   onSelectDate: (date: Date) => void
   onSlotClick: (slotDateTime: Date) => void
-  onEventClick: (appointment: Appointment) => void
+  onEventOpenChange: (appointment: Appointment, open: boolean) => void
+  onDecision: (appointment: Appointment, type: DecisionType) => void
 }) {
   const rows = useMemo(() => buildTimeRows(DAY_START_MIN, DAY_END_MIN), [])
 
@@ -872,10 +943,15 @@ function WeekGrid({
                     {layouts.map((layout) => {
                       const isFocused = focusedAppointmentId === layout.appointment.id
                       return (
-                        <button
+                        <AppointmentEventPopover
                           key={layout.appointment.id}
-                          type="button"
-                          onClick={() => onEventClick(layout.appointment)}
+                          appointment={layout.appointment}
+                          language={language}
+                          copy={copy}
+                          isDoctor={isDoctor}
+                          isFocused={isFocused}
+                          onOpenChange={onEventOpenChange}
+                          onDecision={onDecision}
                           className={`pointer-events-auto absolute rounded-md border px-2 py-1 text-left text-[11px] shadow-sm ${statusBlockClass(layout.appointment.status)} ${isFocused ? "ring-2 ring-primary" : ""}`}
                           style={{
                             top: layout.top,
@@ -883,10 +959,7 @@ function WeekGrid({
                             left: `calc(${(layout.column / layout.columnCount) * 100}% + 3px)`,
                             width: `calc(${100 / layout.columnCount}% - 6px)`,
                           }}
-                        >
-                          <p className="truncate font-semibold">{formatTime(layout.appointment.start_at, language)}</p>
-                          <p className="truncate">{layout.appointment.chief_complaint}</p>
-                        </button>
+                        />
                       )
                     })}
                   </div>

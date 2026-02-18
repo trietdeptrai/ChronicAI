@@ -30,7 +30,7 @@ const AuthContext = createContext<AuthContextType | null>(null)
 function createDemoUser(role: Exclude<UserRole, null>): User {
     return {
         id: role === "doctor"
-            ? "22222222-2222-4222-a222-222222222222"
+            ? "44444444-4444-4444-a444-444444444444"
             : "11111111-1111-4111-a111-111111111111",
         phone: "+84123456789",
         role,
@@ -72,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await new Promise(resolve => setTimeout(resolve, 1000))
             // For now, just set the user
             setUser({
-                id: "auth-user",
+                id: role === "doctor" ? "44444444-4444-4444-a444-444444444444" : "11111111-1111-4111-a111-111111111111",
                 phone,
                 role: role || "patient",
                 name: "Người dùng",

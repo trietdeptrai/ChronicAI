@@ -8,6 +8,12 @@ interface FetchOptions extends RequestInit {
     timeout?: number
 }
 
+export interface DownloadResult {
+    blob: Blob
+    filename: string | null
+    contentType: string
+}
+
 /**
  * Generic API client function with error handling and timeout support
  */
@@ -159,4 +165,63 @@ export async function uploadFile<T>(
     }
 
     return response.json()
+}
+
+/**
+ * Download binary file from API endpoint.
+ */
+export async function downloadFile(
+    endpoint: string,
+    options: FetchOptions = {}
+): Promise<DownloadResult> {
+    const { timeout = 30000, ...fetchOptions } = options
+    const url = `${API_BASE}${endpoint}`
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+    try {
+        const response = await fetch(url, {
+            ...fetchOptions,
+            signal: controller.signal,
+        })
+
+        clearTimeout(timeoutId)
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}))
+            throw new ApiError(
+                response.status,
+                errorData.detail || `HTTP error ${response.status}`,
+                errorData
+            )
+        }
+
+        const blob = await response.blob()
+        const contentType = response.headers.get("content-type") || "application/octet-stream"
+        const disposition = response.headers.get("content-disposition") || ""
+        const filenameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i)
+        const filename = filenameMatch?.[1] || null
+
+        return {
+            blob,
+            filename,
+            contentType,
+        }
+    } catch (error) {
+        clearTimeout(timeoutId)
+
+        if (error instanceof ApiError) {
+            throw error
+        }
+
+        if (error instanceof Error) {
+            if (error.name === "AbortError") {
+                throw new ApiError(408, "Request timeout")
+            }
+            throw new ApiError(500, error.message)
+        }
+
+        throw new ApiError(500, "Unknown error occurred")
+    }
 }

@@ -1,6 +1,7 @@
 """
 LLM Service.
 """
+import asyncio
 from typing import Any, AsyncGenerator, Optional
 from uuid import UUID
 import base64
@@ -12,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import uuid
 
+from app.services.ecg_classifier_service import ecg_classifier_service
 from app.services.llm_client import llm_client
 from app.services.rag import get_patient_context
 from app.config import settings
@@ -121,6 +123,24 @@ def _sanitize_list(values: list[str], max_items: int = 5, max_item_len: int = 40
     return out
 
 
+def _top_scores_for_log(scores_by_class: dict[str, float], top_k: int = 3) -> list[tuple[str, float]]:
+    ranked = sorted(
+        ((str(label), float(score)) for label, score in scores_by_class.items()),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    return ranked[:top_k]
+
+
+ECG_CLASS_DESCRIPTIONS: dict[str, str] = {
+    "NORM": "Normal ECG",
+    "MI": "Myocardial Infarction",
+    "STTC": "ST/T Change",
+    "CD": "Conduction Disturbance",
+    "HYP": "Hypertrophy",
+}
+
+
 def _classify_llm_error(message: str) -> str:
     """Convert low-level LLM errors into backend diagnostic reason text."""
     msg = (message or "").lower()
@@ -141,6 +161,188 @@ def _classify_llm_error(message: str) -> str:
     return "The model request failed unexpectedly."
 
 
+async def _analyze_ecg_with_classifier(
+    *,
+    request_id: str,
+    record_type: str,
+    safe_title: str,
+    image_base64: str,
+    base_result: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    ECG-only analysis flow:
+    image -> MedSigLIP embedding -> classifier scores -> MedGemma final analysis.
+    """
+    start_total = time.perf_counter()
+    logger.info(
+        "[upload-analysis][ecg] start id=%s model=%s image_base64_len=%s",
+        request_id,
+        settings.medical_model,
+        len(image_base64 or ""),
+    )
+
+    model_available = await llm_client.check_model_available(settings.medical_model)
+    if not model_available:
+        logger.error(
+            "[upload-analysis][ecg] medical model unavailable id=%s model=%s",
+            request_id,
+            settings.medical_model,
+        )
+        raise RuntimeError(f"Model not available: {settings.medical_model}")
+
+    logger.info("[upload-analysis][ecg] classifier inference start id=%s", request_id)
+    start_classifier = time.perf_counter()
+    classifier_output = await asyncio.to_thread(
+        ecg_classifier_service.predict_from_base64,
+        image_base64,
+    )
+    classifier_elapsed_ms = (time.perf_counter() - start_classifier) * 1000
+
+    classes = [str(item) for item in (classifier_output.get("classes") or [])]
+    raw_scores = classifier_output.get("scores") or []
+    scores = [float(item) for item in raw_scores]
+    scores_by_class = {
+        label: float(score)
+        for label, score in zip(classes, scores)
+    }
+    class_description_rows = [
+        {
+            "class": label,
+            "description": ECG_CLASS_DESCRIPTIONS.get(label, label),
+        }
+        for label in classes
+    ]
+    prediction_score_rows = [
+        {
+            "class": label,
+            "description": ECG_CLASS_DESCRIPTIONS.get(label, label),
+            "score": float(score),
+        }
+        for label, score in zip(classes, scores)
+    ]
+    logger.info(
+        "[upload-analysis][ecg] classifier inference done id=%s classifier_type=%s threshold=%.3f predicted=%s top3=%s elapsed_ms=%.1f",
+        request_id,
+        str(classifier_output.get("classifier_type") or ""),
+        float(classifier_output.get("threshold", 0.5)),
+        [str(item) for item in (classifier_output.get("predicted_labels") or [])],
+        _top_scores_for_log(scores_by_class, top_k=3),
+        classifier_elapsed_ms,
+    )
+
+    prompt = f"""Analyze this uploaded ECG image using both:
+1) The actual ECG image.
+2) The classifier scores computed from MedSigLIP embedding.
+
+Record metadata:
+- record_type: {record_type}
+- title: {safe_title}
+
+ECG classifier output:
+- classes (ordered): {json.dumps(classes, ensure_ascii=False)}
+- class_descriptions: {json.dumps(class_description_rows, ensure_ascii=False)}
+- scores (same order): {json.dumps(scores, ensure_ascii=False)}
+- scores_by_class: {json.dumps(scores_by_class, ensure_ascii=False)}
+- prediction_score_rows: {json.dumps(prediction_score_rows, ensure_ascii=False)}
+- predicted_labels: {json.dumps(classifier_output.get("predicted_labels") or [], ensure_ascii=False)}
+- threshold: {float(classifier_output.get("threshold", 0.5))}
+
+Return JSON with this exact schema:
+{{
+  "summary": "short clinical summary",
+  "key_findings": ["finding 1", "finding 2"],
+  "clinical_significance": "why this matters clinically",
+  "recommended_follow_up": ["follow-up action 1", "follow-up action 2"],
+  "urgency": "low|medium|high",
+  "confidence": "low|medium|high",
+  "limitations": ["known uncertainty or missing data"],
+  "prediction_scores": [
+    {{"class": "NORM", "description": "Normal ECG", "score": 0.12}},
+    {{"class": "MI", "description": "Myocardial Infarction", "score": 0.78}}
+  ]
+}}
+
+Rules:
+- Use Vietnamese for user-facing fields.
+- Use proper Vietnamese diacritics (tone marks); do not remove accents.
+- Use the image as primary evidence and classifier scores as supporting evidence.
+- Do not claim a diagnosis with absolute certainty.
+- Always include prediction_scores and keep class names exactly as provided.
+- Keep summary under 120 words.
+- Return valid JSON only.
+"""
+
+    logger.info("[upload-analysis][ecg] medgemma call start id=%s", request_id)
+    start_llm = time.perf_counter()
+    raw = await llm_client.generate(
+        model=settings.medical_model,
+        prompt=prompt,
+        system=UPLOAD_ANALYSIS_SYSTEM,
+        images=[image_base64],
+        stream=False,
+        num_predict=768,
+    )
+    llm_elapsed_ms = (time.perf_counter() - start_llm) * 1000
+    logger.info(
+        "[upload-analysis][ecg] medgemma call done id=%s response_len=%s elapsed_ms=%.1f",
+        request_id,
+        len(raw or ""),
+        llm_elapsed_ms,
+    )
+
+    parsed = _extract_json_object(raw) or {}
+    summary = str(parsed.get("summary") or "").strip()
+    if not summary:
+        summary = (raw or "").strip()[:500]
+    if not summary:
+        summary = "Không thể tạo AI analysis."
+    summary = _sanitize_text(summary, max_len=1200)
+
+    urgency = str(parsed.get("urgency") or "").strip().lower()
+    if urgency not in {"low", "medium", "high"}:
+        urgency = "medium"
+
+    confidence = str(parsed.get("confidence") or "").strip().lower()
+    if confidence not in {"low", "medium", "high"}:
+        confidence = "medium"
+    total_elapsed_ms = (time.perf_counter() - start_total) * 1000
+    logger.info(
+        "[upload-analysis][ecg] completed id=%s urgency=%s confidence=%s findings=%s follow_up=%s elapsed_ms=%.1f",
+        request_id,
+        urgency,
+        confidence,
+        len(_sanitize_list(_to_string_list(parsed.get("key_findings")))),
+        len(_sanitize_list(_to_string_list(parsed.get("recommended_follow_up")))),
+        total_elapsed_ms,
+    )
+
+    return {
+        **base_result,
+        "status": "completed",
+        "summary": summary,
+        "key_findings": _sanitize_list(_to_string_list(parsed.get("key_findings"))),
+        "clinical_significance": _sanitize_text(parsed.get("clinical_significance"), max_len=1200),
+        "recommended_follow_up": _sanitize_list(_to_string_list(parsed.get("recommended_follow_up"))),
+        "urgency": urgency,
+        "confidence": confidence,
+        "limitations": _sanitize_list(_to_string_list(parsed.get("limitations")), max_item_len=500),
+        # Always persist classifier scores in analysis payload for downstream UI/reporting.
+        "prediction_scores": prediction_score_rows,
+        "ecg_classifier": {
+            "classifier_type": str(classifier_output.get("classifier_type") or ""),
+            "checkpoint_path": str(classifier_output.get("checkpoint_path") or ""),
+            "medsiglip_model_id": str(classifier_output.get("medsiglip_model_id") or ""),
+            "classes": classes,
+            "scores": scores,
+            "scores_by_class": scores_by_class,
+            "predicted_labels": [
+                str(item) for item in (classifier_output.get("predicted_labels") or [])
+            ],
+            "threshold": float(classifier_output.get("threshold", 0.5)),
+        },
+    }
+
+
 async def analyze_uploaded_record(
     *,
     record_type: str,
@@ -154,10 +356,14 @@ async def analyze_uploaded_record(
     Returns:
         JSON-serializable dict to store in medical_records.analysis_result
     """
+    start_total = time.perf_counter()
     safe_title = (title or "Untitled record").strip()
     extracted = (extracted_text or "").strip()
     if len(extracted) > 12000:
         extracted = extracted[:12000]
+    if (record_type or "").strip().lower() == "ecg" and image_base64:
+        # ECG path is image-first; do not include OCR text in model prompt.
+        extracted = ""
     request_id = uuid.uuid4().hex[:8]
 
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -179,8 +385,32 @@ async def analyze_uploaded_record(
         bool(image_base64),
     )
 
+    ecg_fallback_reason: Optional[str] = None
+    if (record_type or "").strip().lower() == "ecg" and image_base64:
+        logger.info("[upload-analysis] routing ECG request to classifier flow id=%s", request_id)
+        try:
+            return await _analyze_ecg_with_classifier(
+                request_id=request_id,
+                record_type=record_type,
+                safe_title=safe_title,
+                image_base64=image_base64,
+                base_result=base_result,
+            )
+        except Exception as exc:
+            ecg_fallback_reason = _sanitize_text(str(exc) or repr(exc), max_len=500)
+            logger.warning(
+                "[upload-analysis] ECG classifier flow failed; using default flow id=%s error=%s",
+                request_id,
+                ecg_fallback_reason,
+            )
+            logger.exception(
+                "[upload-analysis][ecg] classifier workflow failed id=%s error=%s; falling back to default flow",
+                request_id,
+                ecg_fallback_reason,
+            )
+
     if not extracted and not image_base64:
-        logger.warning("[upload-analysis] skipped: no OCR text and no image payload")
+        logger.warning("[upload-analysis] skipped id=%s: no OCR text and no image payload", request_id)
         return {
             **base_result,
             "status": "skipped",
@@ -212,6 +442,7 @@ Return JSON with this exact schema:
 
 Rules:
 - Use Vietnamese for user-facing fields.
+- Use proper Vietnamese diacritics (tone marks); do not remove accents.
 - Keep summary under 120 words.
 - Keep key_findings and recommended_follow_up concise and actionable.
 - If data is limited, state that clearly in limitations.
@@ -306,7 +537,7 @@ Rules:
         if not summary:
             summary = (raw or "").strip()[:500]
         if not summary:
-            summary = "Khong the tao AI analysis."
+            summary = "Không thể tạo AI analysis."
         summary = _sanitize_text(summary, max_len=1200)
 
         urgency = str(parsed.get("urgency") or "").strip().lower()
@@ -328,6 +559,13 @@ Rules:
             "confidence": confidence,
             "limitations": _sanitize_list(_to_string_list(parsed.get("limitations")), max_item_len=500),
         }
+        if ecg_fallback_reason:
+            result["limitations"] = _sanitize_list(
+                (result.get("limitations") or [])
+                + ["ECG classifier path failed, used default upload analysis flow."],
+                max_items=6,
+                max_item_len=500,
+            )
         if multimodal_error:
             result["limitations"] = _sanitize_list(
                 (result.get("limitations") or []) + [
@@ -337,19 +575,21 @@ Rules:
                 max_item_len=500,
             )
         logger.info(
-            "[upload-analysis] completed id=%s urgency=%s confidence=%s findings=%s follow_up=%s",
+            "[upload-analysis] completed id=%s urgency=%s confidence=%s findings=%s follow_up=%s used_fallback=%s elapsed_ms=%.1f",
             request_id,
             result.get("urgency"),
             result.get("confidence"),
             len(result.get("key_findings") or []),
             len(result.get("recommended_follow_up") or []),
+            bool(ecg_fallback_reason),
+            (time.perf_counter() - start_total) * 1000,
         )
         return result
     except Exception as exc:
         detail = _sanitize_text(str(exc) or repr(exc), max_len=500)
         reason = _classify_llm_error(detail)
         logger.exception(
-            "[upload-analysis] failed id=%s provider=%s model=%s reason=%s error=%s has_image=%s text_len=%s title=%s",
+            "[upload-analysis] failed id=%s provider=%s model=%s reason=%s error=%s has_image=%s text_len=%s title=%s elapsed_ms=%.1f",
             request_id,
             settings.llm_provider,
             settings.medical_model,
@@ -358,6 +598,7 @@ Rules:
             bool(image_base64),
             len(extracted),
             safe_title[:120],
+            (time.perf_counter() - start_total) * 1000,
         )
         return {
             **base_result,

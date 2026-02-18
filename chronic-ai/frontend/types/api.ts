@@ -10,6 +10,24 @@ export interface ApiError {
     details?: Record<string, unknown>
 }
 
+export interface ECGPredictionScore {
+    class: string
+    description?: string
+    score: number
+}
+
+export interface ECGClassifierDetails {
+    classifier_type?: string
+    checkpoint_path?: string
+    medsiglip_model_id?: string
+    classes?: string[]
+    scores?: number[]
+    scores_by_class?: Record<string, number>
+    predicted_labels?: string[]
+    threshold?: number
+    [key: string]: unknown
+}
+
 export interface MedicalRecordAIAnalysis {
     status?: "completed" | "skipped" | "error"
     summary?: string
@@ -19,6 +37,8 @@ export interface MedicalRecordAIAnalysis {
     urgency?: "low" | "medium" | "high"
     confidence?: "low" | "medium" | "high"
     limitations?: string[]
+    prediction_scores?: ECGPredictionScore[]
+    ecg_classifier?: ECGClassifierDetails
     model?: string
     record_type?: string
     generated_at?: string
