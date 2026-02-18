@@ -12,13 +12,18 @@
 
 import { useState, useCallback } from "react"
 import { sendDoctorChatStreaming, resumeDoctorChatStreaming } from "@/lib/api"
-import type { ChatMessage, DoctorChatStreamUpdate, PatientMention } from "@/types"
+import type {
+    ChatMessage,
+    DoctorChatStreamUpdate,
+    PatientMention,
+    PatientConfirmationDetails,
+} from "@/types"
 
 // HITL Request type (matches backend HITLRequest)
 interface HITLRequest {
     type: "clarification_needed" | "approval_required" | "patient_confirmation" | "safety_review"
     message: string
-    details: Record<string, unknown>
+    details: Record<string, unknown> | PatientConfirmationDetails
     options?: string[]
 }
 

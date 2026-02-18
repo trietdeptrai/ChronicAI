@@ -15,8 +15,10 @@ import base64
 import json
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, Literal, Optional
+from typing import AsyncGenerator, Literal, Optional, Tuple
 from uuid import UUID
+import re
+import unicodedata
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -30,6 +32,7 @@ from app.services.graph_state import (
     HITLRequest
 )
 from app.services.llm_client import llm_client
+from app.services.json_utils import strip_markdown_code_fence
 from app.services.rag import get_patient_context
 from app.services.verification_service import (
     verify_input,
@@ -37,6 +40,7 @@ from app.services.verification_service import (
     should_require_safety_review
 )
 from app.services.output_formatter import format_response, get_urgency_indicator
+from app.services.doctor_graph import _add_paragraph_breaks
 from app.services.resilience import (
     retry_async,
     RetryConfig,
@@ -64,10 +68,100 @@ LLM_RETRY_CONFIG = RetryConfig(
     retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
 )
 
+# Safety-first override for self-harm/suicide content.
+# If any of these appear in the patient query, we always escalate.
+SELF_HARM_EMERGENCY_KEYWORDS = [
+    "suicide",
+    "suicidal",
+    "kill myself",
+    "end my life",
+    "self-harm",
+    "hurt myself",
+    "tự tử",
+    "ý định tự tử",
+    "muốn chết",
+    "không muốn sống",
+    "tự hại",
+    "hại bản thân",
+]
+
+# Deterministic out-of-scope guardrail for patient chat
+PATIENT_NON_MEDICAL_REQUEST_KEYWORDS = [
+    "bai tho",
+    "lam tho",
+    "viet tho",
+    "poem",
+    "poetry",
+    "lyrics",
+    "bai hat",
+    "viet rap",
+    "joke",
+    "funny",
+    "truyen",
+    "ke chuyen",
+    "story",
+    "essay",
+    "viet email",
+    "email",
+    "viet code",
+    "lap trinh",
+    "thoi tiet",
+    "weather",
+    "gia co phieu",
+    "stock",
+    "bong da",
+    "football",
+]
+
+PATIENT_MEDICAL_SCOPE_REFUSAL_VI = (
+    "Tôi chỉ hỗ trợ các câu hỏi về sức khỏe và y tế.\n\n"
+    "Vui lòng mô tả triệu chứng, thuốc đang dùng, hoặc câu hỏi liên quan đến tình trạng sức khỏe của bạn."
+)
+
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def _contains_self_harm_emergency(text: str) -> bool:
+    """Return True when text contains self-harm/suicide emergency signals."""
+    if not text:
+        return False
+    lower_text = text.lower()
+    return any(keyword in lower_text for keyword in SELF_HARM_EMERGENCY_KEYWORDS)
+
+
+def _normalize_scope_text(text: str) -> str:
+    """Normalize text for robust keyword matching."""
+    normalized = unicodedata.normalize("NFD", (text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("đ", "d")
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _scope_contains_keyword(normalized_query: str, keyword: str) -> bool:
+    """Boundary-safe keyword check."""
+    if not keyword:
+        return False
+    return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+
+
+def _is_out_of_scope_patient_query(query: str) -> Tuple[bool, str]:
+    """
+    Return whether a patient query is outside medical scope.
+
+    Blocks explicit non-medical intent deterministically (for example: poem requests).
+    """
+    normalized_query = _normalize_scope_text(query)
+    if not normalized_query:
+        return True, "empty_query"
+
+    if any(_scope_contains_keyword(normalized_query, kw) for kw in PATIENT_NON_MEDICAL_REQUEST_KEYWORDS):
+        return True, "non_medical_intent"
+
+    return False, "in_scope"
 
 def create_initial_patient_state(
     patient_id: str,
@@ -81,6 +175,8 @@ def create_initial_patient_state(
         query_vi=query_vi,
         query_en="",
         image_path=image_path,
+        scope_guard_blocked=False,
+        scope_guard_reason=None,
         
         # Context
         patient_profile={},
@@ -114,9 +210,23 @@ async def translate_patient_input_node(state: PatientChatState) -> dict:
     """Node: Normalize patient input."""
     logger.info(f"[PatientGraph] translate_input: {state['query_vi'][:50]}...")
     query_en = state["query_vi"]
-    
+
+    is_out_of_scope, scope_reason = _is_out_of_scope_patient_query(query_en)
+    if is_out_of_scope:
+        logger.info(f"[PatientGraph] translate_input: blocked by scope guard ({scope_reason})")
+        return {
+            "query_en": query_en,
+            "scope_guard_blocked": True,
+            "scope_guard_reason": scope_reason,
+            "reasoning_en": PATIENT_MEDICAL_SCOPE_REFUSAL_VI,
+            "current_stage": "scope_blocked",
+            "progress": 0.75,
+        }
+
     return {
         "query_en": query_en,
+        "scope_guard_blocked": False,
+        "scope_guard_reason": None,
         "current_stage": "translated_input",
         "progress": 0.15
     }
@@ -133,12 +243,29 @@ async def verify_patient_input_node(state: PatientChatState) -> dict:
     logger.info("[PatientGraph] verify_input: Checking clarity...")
     
     verification = await verify_input(state["query_en"])
-    
-    return {
+
+    result = {
         "verification_result": verification,
         "current_stage": "verified_input",
         "progress": 0.25
     }
+    # Defense in depth: re-check scope after verification stage.
+    final_query = state.get("query_en", "")
+    is_out_of_scope, scope_reason = _is_out_of_scope_patient_query(final_query)
+    if is_out_of_scope:
+        logger.info(f"[PatientGraph] verify_input: blocked by scope guard ({scope_reason})")
+        result.update({
+            "scope_guard_blocked": True,
+            "scope_guard_reason": scope_reason,
+            "reasoning_en": PATIENT_MEDICAL_SCOPE_REFUSAL_VI,
+            "current_stage": "scope_blocked",
+            "progress": 0.75,
+        })
+    else:
+        result["scope_guard_blocked"] = False
+        result["scope_guard_reason"] = None
+
+    return result
 
 
 async def get_patient_history_node(state: PatientChatState) -> dict:
@@ -184,12 +311,13 @@ async def symptom_triage_node(state: PatientChatState) -> dict:
     triage_system = """You are a medical triage assistant. Analyze the patient query for urgency.
 
 Classify as:
-1. EMERGENCY: Life-threatening (chest pain, stroke signs, heavy bleeding, difficulty breathing, loss of consciousness) -> requires immediate hospital
+1. EMERGENCY: Life-threatening (chest pain, stroke signs, heavy bleeding, difficulty breathing, loss of consciousness) OR ANY suicide/self-harm intent -> requires immediate hospital/emergency support
 2. HIGH: Severe symptoms needing doctor visit in 24h (high fever, severe pain, significant bleeding)
 3. MEDIUM: Bothersome symptoms needing appointment (persistent symptoms, moderate discomfort)
 4. LOW: General questions or mild symptoms (health inquiries, mild symptoms)
 
 IMPORTANT: When in doubt, err on the side of caution and classify higher.
+Return the "reason" field in Vietnamese.
 
 Output ONLY valid JSON: {"urgency": "level", "reason": "brief reason", "confidence": 0.0-1.0}"""
 
@@ -197,8 +325,32 @@ Output ONLY valid JSON: {"urgency": "level", "reason": "brief reason", "confiden
 Conditions: {state['patient_profile'].get('chronic_conditions')}
 Query: {state['query_en']}"""
 
+    query_text = f"{state.get('query_vi', '')} {state.get('query_en', '')}"
+
+    # Hard safety override: never allow self-harm/suicide intent to be downgraded by the model.
+    if _contains_self_harm_emergency(query_text):
+        urgency = "emergency"
+        reason = "Phát hiện dấu hiệu tự gây hại hoặc ý định tự tử"
+        confidence = 1.0
+        safety_audit.log_decision(
+            event_type="symptom_triage",
+            query=state.get("query_en", ""),
+            decision=urgency,
+            confidence=confidence,
+            risk_factors=[reason],
+            patient_id=state.get("patient_id"),
+            human_review_required=True,
+        )
+        return {
+            "urgency_level": urgency,
+            "escalation_needed": True,
+            "escalation_reason": reason,
+            "current_stage": "triaged",
+            "progress": 0.50
+        }
+
     urgency = "medium"  # Safe default
-    reason = "Unable to assess"
+    reason = "Chưa đủ thông tin để đánh giá chính xác"
     confidence = 0.5
 
     try:
@@ -220,13 +372,11 @@ Query: {state['query_en']}"""
             operation_name="symptom_triage"
         )
 
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1].rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         result = json.loads(clean)
 
         urgency = result.get("urgency", "MEDIUM").lower()
-        reason = result.get("reason", "Triage assessment")
+        reason = result.get("reason", "Đánh giá mức độ triệu chứng")
         confidence = float(result.get("confidence", 0.7))
 
         # Log the triage decision for audit
@@ -241,20 +391,20 @@ Query: {state['query_en']}"""
         )
 
     except CircuitBreakerOpen:
-        logger.error("[PatientGraph] Ollama circuit breaker open - defaulting to safe escalation")
+        logger.error("[PatientGraph] LLM circuit breaker open - defaulting to safe escalation")
         urgency = "high"
-        reason = "System unavailable - recommending medical consultation as precaution"
+        reason = "Hệ thống tạm thời không khả dụng, khuyến nghị thăm khám để đảm bảo an toàn"
 
     except json.JSONDecodeError as e:
         logger.warning(f"[PatientGraph] Triage JSON parse failed: {e}. Using safe default.")
         # When we can't parse, be cautious
         urgency = "medium"
-        reason = "Unable to parse triage response - please describe symptoms in more detail"
+        reason = "Không đọc được kết quả phân loại. Vui lòng mô tả triệu chứng chi tiết hơn"
 
     except Exception as e:
         logger.warning(f"[PatientGraph] Triage failed: {e}. Defaulting to MEDIUM for safety.")
         urgency = "medium"
-        reason = "Triage analysis encountered an error"
+        reason = "Đã xảy ra lỗi khi đánh giá mức độ triệu chứng"
 
     # Safety-first: escalate on emergency or high urgency
     escalation = urgency in ["emergency", "high"]
@@ -276,10 +426,19 @@ async def escalation_handler_node(state: PatientChatState) -> dict:
     """
     logger.info("[PatientGraph] escalation_handler: Generating escalation message...")
     
-    msg_en = f"Based on your symptoms ({state['escalation_reason']}), please go to a hospital or see a doctor immediately. Do not rely on AI for this."
-    
-    if state["urgency_level"] == "emergency":
-        msg_en = f"EMERGENCY WARNING: These symptoms suggest a serious condition. Please call emergency services or go to the nearest hospital immediately.\n\nReason: {state['escalation_reason']}"
+    reason = state.get("escalation_reason") or "Có dấu hiệu cần được bác sĩ đánh giá ngay."
+    msg_en = (
+        "Cảnh báo khẩn cấp: Triệu chứng của bạn có thể nghiêm trọng.\n\n"
+        "Vui lòng đến cơ sở y tế gần nhất hoặc liên hệ cấp cứu ngay lập tức.\n\n"
+        f"Lý do: {reason}"
+    )
+
+    if state["urgency_level"] != "emergency":
+        msg_en = (
+            "Triệu chứng của bạn cần được bác sĩ thăm khám sớm.\n\n"
+            "Vui lòng đến bệnh viện/phòng khám trong thời gian sớm nhất và không tự điều trị theo tư vấn AI.\n\n"
+            f"Lý do: {reason}"
+        )
         
     return {
         "reasoning_en": msg_en,
@@ -298,20 +457,24 @@ async def patient_reasoning_node(state: PatientChatState) -> dict:
 
     system_prompt = """You are a supportive medical AI assistant for patients.
 
+FORMATTING (very important):
+- Greet the patient warmly using their name at the start
+- Use **bold** for key medical terms, medication names, or important values
+- Break your answer into short paragraphs separated by blank lines
+- Use bullet lists (- item) when listing multiple things (e.g. medications, symptoms, advice)
+- DO NOT write one continuous block of text
+- Keep language simple, warm, and easy to understand
+- Respond entirely in Vietnamese
+
 CRITICAL GUIDELINES:
 - Be empathetic and clear
 - Use simple, non-technical language
 - ALWAYS remind them to check with their doctor
 - Do NOT prescribe medication or dosages
 - Do NOT give definitive diagnoses
+- Refuse non-medical requests (poems, stories, entertainment, coding, weather, finance)
 - If you are uncertain or don't have enough information, say "Tôi không có đủ thông tin để trả lời chính xác" (I don't have enough information)
 - NEVER make up information - only use what's in the patient context
-
-Format response with:
-1. Understanding (empathic acknowledgment)
-2. Explanation (simple terms, based ONLY on provided context)
-3. Self-care suggestions (safe home remedies only)
-4. When to see a doctor (always include this)
 
 IMPORTANT: If the query is outside your medical knowledge or you're uncertain, respond with:
 "Tôi không thể đưa ra lời khuyên cụ thể về vấn đề này. Vui lòng tham khảo ý kiến bác sĩ."
@@ -342,35 +505,48 @@ Query: {state['query_en']}"""
         )
 
         # Check for uncertainty in response
-        if detect_uncertainty_in_response(response_en, language="en"):
+        if detect_uncertainty_in_response(response_en, language="vi"):
             logger.info("[PatientGraph] Detected uncertainty in response - adding disclaimer")
-            response_en += "\n\n⚠️ Please note: This information is general guidance only. Always consult your healthcare provider for personalized medical advice."
+            response_en += "\n\n⚠️ Lưu ý: Đây chỉ là thông tin tham khảo chung. Vui lòng trao đổi trực tiếp với bác sĩ để được tư vấn phù hợp."
 
     except CircuitBreakerOpen:
-        logger.error("[PatientGraph] Ollama circuit breaker open")
+        logger.error("[PatientGraph] LLM circuit breaker open")
         response_en = create_idk_response(
-            reason="The medical AI service is temporarily unavailable",
+            reason="Dịch vụ AI y tế đang tạm thời không khả dụng",
             original_query=state['query_en'],
-            language="en",
+            language="vi",
             suggestions=[
-                "Please try again in a few minutes",
-                "Contact your healthcare provider directly if urgent",
-                "Visit a local clinic or hospital for immediate concerns"
+                "Vui lòng thử lại sau vài phút",
+                "Nếu khẩn cấp, hãy liên hệ bác sĩ hoặc cơ sở y tế gần nhất",
+                "Đến phòng khám hoặc bệnh viện nếu triệu chứng nặng hơn"
             ]
         )
 
     except Exception as e:
         logger.error(f"[PatientGraph] Reasoning failed: {e}")
         response_en = create_idk_response(
-            reason=f"An error occurred while processing your question",
+            reason="Đã xảy ra lỗi khi xử lý câu hỏi của bạn",
             original_query=state['query_en'],
-            language="en",
+            language="vi",
             suggestions=[
-                "Please rephrase your question",
-                "Provide more specific details about your symptoms",
-                "Contact your healthcare provider if symptoms persist"
+                "Vui lòng diễn đạt lại câu hỏi",
+                "Mô tả cụ thể hơn về triệu chứng của bạn",
+                "Liên hệ bác sĩ nếu triệu chứng kéo dài"
             ]
         )
+
+    # Insert line break after Vietnamese greeting (e.g. "Chào chị Trần Thị Bình,")
+    response_en = re.sub(
+        r'^(Chào\s+(?:chị|anh|bạn|em|cô|chú|bác)\s+[^,\n]+,)\s*',
+        r'\1\n\n',
+        response_en,
+        count=1,
+        flags=re.IGNORECASE
+    )
+
+    # Apply paragraph breaks for readability (safety net for dense LLM output)
+    response_en = _add_paragraph_breaks(response_en)
+    logger.info("[PatientGraph] reasoning: Applied paragraph formatting to response")
 
     return {
         "reasoning_en": response_en,
@@ -383,7 +559,7 @@ async def format_patient_output_node(state: PatientChatState) -> dict:
     """Node: Format output."""
     formatted = format_response(
         response_text=state["reasoning_en"],
-        language="en",
+        language="vi",
         confidence=0.9 if not state["escalation_needed"] else 1.0
     )
     
@@ -417,6 +593,20 @@ def route_triage(state: PatientChatState) -> Literal["escalation_handler", "pati
     return "patient_reasoning"
 
 
+def route_after_patient_translation(state: PatientChatState) -> Literal["verify_input", "format_output"]:
+    """Route after translation; short-circuit out-of-scope requests."""
+    if state.get("scope_guard_blocked"):
+        return "format_output"
+    return "verify_input"
+
+
+def route_after_patient_verification(state: PatientChatState) -> Literal["get_history", "format_output"]:
+    """Route after verification; short-circuit out-of-scope requests."""
+    if state.get("scope_guard_blocked"):
+        return "format_output"
+    return "get_history"
+
+
 # ============================================================================
 # GRAPH BUILDER
 # ============================================================================
@@ -446,8 +636,16 @@ def build_patient_graph():
 
     # Define edges
     builder.add_edge(START, "translate_input")
-    builder.add_edge("translate_input", "verify_input")
-    builder.add_edge("verify_input", "get_history")
+    builder.add_conditional_edges(
+        "translate_input",
+        route_after_patient_translation,
+        ["verify_input", "format_output"]
+    )
+    builder.add_conditional_edges(
+        "verify_input",
+        route_after_patient_verification,
+        ["get_history", "format_output"]
+    )
     builder.add_edge("get_history", "symptom_triage")
 
     # Conditional routing based on triage
@@ -528,6 +726,7 @@ async def process_patient_chat_graph(
 
                     # Yield progress update with Vietnamese messages
                     stage_messages = {
+                        "scope_blocked": "Chỉ hỗ trợ câu hỏi sức khỏe và y tế",
                         "translated_input": "Đã hiểu câu hỏi của bạn",
                         "verified_input": "Đang phân tích nội dung",
                         "retrieved_history": "Đã xem xét hồ sơ y tế",

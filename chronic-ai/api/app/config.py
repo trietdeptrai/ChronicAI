@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # Verification model for input validation + safety checks.
     # In Vertex endpoint mode this typically points to the same deployed endpoint model.
-    verification_model: str = "gemma:2b-instruct"
+    verification_model: str = "alibayram/medgemma:4b"
     doctor_reasoning_max_tokens: int = 900
     verification_max_tokens: int = 256
 

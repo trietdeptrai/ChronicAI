@@ -82,6 +82,8 @@ class DoctorOrchestratorState(TypedDict):
     query_en: str  # Translated English query
     image_path: Optional[str]  # Path to uploaded image (if any)
     image_base64: Optional[str]  # Base64 encoded image (user-uploaded)
+    scope_guard_blocked: bool  # True when query is outside medical scope
+    scope_guard_reason: Optional[str]  # Reason code for out-of-scope block
     enable_hitl: bool  # Legacy global HITL toggle (backward compatibility)
     enable_llm_hitl: bool  # Enable LLM-based HITL (verify_input + safety review)
     enable_patient_confirmation_hitl: bool  # Enable non-LLM patient confirmation HITL
@@ -140,6 +142,8 @@ class PatientChatState(TypedDict):
     query_vi: str
     query_en: str
     image_path: Optional[str]
+    scope_guard_blocked: bool  # True when query is outside patient medical scope
+    scope_guard_reason: Optional[str]  # Reason code for out-of-scope block
     
     # === Patient Context ===
     patient_profile: dict
@@ -189,6 +193,8 @@ def create_initial_doctor_state(
         query_en="",
         image_path=image_path,
         image_base64=None,
+        scope_guard_blocked=False,
+        scope_guard_reason=None,
         enable_hitl=enable_hitl,
         enable_llm_hitl=resolved_enable_llm_hitl,
         enable_patient_confirmation_hitl=resolved_enable_patient_confirmation_hitl,

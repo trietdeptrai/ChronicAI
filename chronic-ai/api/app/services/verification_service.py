@@ -1,7 +1,7 @@
 """
 Input Verification Service for ChronicAI.
 
-Uses Gemma 2B to verify query clarity, detect ambiguities,
+Uses the configured verification model to verify query clarity, detect ambiguities,
 and assess whether human clarification is needed before processing.
 
 Enhanced with:
@@ -14,6 +14,7 @@ import logging
 from typing import List, Optional, Tuple
 
 from app.services.llm_client import llm_client
+from app.services.json_utils import strip_markdown_code_fence
 from app.services.graph_state import VerificationResult
 from app.services.resilience import (
     retry_async,
@@ -254,10 +255,7 @@ def _parse_verification_response(response: str) -> VerificationResult:
     """Parse verification LLM response into VerificationResult."""
     try:
         # Clean up response
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1]
-            clean = clean.rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         
         data = json.loads(clean)
         
@@ -283,10 +281,7 @@ def _parse_verification_response(response: str) -> VerificationResult:
 def _parse_safety_response(response: str) -> Tuple[float, List[str], bool]:
     """Parse safety check LLM response."""
     try:
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1]
-            clean = clean.rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         
         data = json.loads(clean)
         
@@ -312,10 +307,7 @@ async def _llm_extract_names(query_en: str) -> List[str]:
             num_predict=128
         )
         
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1]
-            clean = clean.rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         
         names = json.loads(clean)
         return names if isinstance(names, list) else []

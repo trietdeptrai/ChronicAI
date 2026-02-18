@@ -604,7 +604,6 @@ async def check_system_health() -> dict:
             "status": "unhealthy",
             "provider": provider,
             "llm": False,
-            "ollama": provider == "ollama",
             "message": f"{provider} provider is not reachable",
         }
     
@@ -623,7 +622,6 @@ async def check_system_health() -> dict:
         "status": "healthy" if all_available else "degraded",
         "provider": provider,
         "llm": True,
-        "ollama": provider == "ollama",
         "models": models_status,
         "message": "All systems operational" if all_available else "Some models missing"
     }

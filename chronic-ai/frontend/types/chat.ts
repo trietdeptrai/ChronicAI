@@ -39,6 +39,7 @@ export interface ChatStreamUpdate {
         | "translated_input"
         | "verifying_input"
         | "verified_input"
+        | "scope_blocked"
         | "retrieving_context"
         | "retrieved_context"
         | "retrieved_history"
@@ -96,6 +97,15 @@ export interface DoctorChatRequest {
     // No patient_id required - AI extracts from message
 }
 
+export interface PatientConfirmationDetails {
+    matches?: Array<{ id: string; name: string; match_confidence?: number }>
+    ambiguous?: Array<{ name: string; score: number; search_term: string; fuzzy_match?: boolean }>
+    search_terms?: string[]
+    require_single_selection?: boolean
+    selection_reason?: string
+    validation_error?: string
+}
+
 export interface PatientMention {
     id: string
     name: string
@@ -147,7 +157,7 @@ export interface DoctorChatStreamUpdate {
     hitl_request?: {
         type: "clarification_needed" | "approval_required" | "patient_confirmation" | "safety_review"
         message: string
-        details: Record<string, unknown>
+        details: Record<string, unknown> | PatientConfirmationDetails
         options?: string[]
     }
     thread_id?: string

@@ -19,9 +19,10 @@ import time
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import AsyncGenerator, Literal, Optional, List, Tuple
+from typing import Any, AsyncGenerator, Literal, Optional, List, Tuple
 from uuid import UUID
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt, Command
@@ -35,6 +36,7 @@ from app.services.graph_state import (
     HITLRequest,
 )
 from app.services.llm_client import llm_client
+from app.services.json_utils import strip_markdown_code_fence
 from app.services.rag import (
     get_patient_context,
     get_patient_record_images_base64,
@@ -194,19 +196,27 @@ def find_best_patient_matches(
         List of (patient, score) tuples sorted by score descending
     """
     matches = []
-    exact_match = None
+    exact_matches = []
 
     search_normalized = normalize_vietnamese_name(search_name)
     search_given = normalize_vietnamese_name(extract_vietnamese_given_name(search_name))
+    # Detect if search is a single-word name (given name only, e.g. "Lan")
+    is_given_name_only = len(search_name.strip().split()) == 1
 
     for patient in patients:
         full_name = patient.get("full_name", "")
         patient_normalized = normalize_vietnamese_name(full_name)
         patient_given = normalize_vietnamese_name(extract_vietnamese_given_name(full_name))
 
-        # Check for exact match first (prioritize)
+        # Full-name exact match
         if search_normalized == patient_normalized:
-            exact_match = (patient, 1.0)
+            exact_matches.append((patient, 1.0))
+            continue
+
+        # Given-name-only search: treat matching given name as high-confidence
+        # This ensures searching "Lan" finds BOTH "Nguyễn Thị Lan" and "Phạm Mai Lan"
+        if is_given_name_only and search_normalized == patient_given:
+            exact_matches.append((patient, 0.95))
             continue
 
         score = fuzzy_match_score(search_name, full_name)
@@ -215,9 +225,14 @@ def find_best_patient_matches(
         if score >= min_score:
             matches.append((patient, score))
 
-    # If exact match found, return only that
-    if exact_match:
-        return [exact_match]
+    # If we have exact matches
+    if exact_matches:
+        # Single unique full-name match → return just that one
+        if len(exact_matches) == 1 and not is_given_name_only:
+            return exact_matches
+        # Multiple exact matches or given-name-only → return all for disambiguation
+        exact_matches.sort(key=lambda x: x[1], reverse=True)
+        return exact_matches
 
     # Sort by score descending
     matches.sort(key=lambda x: x[1], reverse=True)
@@ -275,6 +290,74 @@ _IMAGE_RELEVANCE_KEYWORDS: tuple[str, ...] = (
     "phim x quang",
 )
 
+_NON_MEDICAL_REQUEST_KEYWORDS: tuple[str, ...] = (
+    "bai tho",
+    "lam tho",
+    "viet tho",
+    "poem",
+    "poetry",
+    "lyrics",
+    "bai hat",
+    "viet rap",
+    "joke",
+    "funny",
+    "truyen",
+    "ke chuyen",
+    "story",
+    "essay",
+    "viet email",
+    "email",
+    "viet code",
+    "lap trinh",
+    "thoi tiet",
+    "weather",
+    "gia co phieu",
+    "stock",
+    "bong da",
+    "football",
+)
+
+_MEDICAL_SCOPE_KEYWORDS: tuple[str, ...] = (
+    "y khoa",
+    "y hoc",
+    "lam sang",
+    "bac si",
+    "benh nhan",
+    "benh an",
+    "ho so",
+    "tinh trang",
+    "trieu chung",
+    "chan doan",
+    "dieu tri",
+    "dieu duong",
+    "thuoc",
+    "lieu",
+    "xet nghiem",
+    "chi so",
+    "duong huyet",
+    "huyet ap",
+    "nhip tim",
+    "spo2",
+    "cap cuu",
+    "kham",
+    "tai kham",
+    "medical",
+    "clinical",
+    "patient",
+    "symptom",
+    "diagnosis",
+    "treatment",
+    "medication",
+    "dosage",
+    "lab",
+)
+
+_MEDICAL_SCOPE_REFUSAL_VI = (
+    "Tôi chỉ hỗ trợ câu hỏi y khoa liên quan đến bệnh nhân, chẩn đoán, điều trị, "
+    "hoặc phân tích hình ảnh y tế.\n\n"
+    "Vui lòng đặt lại câu hỏi theo ngữ cảnh lâm sàng."
+)
+
 
 def _normalize_query_text(text: str) -> str:
     """
@@ -296,9 +379,36 @@ def _query_contains_keyword(normalized_query: str, keyword: str) -> bool:
         return False
     if " " in keyword:
         return keyword in normalized_query
-    if len(keyword) <= 3:
-        return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
-    return keyword in normalized_query
+    return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+
+
+def _is_medical_scope_query(query: str, has_image: bool = False) -> Tuple[bool, str]:
+    """
+    Determine whether the doctor query is within medical scope.
+
+    Hard-blocks clearly non-medical/creative requests (for example poems)
+    and only allows queries with clinical intent.
+    """
+    normalized_query = _normalize_query_text(query)
+    if not normalized_query:
+        return False, "empty_query"
+
+    # Explicit non-medical intent always wins, even if the query mentions medicine.
+    if any(_query_contains_keyword(normalized_query, kw) for kw in _NON_MEDICAL_REQUEST_KEYWORDS):
+        return False, "non_medical_intent"
+
+    has_medical_keyword = any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in (_MEDICAL_SCOPE_KEYWORDS + _IMAGE_RELEVANCE_KEYWORDS)
+    )
+    if has_medical_keyword:
+        return True, "medical_keyword_match"
+
+    # If image is attached and the request asks for analysis/assessment, allow it.
+    if has_image and re.search(r"\b(phan tich|danh gia|nhan xet|analyze|assess|review)\b", normalized_query):
+        return True, "image_with_analysis_intent"
+
+    return False, "missing_medical_context"
 
 
 def _should_include_record_images(state: DoctorOrchestratorState) -> Tuple[bool, str]:
@@ -339,6 +449,57 @@ def _patient_confirmation_hitl_enabled(state: DoctorOrchestratorState) -> bool:
     return bool(state.get("enable_patient_confirmation_hitl", state.get("enable_hitl", True)))
 
 
+def _interrupt_with_explicit_config(value: HITLRequest, config: Optional[RunnableConfig] = None) -> Any:
+    """
+    Trigger LangGraph interrupt using explicit node config when available.
+
+    Python 3.9 + sync nodes can execute in thread pools where contextvars are not
+    propagated reliably. Using explicit config avoids depending on get_config().
+    """
+    if not config:
+        return interrupt(value)
+
+    from langgraph._internal._constants import (
+        CONFIG_KEY_CHECKPOINT_NS,
+        CONFIG_KEY_SCRATCHPAD,
+        CONFIG_KEY_SEND,
+        RESUME,
+    )
+    from langgraph.errors import GraphInterrupt
+    from langgraph.types import Interrupt
+
+    conf = config.get("configurable", {})
+    scratchpad = conf.get(CONFIG_KEY_SCRATCHPAD)
+    sender = conf.get(CONFIG_KEY_SEND)
+    checkpoint_ns = conf.get(CONFIG_KEY_CHECKPOINT_NS)
+
+    # If config is incomplete, fall back to the default interrupt behavior.
+    if scratchpad is None or sender is None or checkpoint_ns is None:
+        return interrupt(value)
+
+    idx = scratchpad.interrupt_counter()
+
+    if scratchpad.resume and idx < len(scratchpad.resume):
+        sender([(RESUME, scratchpad.resume)])
+        return scratchpad.resume[idx]
+
+    null_resume = scratchpad.get_null_resume(True)
+    if null_resume is not None:
+        assert len(scratchpad.resume) == idx, (scratchpad.resume, idx)
+        scratchpad.resume.append(null_resume)
+        sender([(RESUME, scratchpad.resume)])
+        return null_resume
+
+    raise GraphInterrupt(
+        (
+            Interrupt.from_ns(
+                value=value,
+                ns=checkpoint_ns,
+            ),
+        )
+    )
+
+
 # ============================================================================
 # NODE FUNCTIONS
 # ============================================================================
@@ -361,9 +522,33 @@ async def translate_input_node(state: DoctorOrchestratorState) -> dict:
                 with open(path, "rb") as f:
                     image_base64 = base64.b64encode(f.read()).decode("utf-8")
 
+        in_scope, scope_reason = _is_medical_scope_query(
+            query_en,
+            has_image=bool(image_base64),
+        )
+        if not in_scope:
+            logger.info(f"[Graph] translate_input: blocked by scope guard ({scope_reason})")
+            return {
+                "query_en": query_en,
+                "image_base64": image_base64,
+                "scope_guard_blocked": True,
+                "scope_guard_reason": scope_reason,
+                "reasoning_en": _MEDICAL_SCOPE_REFUSAL_VI,
+                "current_stage": "scope_blocked",
+                "progress": 0.70,
+                "stage_messages": [create_stage_message(
+                    "scope_guard",
+                    "Chỉ hỗ trợ câu hỏi y khoa liên quan lâm sàng",
+                    0.70,
+                    scope_reason=scope_reason,
+                )]
+            }
+
         return {
             "query_en": query_en,
             "image_base64": image_base64,
+            "scope_guard_blocked": False,
+            "scope_guard_reason": None,
             "current_stage": "translated_input",
             "progress": 0.15,
             "stage_messages": [create_stage_message(
@@ -377,11 +562,11 @@ async def translate_input_node(state: DoctorOrchestratorState) -> dict:
         logger.info(f"[Graph] translate_input: Took {elapsed_ms:.1f} ms")
 
 
-async def verify_input_node(state: DoctorOrchestratorState) -> dict:
+async def verify_input_node(state: DoctorOrchestratorState, config: Optional[RunnableConfig] = None) -> dict:
     """
     Node: Verify input query for clarity and appropriateness.
     
-    Uses Gemma 2B for lightweight verification.
+    Uses the configured verification model for lightweight verification.
     May trigger HITL interrupt if clarification needed.
     """
     logger.info("[Graph] verify_input: Checking query clarity...")
@@ -417,7 +602,7 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
             )
 
             # Interrupt for human input
-            clarified = interrupt(hitl_request)
+            clarified = _interrupt_with_explicit_config(hitl_request, config)
 
             if clarified:
                 # Human provided clarification
@@ -425,6 +610,30 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
                 result["human_approved_input"] = True
                 if result["query_vi"] != state["query_vi"]:
                     result["query_en"] = result["query_vi"]
+
+        final_query = result.get("query_en", state.get("query_en", ""))
+        in_scope, scope_reason = _is_medical_scope_query(
+            final_query,
+            has_image=bool(state.get("image_base64")),
+        )
+        if not in_scope:
+            logger.info(f"[Graph] verify_input: blocked by scope guard ({scope_reason})")
+            result.update({
+                "scope_guard_blocked": True,
+                "scope_guard_reason": scope_reason,
+                "reasoning_en": _MEDICAL_SCOPE_REFUSAL_VI,
+                "current_stage": "scope_blocked",
+                "progress": 0.70,
+                "stage_messages": [create_stage_message(
+                    "scope_guard",
+                    "Chỉ hỗ trợ câu hỏi y khoa liên quan lâm sàng",
+                    0.70,
+                    scope_reason=scope_reason,
+                )]
+            })
+        else:
+            result["scope_guard_blocked"] = False
+            result["scope_guard_reason"] = None
 
         return result
     finally:
@@ -475,10 +684,7 @@ Examples:
         )
 
         # Parse response
-        clean = response.strip()
-        if clean.startswith("```"):
-            clean = clean.split("\n", 1)[1]
-            clean = clean.rsplit("```", 1)[0]
+        clean = strip_markdown_code_fence(response)
         names = json.loads(clean)
         mentioned_names = names if isinstance(names, list) else []
 
@@ -523,7 +729,7 @@ Examples:
     return result
 
 
-async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
+def resolve_patients_node(state: DoctorOrchestratorState, config: Optional[RunnableConfig] = None) -> dict:
     """
     Node: Resolve patient names to database records.
 
@@ -548,11 +754,11 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
         logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
         return result
 
-    try:
-        supabase = get_supabase()
-        matches: List[PatientMatch] = []
-        ambiguous_matches: List[dict] = []
+    supabase = get_supabase()
+    matches: List[PatientMatch] = []
+    ambiguous_matches: List[dict] = []
 
+    try:
         for name in state["mentioned_patient_names"]:
             # First, try exact and partial matches via database
             result = supabase.table("patients").select(
@@ -607,70 +813,6 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
                             "search_term": name,
                             "fuzzy_match": True
                         })
-
-        # Deduplicate, keeping highest confidence
-        unique: dict[str, PatientMatch] = {}
-        for m in matches:
-            if m["id"] not in unique or m["match_confidence"] > unique[m["id"]]["match_confidence"]:
-                unique[m["id"]] = m
-
-        matched_patients = list(unique.values())
-
-        # Log patient resolution for audit
-        safety_audit.log_decision(
-            event_type="patient_resolution",
-            query=state["query_en"],
-            decision=f"resolved_{len(matched_patients)}_patients",
-            confidence=min([m["match_confidence"] for m in matched_patients]) if matched_patients else 0.0,
-            risk_factors=[f"ambiguous:{a['name']}" for a in ambiguous_matches],
-            human_review_required=bool(ambiguous_matches),
-        )
-
-        # HITL: Confirm if ambiguous, multiple matches, or any low-confidence match
-        # More aggressive triggering to prevent wrong patient selection
-        has_low_confidence = any(m["match_confidence"] < 0.95 for m in matched_patients)
-        has_multiple_matches = len(matched_patients) > 1
-        needs_confirmation = ambiguous_matches or has_low_confidence or has_multiple_matches
-
-        if _patient_confirmation_hitl_enabled(state) and needs_confirmation:
-            logger.info(f"[Graph] resolve_patients: Requesting patient confirmation "
-                       f"(ambiguous={bool(ambiguous_matches)}, low_conf={has_low_confidence}, multiple={has_multiple_matches})")
-
-            # Provide helpful context for confirmation
-            confirmation_details = {
-                "matches": matched_patients,
-                "ambiguous": ambiguous_matches,
-                "search_terms": state["mentioned_patient_names"]
-            }
-
-            confirmed = interrupt(HITLRequest(
-                type="patient_confirmation",
-                message="Vui lòng xác nhận bệnh nhân được đề cập. Một số tên có thể không chính xác hoàn toàn.",
-                details=confirmation_details,
-                options=[f"{m['name']} (độ tin cậy: {m['match_confidence']:.0%})" for m in matched_patients]
-            ))
-
-            if confirmed:
-                confirmed_ids = confirmed.get("patient_ids", [m["id"] for m in matched_patients])
-                matched_patients = [m for m in matched_patients if m["id"] in confirmed_ids]
-
-        logger.info(f"[Graph] resolve_patients: Resolved {len(matched_patients)} patients")
-
-        result = {
-            "matched_patients": matched_patients,
-            "current_stage": "resolved_patients",
-            "progress": 0.45,
-            "stage_messages": [create_stage_message(
-                "resolving_patients",
-                f"Tìm thấy {len(matched_patients)} hồ sơ bệnh nhân",
-                0.45,
-                mentioned_patients=[{"id": m["id"], "name": m["name"], "confidence": m["match_confidence"]} for m in matched_patients]
-            )]
-        }
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
-        return result
-
     except Exception as e:
         logger.error(f"[Graph] resolve_patients: Database error: {e}")
         result = {
@@ -687,6 +829,124 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
         return result
+
+    # Deduplicate, keeping highest confidence
+    unique: dict[str, PatientMatch] = {}
+    for m in matches:
+        if m["id"] not in unique or m["match_confidence"] > unique[m["id"]]["match_confidence"]:
+            unique[m["id"]] = m
+
+    matched_patients = list(unique.values())
+
+    # Log patient resolution for audit
+    safety_audit.log_decision(
+        event_type="patient_resolution",
+        query=state["query_en"],
+        decision=f"resolved_{len(matched_patients)}_patients",
+        confidence=min([m["match_confidence"] for m in matched_patients]) if matched_patients else 0.0,
+        risk_factors=[f"ambiguous:{a['name']}" for a in ambiguous_matches],
+        human_review_required=bool(ambiguous_matches),
+    )
+
+    # HITL: Confirm if ambiguous, multiple matches, or any low-confidence match
+    # More aggressive triggering to prevent wrong patient selection
+    has_low_confidence = any(m["match_confidence"] < 0.95 for m in matched_patients)
+    has_multiple_matches = len(matched_patients) > 1
+    needs_confirmation = ambiguous_matches or has_low_confidence or has_multiple_matches
+    require_single_selection = has_multiple_matches and len(state["mentioned_patient_names"]) == 1
+    selection_reason = (
+        "Tên bệnh nhân đang mơ hồ và khớp nhiều hồ sơ. Vui lòng chọn đúng 1 bệnh nhân trước khi tiếp tục."
+        if require_single_selection else ""
+    )
+
+    if _patient_confirmation_hitl_enabled(state) and needs_confirmation:
+        logger.info(
+            "[Graph] resolve_patients: Requesting patient confirmation "
+            "(ambiguous=%s, low_conf=%s, multiple=%s, require_single=%s)",
+            bool(ambiguous_matches),
+            has_low_confidence,
+            has_multiple_matches,
+            require_single_selection,
+        )
+
+        allowed_ids = {m["id"] for m in matched_patients}
+        options = [f"{m['name']} (độ tin cậy: {m['match_confidence']:.0%})" for m in matched_patients]
+        base_details = {
+            "matches": matched_patients,
+            "ambiguous": ambiguous_matches,
+            "search_terms": state["mentioned_patient_names"],
+            "require_single_selection": require_single_selection,
+            "selection_reason": selection_reason,
+        }
+        confirmation_message = (
+            selection_reason
+            if selection_reason else
+            "Vui lòng xác nhận bệnh nhân được đề cập. Một số tên có thể không chính xác hoàn toàn."
+        )
+        validation_error: Optional[str] = None
+
+        while True:
+            details = dict(base_details)
+            if validation_error:
+                details["validation_error"] = validation_error
+
+            confirmed = _interrupt_with_explicit_config(HITLRequest(
+                type="patient_confirmation",
+                message=confirmation_message if not validation_error else validation_error,
+                details=details,
+                options=options
+            ), config)
+
+            selected_ids: List[str] = []
+            if isinstance(confirmed, dict):
+                confirmed_ids = confirmed.get("patient_ids")
+                if isinstance(confirmed_ids, list):
+                    selected_ids = [str(pid) for pid in confirmed_ids if str(pid) in allowed_ids]
+
+            if require_single_selection:
+                if len(selected_ids) != 1:
+                    validation_error = "Vui lòng chọn chính xác 1 bệnh nhân để tiếp tục."
+                    logger.info(
+                        "[Graph] resolve_patients: Invalid single selection, selected_ids=%s",
+                        selected_ids,
+                    )
+                    continue
+                matched_patients = [m for m in matched_patients if m["id"] == selected_ids[0]]
+                logger.info(
+                    "[Graph] resolve_patients: Single patient confirmed id=%s",
+                    selected_ids[0],
+                )
+                break
+
+            if selected_ids:
+                matched_patients = [m for m in matched_patients if m["id"] in selected_ids]
+                logger.info(
+                    "[Graph] resolve_patients: Multi-patient confirmation selected_ids=%s",
+                    selected_ids,
+                )
+            else:
+                logger.info(
+                    "[Graph] resolve_patients: No explicit patient selection; keeping %d matched patients",
+                    len(matched_patients),
+                )
+            break
+
+    logger.info(f"[Graph] resolve_patients: Resolved {len(matched_patients)} patients")
+
+    result = {
+        "matched_patients": matched_patients,
+        "current_stage": "resolved_patients",
+        "progress": 0.45,
+        "stage_messages": [create_stage_message(
+            "resolving_patients",
+            f"Tìm thấy {len(matched_patients)} hồ sơ bệnh nhân",
+            0.45,
+            mentioned_patients=[{"id": m["id"], "name": m["name"], "confidence": m["match_confidence"]} for m in matched_patients]
+        )]
+    }
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    logger.info(f"[Graph] resolve_patients: Took {elapsed_ms:.1f} ms")
+    return result
 
 
 async def get_context_node(state: DoctorOrchestratorState) -> dict:
@@ -788,16 +1048,73 @@ def _add_paragraph_breaks(text: str) -> str:
     # If the text already has reasonable formatting, leave it alone
     if text.count("\n\n") >= 3:
         return text
+    section_keywords = r"(?:Đánh giá|Phân tích|Đề xuất|Cảnh báo|Lưu ý|Kết luận|Theo dõi|Khuyến nghị)"
+
+    # Fix missing space after sentence-ending punctuation.
+    # Keep single-letter abbreviation chains intact (e.g., "H.A.T.T", "U.S.A.").
+    # Example: "dùng.Chị" -> "dùng. Chị", "Amlodipine.Metformin" -> "Amlodipine. Metformin"
+    text = re.sub(
+        r'(?<!\b[A-ZÀ-ỴĐ])([.!?])(\*\*[A-ZÀ-ỴĐ]|\*[A-ZÀ-ỴĐ]|[A-ZÀ-ỴĐ])',
+        r'\1 \2',
+        text
+    )
+
+    # Normalize "Phân tích" section separator:
+    # "Phân tích-..." or "Phân tích:..." -> "Phân tích : ..."
+    text = re.sub(
+        r'(?:(?<=^)|(?<=[\n.!?]))\s*(Phân tích)\s*(?:[:：\-–—])\s*',
+        r'\1 : ',
+        text
+    )
+
+    # Fix bare Vietnamese section keywords missing ": " separator.
+    # e.g., "Đánh giáBệnh nhân" → "Đánh giá: Bệnh nhân"
+    # e.g., "Phân tích*Tăng huyết áp" → "Phân tích: Tăng huyết áp"
+    # e.g., "Đề xuất1. Điều chỉnh thuốc" → "Đề xuất: 1. Điều chỉnh thuốc"
+    text = re.sub(
+        rf'(?:(?<=^)|(?<=[\n.!?]))\s*({section_keywords})'
+        r'(?![\s:：\-])'
+        r'(?:\*{1,2}\s*)?'
+        r'([A-ZÀ-Ỵa-zà-ỵ0-9])',
+        r'\1: \2',
+        text
+    )
+
+    # Keep "Phân tích : ..." style after generic normalization above.
+    text = re.sub(
+        r'(?:(?<=^)|(?<=[\n.!?]))\s*Phân tích:\s*',
+        'Phân tích : ',
+        text
+    )
+
 
     # ---- Step 1: Normalize inline markdown and list markers ----
     # Handle inline markdown headers: "...ổn định.## Phân tích" → split before ##
     text = re.sub(r'(?<!\n)(#{1,4}\s)', r'\n\n\1', text)
+    # Ensure section labels start on a new paragraph.
+    text = re.sub(
+        rf'([.!?])\s*((?:{section_keywords})\s*:)',
+        r'\1\n\n\2',
+        text
+    )
     # Handle inline dash lists: "...huyết áp.- Điều trị:" → split before dash
     text = re.sub(r'([.!?])\s*-\s+', r'\1\n\n- ', text)
     # Handle "...thương.•Suy hô hấp" → split before bullet
     text = re.sub(r'([.!?])\s*([•●▪]\s*)', r'\1\n\n\2', text)
-    # Handle "...thương.1. Suy hô hấp" → split before numbered list
-    text = re.sub(r'([.!?])\s*(\d+[.)]\s)', r'\1\n\n\2', text)
+    # Handle malformed "bold heading + bullet star" pattern.
+    # Example: "**...:** *Tiếp tục..." or "**...:***Tiếp tục..." -> "**...:**\n- Tiếp tục..."
+    text = re.sub(
+        r'(\*\*[^*\n]+:\*\*)\s*\*+(?=[A-ZÀ-Ỵa-zà-ỵ0-9])',
+        r'\1\n- ',
+        text
+    )
+    # Handle malformed "*" bullets often emitted inline by the model.
+    # Example: "...type 2.*Cân nhắc..." -> "...type 2.\n- Cân nhắc..."
+    text = re.sub(r'([:;.!?\n])\s*\*(?=[A-ZÀ-Ỵa-zà-ỵ0-9])', r'\1\n- ', text)
+    # Handle "...thương:1. Suy hô hấp" or "...thương.1. Suy hô hấp"
+    text = re.sub(r'([:：.!?])\s*(\d+[.)]\s)', r'\1\n\n\2', text)
+    # Ensure distinct numbered items are separated by blank lines.
+    text = re.sub(r'(?<!\n)\s+(\d+[.)]\s+\*\*)', r'\n\n\1', text)
 
     # ---- Step 2: Split into lines (preserve any existing breaks) ----
     lines = text.split("\n")
@@ -896,7 +1213,9 @@ def _build_system_prompt(query_type: QueryType) -> str:
 3. KHÔNG sử dụng placeholder như [Insert...], [TODO], [N/A]
 4. Nếu thiếu thông tin quan trọng, nói rõ "Không đủ dữ liệu"
 5. Nếu có hình ảnh y tế, phân tích kỹ và mô tả những gì quan sát được
-6. Trả lời hoàn toàn bằng tiếng Việt"""
+6. TỪ CHỐI mọi yêu cầu ngoài y khoa (ví dụ: làm thơ, kể chuyện, viết code, giải trí)
+7. Khi từ chối ngoài phạm vi, trả lời ngắn gọn và chuyển hướng về câu hỏi lâm sàng
+8. Trả lời hoàn toàn bằng tiếng Việt"""
 
     if query_type == QueryType.GENERAL:
         return f"""You are a medical AI assistant supporting doctors.
@@ -932,6 +1251,12 @@ Hành động được đề xuất dựa trên bằng chứng
 
 ## Cảnh báo
 Các vấn đề cần chú ý ngay (nếu có)
+
+YÊU CẦU ĐỊNH DẠNG (BẮT BUỘC):
+- Viết tiêu đề rõ ràng, đúng dấu: "Đánh giá:", "Phân tích :", "Đề xuất:", "Cảnh báo:" (KHÔNG dùng "Phân tích-")
+- Nếu có mục "1.", "2." thì mỗi mục phải nằm trên dòng riêng và cách nhau 1 dòng trống
+- Nếu có nhiều ý nhỏ, dùng markdown bullet chuẩn: "- nội dung" (không dùng "*Nội dung" dính liền)
+- Mỗi đoạn tối đa 2-3 câu, không viết thành một khối văn bản dài
 
 {safety_guidelines}"""
 
@@ -1086,7 +1411,7 @@ async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
     return result
 
 
-async def safety_check_node(state: DoctorOrchestratorState) -> dict:
+async def safety_check_node(state: DoctorOrchestratorState, config: Optional[RunnableConfig] = None) -> dict:
     """
     Node: Check response safety.
 
@@ -1144,7 +1469,7 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
         for factor in risk_factors[:3]:  # Show top 3 risks
             review_message += f"• {factor}\n"
 
-        approved = interrupt(HITLRequest(
+        approved = _interrupt_with_explicit_config(HITLRequest(
             type="approval_required",
             message=review_message,
             details={
@@ -1154,7 +1479,7 @@ async def safety_check_node(state: DoctorOrchestratorState) -> dict:
                 "query": state["query_vi"]
             },
             options=["Phê duyệt (Approve)", "Từ chối (Reject)", "Chỉnh sửa (Edit)"]
-        ))
+        ), config)
 
         if approved:
             action = approved.get("action", "approve").lower()
@@ -1257,22 +1582,30 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
 # ROUTING FUNCTIONS
 # ============================================================================
 
-def route_after_translation(state: DoctorOrchestratorState) -> Literal["verify_input", "extract_patients"]:
+def route_after_translation(
+    state: DoctorOrchestratorState
+) -> Literal["verify_input", "extract_patients", "format_output"]:
     """
     Route after translation.
 
     Fast-path optimization:
     - When LLM-HITL is disabled, skip expensive verification call.
     """
+    if state.get("scope_guard_blocked"):
+        return "format_output"
     if not _llm_hitl_enabled(state):
         return "extract_patients"
     return "verify_input"
 
 
-def route_after_verification(state: DoctorOrchestratorState) -> Literal["extract_patients", END]:
+def route_after_verification(
+    state: DoctorOrchestratorState
+) -> Literal["extract_patients", "format_output", END]:
     """Route after verification: continue or abort if invalid."""
     if state.get("errors"):
         return END
+    if state.get("scope_guard_blocked"):
+        return "format_output"
     return "extract_patients"
 
 
@@ -1328,12 +1661,12 @@ def build_doctor_graph():
     builder.add_conditional_edges(
         "translate_input",
         route_after_translation,
-        ["verify_input", "extract_patients"]
+        ["verify_input", "extract_patients", "format_output"]
     )
     builder.add_conditional_edges(
         "verify_input",
         route_after_verification,
-        ["extract_patients", END]
+        ["extract_patients", "format_output", END]
     )
     builder.add_edge("extract_patients", "resolve_patients")
     builder.add_edge("resolve_patients", "get_context")
