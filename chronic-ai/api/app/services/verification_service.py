@@ -1,7 +1,7 @@
 """
 Input Verification Service for ChronicAI.
 
-Uses Gemma 2B to verify query clarity, detect ambiguities,
+Uses the configured verification model to verify query clarity, detect ambiguities,
 and assess whether human clarification is needed before processing.
 
 Enhanced with:

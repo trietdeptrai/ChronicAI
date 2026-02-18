@@ -107,7 +107,7 @@ Competition Deliverables
 Frontend (Next.js) -> API (FastAPI) -> Supabase (Postgres + pgvector + Storage)
 Models:
 - MedGemma for reasoning (Ollama)
-- HAI-DEF model for verification/safety (Gemma 2B instruct)
+- HAI-DEF model for verification/safety (same deployed MedGemma endpoint)
 - VinAI Translate (Vi<->En)
 - Nomic embed text for embeddings (Ollama)
 

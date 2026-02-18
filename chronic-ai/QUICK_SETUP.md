@@ -33,7 +33,6 @@ ollama serve
 
 # In another terminal, pull the required models:
 ollama pull alibayram/medgemma:4b      # Medical reasoning (~3GB)
-ollama pull gemma:2b-instruct          # Verification (~1.5GB)
 ollama pull nomic-embed-text           # Embeddings (~280MB)
 ```
 

@@ -270,7 +270,7 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
     Features:
     - **Human-in-the-Loop (HITL)**: Pauses for human approval on ambiguous 
       queries or high-risk responses
-    - **Input Verification**: Uses Gemma 2B to validate query clarity
+    - **Input Verification**: Uses the configured verification model to validate query clarity
     - **Safety Checks**: Reviews responses for medical safety
     - **Structured Output**: Returns formatted sections (assessment, 
       recommendations, warnings)

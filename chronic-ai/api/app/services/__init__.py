@@ -7,7 +7,7 @@ Contains core business logic for ChronicAI:
 - ocr: PaddleOCR integration
 - doctor_graph: LangGraph-based doctor orchestration
 - patient_graph: LangGraph-based patient chat orchestration
-- verification_service: Input verification with Gemma 2B
+- verification_service: Input verification with the configured verification model
 - output_formatter: Structured response formatting
 - resilience: Retry logic, circuit breakers, and defensive responses (NEW)
 """

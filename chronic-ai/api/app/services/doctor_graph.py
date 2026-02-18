@@ -195,19 +195,27 @@ def find_best_patient_matches(
         List of (patient, score) tuples sorted by score descending
     """
     matches = []
-    exact_match = None
+    exact_matches = []
 
     search_normalized = normalize_vietnamese_name(search_name)
     search_given = normalize_vietnamese_name(extract_vietnamese_given_name(search_name))
+    # Detect if search is a single-word name (given name only, e.g. "Lan")
+    is_given_name_only = len(search_name.strip().split()) == 1
 
     for patient in patients:
         full_name = patient.get("full_name", "")
         patient_normalized = normalize_vietnamese_name(full_name)
         patient_given = normalize_vietnamese_name(extract_vietnamese_given_name(full_name))
 
-        # Check for exact match first (prioritize)
+        # Full-name exact match
         if search_normalized == patient_normalized:
-            exact_match = (patient, 1.0)
+            exact_matches.append((patient, 1.0))
+            continue
+
+        # Given-name-only search: treat matching given name as high-confidence
+        # This ensures searching "Lan" finds BOTH "Nguyễn Thị Lan" and "Phạm Mai Lan"
+        if is_given_name_only and search_normalized == patient_given:
+            exact_matches.append((patient, 0.95))
             continue
 
         score = fuzzy_match_score(search_name, full_name)
@@ -216,9 +224,14 @@ def find_best_patient_matches(
         if score >= min_score:
             matches.append((patient, score))
 
-    # If exact match found, return only that
-    if exact_match:
-        return [exact_match]
+    # If we have exact matches
+    if exact_matches:
+        # Single unique full-name match → return just that one
+        if len(exact_matches) == 1 and not is_given_name_only:
+            return exact_matches
+        # Multiple exact matches or given-name-only → return all for disambiguation
+        exact_matches.sort(key=lambda x: x[1], reverse=True)
+        return exact_matches
 
     # Sort by score descending
     matches.sort(key=lambda x: x[1], reverse=True)
@@ -382,7 +395,7 @@ async def verify_input_node(state: DoctorOrchestratorState) -> dict:
     """
     Node: Verify input query for clarity and appropriateness.
     
-    Uses Gemma 2B for lightweight verification.
+    Uses the configured verification model for lightweight verification.
     May trigger HITL interrupt if clarification needed.
     """
     logger.info("[Graph] verify_input: Checking query clarity...")
@@ -634,23 +647,30 @@ async def resolve_patients_node(state: DoctorOrchestratorState) -> dict:
             logger.info(f"[Graph] resolve_patients: Requesting patient confirmation "
                        f"(ambiguous={bool(ambiguous_matches)}, low_conf={has_low_confidence}, multiple={has_multiple_matches})")
 
-            # Provide helpful context for confirmation
-            confirmation_details = {
-                "matches": matched_patients,
-                "ambiguous": ambiguous_matches,
-                "search_terms": state["mentioned_patient_names"]
-            }
+            try:
+                # Provide helpful context for confirmation
+                confirmation_details = {
+                    "matches": matched_patients,
+                    "ambiguous": ambiguous_matches,
+                    "search_terms": state["mentioned_patient_names"]
+                }
 
-            confirmed = interrupt(HITLRequest(
-                type="patient_confirmation",
-                message="Vui lòng xác nhận bệnh nhân được đề cập. Một số tên có thể không chính xác hoàn toàn.",
-                details=confirmation_details,
-                options=[f"{m['name']} (độ tin cậy: {m['match_confidence']:.0%})" for m in matched_patients]
-            ))
+                confirmed = interrupt(HITLRequest(
+                    type="patient_confirmation",
+                    message="Vui lòng xác nhận bệnh nhân được đề cập. Một số tên có thể không chính xác hoàn toàn.",
+                    details=confirmation_details,
+                    options=[f"{m['name']} (độ tin cậy: {m['match_confidence']:.0%})" for m in matched_patients]
+                ))
 
-            if confirmed:
-                confirmed_ids = confirmed.get("patient_ids", [m["id"] for m in matched_patients])
-                matched_patients = [m for m in matched_patients if m["id"] in confirmed_ids]
+                if confirmed:
+                    confirmed_ids = confirmed.get("patient_ids", [m["id"] for m in matched_patients])
+                    matched_patients = [m for m in matched_patients if m["id"] in confirmed_ids]
+            except Exception as hitl_err:
+                logger.warning(
+                    f"[Graph] resolve_patients: HITL interrupt failed ({hitl_err}), "
+                    f"proceeding with best match (n={len(matched_patients)})"
+                )
+                # Keep matched_patients as-is — proceed with fuzzy results
 
         logger.info(f"[Graph] resolve_patients: Resolved {len(matched_patients)} patients")
 
@@ -792,6 +812,17 @@ def _add_paragraph_breaks(text: str) -> str:
     text = re.sub(
         r'(?<!\b[A-ZÀ-ỴĐ])([.!?])(\*\*[A-ZÀ-ỴĐ]|\*[A-ZÀ-ỴĐ]|[A-ZÀ-ỴĐ])',
         r'\1 \2',
+        text
+    )
+
+    # Fix bare Vietnamese section keywords missing ": " separator.
+    # e.g., "Đánh giáBệnh nhân" → "Đánh giá: Bệnh nhân"
+    # e.g., "Cảnh báoĐường huyết" → "Cảnh báo: Đường huyết"
+    text = re.sub(
+        r'((?:Đánh giá|Phân tích|Đề xuất|Cảnh báo|Lưu ý|Kết luận|Theo dõi|Khuyến nghị))'
+        r'(?![\s:：\-])'
+        r'([A-ZÀ-Ỵa-zà-ỵ])',
+        r'\1: \2',
         text
     )
 
