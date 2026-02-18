@@ -7,6 +7,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
     createPatient,
     deletePatient,
+    exportPatientMetadata,
+    exportPatientText,
+    exportPatientVitals,
+    importPatientMetadataPreview,
+    importPatientVitalsPreview,
+    startPatientTextImport,
+    getPatientTextImportStatus,
     getPatients,
     getPatientDetail,
     getPatientRecords,
@@ -28,9 +35,14 @@ import type {
     PatientUpdateInput,
     MedicalRecordsResponse,
     DashboardStats,
+    PatientTextImportResponse,
+    PatientTextImportStatusResponse,
+    PatientMetadataImportPreview,
+    PatientMetadataImportPreviewResponse,
     VitalSignsResponse,
     VitalSignCreateResponse,
     VitalSignInput,
+    VitalImportPreviewResponse,
 } from "@/types"
 
 interface UsePatientParams {
@@ -225,6 +237,104 @@ export function useDeletePatientRecord() {
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+        },
+    })
+}
+
+export function useExportPatientText() {
+    return useMutation({
+        mutationFn: ({
+            patientId,
+            format,
+            language,
+        }: {
+            patientId: string
+            format: "json" | "pdf"
+            language: "vi" | "en"
+        }) => exportPatientText(patientId, format, language),
+    })
+}
+
+export function useExportVitalSigns() {
+    return useMutation({
+        mutationFn: ({
+            patientId,
+            format,
+            language,
+        }: {
+            patientId: string
+            format: "json" | "pdf"
+            language: "vi" | "en"
+        }) => exportPatientVitals(patientId, format, language),
+    })
+}
+
+export function useImportVitalSignsPreview() {
+    return useMutation<VitalImportPreviewResponse, Error, { patientId: string; file: File }>({
+        mutationFn: ({ patientId, file }) => importPatientVitalsPreview(patientId, file),
+    })
+}
+
+export function useExportPatientMetadata() {
+    return useMutation({
+        mutationFn: ({
+            metadata,
+            format,
+            language,
+        }: {
+            metadata: PatientMetadataImportPreview
+            format: "json" | "pdf"
+            language: "vi" | "en"
+        }) => exportPatientMetadata(metadata, format, language),
+    })
+}
+
+export function useImportPatientMetadataPreview() {
+    return useMutation<PatientMetadataImportPreviewResponse, Error, { file: File }>({
+        mutationFn: ({ file }) => importPatientMetadataPreview(file),
+    })
+}
+
+export function useImportPatientText() {
+    const queryClient = useQueryClient()
+
+    return useMutation<
+        PatientTextImportResponse,
+        Error,
+        { patientId: string; file: File; onProgress?: (status: PatientTextImportStatusResponse) => void }
+    >({
+        mutationFn: async ({ patientId, file, onProgress }) => {
+            const started = await startPatientTextImport(patientId, file)
+            onProgress?.({
+                job_id: started.job_id,
+                patient_id: started.patient_id,
+                import_format: started.import_format,
+                status: "queued",
+                stage: started.stage,
+                progress: started.progress,
+            })
+
+            while (true) {
+                await new Promise((resolve) => setTimeout(resolve, 900))
+                const current = await getPatientTextImportStatus(patientId, started.job_id)
+                onProgress?.(current)
+
+                if (current.status === "completed") {
+                    if (!current.result) {
+                        throw new Error("Import completed without result payload.")
+                    }
+                    return current.result
+                }
+
+                if (current.status === "failed") {
+                    throw new Error(current.error || "Patient import failed.")
+                }
+            }
+        },
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "records"] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
         },
     })
 }

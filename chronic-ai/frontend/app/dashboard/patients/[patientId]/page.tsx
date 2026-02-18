@@ -3,9 +3,9 @@
  */
 "use client"
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useAuth } from "@/contexts"
+import { useAuth, useDashboardLanguage, type DashboardLanguage } from "@/contexts"
 import {
     PageHeader,
     LoadingOverlay,
@@ -42,12 +42,22 @@ import {
     usePatientRecords,
     usePatientVitals,
     useCreateVitalSign,
+    useExportVitalSigns,
+    useImportVitalSignsPreview,
+    useImportPatientText,
+    useExportPatientText,
     useUploadPatientPhoto,
     useUploadPatientRecordImage,
     useUpdatePatientRecord,
     useDeletePatientRecord,
 } from "@/lib/hooks"
-import type { MedicalRecord, MedicalRecordAIAnalysis, VitalSign, VitalSignInput } from "@/types"
+import type {
+    MedicalRecord,
+    MedicalRecordAIAnalysis,
+    PatientTextImportStatusResponse,
+    VitalSign,
+    VitalSignInput,
+} from "@/types"
 import { Activity, ArrowLeft, FileText, Upload } from "lucide-react"
 import { toast } from "sonner"
 
@@ -56,6 +66,481 @@ type ImagingRecordType =
     | "ecg"
     | "ct"
     | "mri"
+
+type TextExportFormat = "json" | "pdf"
+
+type ExportUiText = {
+    formatAriaLabel: string
+    filterAriaLabel: string
+    exportTextButton: string
+    exportFilesButton: string
+    importTextButton: string
+    exporting: string
+    importing: string
+    exportHint: string
+    missingPatientDataId: string
+    missingPatientFilesId: string
+    missingPatientImportId: string
+    invalidImportFileType: string
+    exportTextSuccessJson: string
+    exportTextSuccessPdf: string
+    exportFilesSuccess: string
+    importSuccess: string
+    exportTextFailed: string
+    exportFilesFailed: string
+    importFailed: string
+}
+
+type PatientDetailUiText = {
+    locale: string
+    backButton: string
+    pageTitle: string
+    loadingPatient: string
+    loadPatientErrorTitle: string
+    loadPatientErrorHint: string
+    photoCardTitle: string
+    patientPhotoUploadLabel: string
+    photoUploadFailed: string
+    photoUpdateSuccess: string
+    photoUploadButton: string
+    uploadingLabel: string
+    savingLabel: string
+    updatingLabel: string
+    deletingLabel: string
+    vitalsCardTitle: string
+    vitalRecordedAtLabel: string
+    vitalSourceLabel: string
+    vitalBpSystolicLabel: string
+    vitalBpDiastolicLabel: string
+    vitalHeartRateLabel: string
+    vitalSpo2Label: string
+    vitalTemperatureLabel: string
+    vitalWeightLabel: string
+    vitalBloodGlucoseLabel: string
+    vitalGlucoseTimingLabel: string
+    vitalNotesLabel: string
+    vitalNotesPlaceholder: string
+    vitalSaveFailed: string
+    vitalSaveButton: string
+    vitalSaveSuccess: string
+    recentHistoryLabel: string
+    recordCountSuffix: string
+    vitalsLoading: string
+    vitalsLoadFailed: string
+    vitalsEmpty: string
+    medicalRecordsTitle: string
+    medicalRecordsSubtitle: string
+    recordsLoading: string
+    recordsLoadFailed: string
+    recordsEmpty: string
+    recordVerifiedBadge: string
+    editButton: string
+    deleteButton: string
+    downloadPdf: string
+    noAttachment: string
+    imagingCardTitle: string
+    imagingTypeLabel: string
+    recordTitleLabel: string
+    recordTitlePlaceholder: string
+    recordFileLabel: string
+    recordUploadFailed: string
+    recordUploadButton: string
+    postUploadDialogTitle: string
+    postUploadDialogHint: string
+    postUploadNoAnalysis: string
+    doctorCommentPlaceholder: string
+    skipButton: string
+    saveCommentButton: string
+    editDialogTitle: string
+    editRecordTitleLabel: string
+    editRecordTypeLabel: string
+    editRecordFileLabel: string
+    editRecordFileHint: string
+    editRecordCommentLabel: string
+    cancelButton: string
+    saveChangesButton: string
+    deleteDialogTitle: string
+    deleteDialogDescription: string
+    activeRecordFallbackTitle: string
+    activeRecordNoImage: string
+    uploadProgressTitle: string
+    uploadCompleted: string
+    uploadFailed: string
+    uploadStageUpload: string
+    uploadStageValidate: string
+    uploadStageEcgEmbedding: string
+    uploadStageEcgClassifier: string
+    uploadStageImageAnalysis: string
+    uploadStageAiAnalysis: string
+    uploadStageSave: string
+    errors: {
+        missingPatientId: string
+        choosePhotoFirst: string
+        invalidPhotoFile: string
+        chooseImagingFileFirst: string
+        invalidImagingFile: string
+        recordUploadFallback: string
+        saveDoctorCommentFailed: string
+        replacementFileInvalid: string
+        updateRecordFailed: string
+        deleteRecordFailed: string
+        enterAtLeastOneVital: string
+    }
+    success: {
+        recordUploadSuccess: string
+        saveDoctorCommentSuccess: string
+        updateRecordSuccess: string
+        deleteRecordSuccess: string
+    }
+    options: {
+        imagingType: Record<ImagingRecordType, string>
+        recordType: Record<string, string>
+        vitalSource: Record<string, string>
+        glucoseTiming: Record<string, string>
+    }
+    metrics: {
+        bloodPressure: string
+        heartRate: string
+        bloodGlucose: string
+        temperature: string
+        oxygenSaturation: string
+        weight: string
+    }
+}
+
+const exportUiText: Record<DashboardLanguage, ExportUiText> = {
+    vi: {
+        formatAriaLabel: "Định dạng xuất dữ liệu",
+        filterAriaLabel: "Bộ lọc hồ sơ",
+        exportTextButton: "Xuất hồ sơ tổng",
+        exportFilesButton: "Xuất tệp y khoa",
+        importTextButton: "Nhập hồ sơ tổng",
+        exporting: "Đang xuất...",
+        importing: "Đang nhập...",
+        exportHint: "Xuất hồ sơ tổng ra tệp ZIP gồm dữ liệu văn bản và tệp y khoa.",
+        missingPatientDataId: "Không thể xuất dữ liệu: thiếu mã bệnh nhân.",
+        missingPatientFilesId: "Không thể xuất tệp: thiếu mã bệnh nhân.",
+        missingPatientImportId: "Không thể nhập dữ liệu: thiếu mã bệnh nhân.",
+        invalidImportFileType: "Tệp nhập không hợp lệ. Nhập hồ sơ tổng chỉ hỗ trợ .zip.",
+        exportTextSuccessJson: "Đã xuất hồ sơ tổng ZIP (văn bản JSON).",
+        exportTextSuccessPdf: "Đã xuất hồ sơ tổng ZIP (văn bản PDF).",
+        exportFilesSuccess: "Đã xuất tệp đính kèm dạng ZIP.",
+        importSuccess: "Đã nhập dữ liệu bệnh nhân.",
+        exportTextFailed: "Xuất dữ liệu bệnh nhân thất bại.",
+        exportFilesFailed: "Xuất tệp đính kèm thất bại.",
+        importFailed: "Nhập dữ liệu bệnh nhân thất bại.",
+    },
+    en: {
+        formatAriaLabel: "Data export format",
+        filterAriaLabel: "Record filter",
+        exportTextButton: "Export full record",
+        exportFilesButton: "Export medical files",
+        importTextButton: "Import full record",
+        exporting: "Exporting...",
+        importing: "Importing...",
+        exportHint: "Full export downloads one ZIP with text data and original medical files.",
+        missingPatientDataId: "Cannot export data: missing patient id.",
+        missingPatientFilesId: "Cannot export files: missing patient id.",
+        missingPatientImportId: "Cannot import data: missing patient id.",
+        invalidImportFileType: "Invalid import file. Global import supports .zip only.",
+        exportTextSuccessJson: "Full patient record exported as ZIP (JSON text).",
+        exportTextSuccessPdf: "Full patient record exported as ZIP (PDF text).",
+        exportFilesSuccess: "Patient attachments exported as ZIP.",
+        importSuccess: "Patient data imported.",
+        exportTextFailed: "Failed to export patient data.",
+        exportFilesFailed: "Failed to export patient files.",
+        importFailed: "Failed to import patient data.",
+    },
+}
+
+const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
+    vi: {
+        locale: "vi-VN",
+        backButton: "Quay lại",
+        pageTitle: "Hồ sơ bệnh nhân",
+        loadingPatient: "Đang tải hồ sơ bệnh nhân...",
+        loadPatientErrorTitle: "Không thể tải hồ sơ bệnh nhân",
+        loadPatientErrorHint: "Vui lòng thử lại sau",
+        photoCardTitle: "Ảnh hồ sơ",
+        patientPhotoUploadLabel: "Tải ảnh mới",
+        photoUploadFailed: "Tải ảnh thất bại. Vui lòng thử lại.",
+        photoUpdateSuccess: "Đã cập nhật ảnh hồ sơ.",
+        photoUploadButton: "Cập nhật ảnh",
+        uploadingLabel: "Đang tải...",
+        savingLabel: "Đang lưu...",
+        updatingLabel: "Đang cập nhật...",
+        deletingLabel: "Đang xóa...",
+        vitalsCardTitle: "Chỉ số sinh tồn",
+        vitalRecordedAtLabel: "Thời gian đo",
+        vitalSourceLabel: "Nguồn dữ liệu",
+        vitalBpSystolicLabel: "Huyết áp tâm thu",
+        vitalBpDiastolicLabel: "Huyết áp tâm trương",
+        vitalHeartRateLabel: "Nhịp tim (bpm)",
+        vitalSpo2Label: "SpO₂ (%)",
+        vitalTemperatureLabel: "Nhiệt độ (°C)",
+        vitalWeightLabel: "Cân nặng (kg)",
+        vitalBloodGlucoseLabel: "Đường huyết (mmol/L)",
+        vitalGlucoseTimingLabel: "Thời điểm đo",
+        vitalNotesLabel: "Ghi chú",
+        vitalNotesPlaceholder: "Nhập ghi chú nếu cần",
+        vitalSaveFailed: "Lưu chỉ số thất bại. Vui lòng thử lại.",
+        vitalSaveButton: "Lưu chỉ số",
+        vitalSaveSuccess: "Đã lưu chỉ số sinh tồn.",
+        recentHistoryLabel: "Lịch sử gần đây",
+        recordCountSuffix: "bản ghi",
+        vitalsLoading: "Đang tải dữ liệu sinh tồn...",
+        vitalsLoadFailed: "Không thể tải dữ liệu sinh tồn.",
+        vitalsEmpty: "Chưa có chỉ số sinh tồn nào.",
+        medicalRecordsTitle: "Hồ sơ y khoa",
+        medicalRecordsSubtitle: "Xem và lọc các tài liệu đã tải lên",
+        recordsLoading: "Đang tải hồ sơ y khoa...",
+        recordsLoadFailed: "Không thể tải hồ sơ y khoa.",
+        recordsEmpty: "Chưa có hồ sơ y khoa nào.",
+        recordVerifiedBadge: "Đã xác thực",
+        editButton: "Chỉnh sửa",
+        deleteButton: "Xóa",
+        downloadPdf: "Tải PDF",
+        noAttachment: "Không có tệp đính kèm",
+        imagingCardTitle: "Ảnh cận lâm sàng",
+        imagingTypeLabel: "Loại ảnh",
+        recordTitleLabel: "Tiêu đề (tùy chọn)",
+        recordTitlePlaceholder: "Ví dụ: CT ngực 2026-02-01",
+        recordFileLabel: "Tải ảnh cận lâm sàng",
+        recordUploadFailed: "Tải ảnh thất bại. Vui lòng thử lại.",
+        recordUploadButton: "Tải ảnh cận lâm sàng",
+        postUploadDialogTitle: "Thêm nhận xét bác sĩ (tùy chọn)",
+        postUploadDialogHint: "AI đã phân tích xong. Bạn có thể bổ sung nhận xét bác sĩ cho hồ sơ này.",
+        postUploadNoAnalysis: "Chưa có nội dung phân tích AI để tham khảo.",
+        doctorCommentPlaceholder: "Nhập nhận xét bác sĩ...",
+        skipButton: "Bỏ qua",
+        saveCommentButton: "Lưu nhận xét",
+        editDialogTitle: "Cập nhật hồ sơ y khoa",
+        editRecordTitleLabel: "Tiêu đề",
+        editRecordTypeLabel: "Loại hồ sơ",
+        editRecordFileLabel: "Thay tệp (tùy chọn)",
+        editRecordFileHint: "Nếu thay tệp, hệ thống sẽ chạy lại phân tích AI.",
+        editRecordCommentLabel: "Nhận xét bác sĩ",
+        cancelButton: "Hủy",
+        saveChangesButton: "Lưu thay đổi",
+        deleteDialogTitle: "Xóa hồ sơ y khoa?",
+        deleteDialogDescription: "Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bị xóa.",
+        activeRecordFallbackTitle: "Ảnh cận lâm sàng",
+        activeRecordNoImage: "Không có ảnh để hiển thị",
+        uploadProgressTitle: "Đang xử lý tải ảnh cận lâm sàng",
+        uploadCompleted: "Hoàn tất. Đang cập nhật dữ liệu...",
+        uploadFailed: "Tải lên thất bại.",
+        uploadStageUpload: "Đang tải tệp lên máy chủ...",
+        uploadStageValidate: "Đang xác thực và lưu tệp...",
+        uploadStageEcgEmbedding: "Đang tạo ECG embedding (MedSigLIP)...",
+        uploadStageEcgClassifier: "Đang chạy ECG classifier...",
+        uploadStageImageAnalysis: "Đang phân tích hình ảnh...",
+        uploadStageAiAnalysis: "Đang phân tích AI bằng MedGemma...",
+        uploadStageSave: "Đang lưu kết quả vào hồ sơ...",
+        errors: {
+            missingPatientId: "Không tìm thấy mã bệnh nhân.",
+            choosePhotoFirst: "Vui lòng chọn ảnh trước khi tải lên.",
+            invalidPhotoFile: "Tệp không hợp lệ. Vui lòng chọn ảnh.",
+            chooseImagingFileFirst: "Vui lòng chọn ảnh cận lâm sàng.",
+            invalidImagingFile: "Tệp không hợp lệ. Vui lòng chọn ảnh.",
+            recordUploadFallback: "Tải ảnh thất bại. Vui lòng thử lại.",
+            saveDoctorCommentFailed: "Không thể lưu nhận xét bác sĩ.",
+            replacementFileInvalid: "Tệp thay thế phải là ảnh hoặc PDF.",
+            updateRecordFailed: "Cập nhật hồ sơ y khoa thất bại.",
+            deleteRecordFailed: "Xóa hồ sơ y khoa thất bại.",
+            enterAtLeastOneVital: "Vui lòng nhập ít nhất một chỉ số.",
+        },
+        success: {
+            recordUploadSuccess: "Đã tải tệp thành công.",
+            saveDoctorCommentSuccess: "Đã lưu nhận xét bác sĩ.",
+            updateRecordSuccess: "Đã cập nhật hồ sơ y khoa.",
+            deleteRecordSuccess: "Đã xóa hồ sơ y khoa thành công.",
+        },
+        options: {
+            imagingType: {
+                xray: "X-quang",
+                ecg: "Điện tâm đồ (ECG)",
+                ct: "CT",
+                mri: "MRI",
+            },
+            recordType: {
+                "": "Tất cả",
+                prescription: "Đơn thuốc",
+                lab: "Xét nghiệm",
+                xray: "X-quang",
+                ecg: "ECG",
+                ct: "CT",
+                mri: "MRI",
+                notes: "Ghi chú",
+                referral: "Chuyển tuyến",
+            },
+            vitalSource: {
+                self_reported: "Tự báo cáo",
+                clinic: "Phòng khám",
+                hospital: "Bệnh viện",
+                device: "Thiết bị",
+                unknown: "Không rõ",
+            },
+            glucoseTiming: {
+                "": "Không rõ",
+                fasting: "Lúc đói",
+                before_meal: "Trước ăn",
+                after_meal: "Sau ăn",
+                random: "Ngẫu nhiên",
+            },
+        },
+        metrics: {
+            bloodPressure: "HA",
+            heartRate: "Mạch",
+            bloodGlucose: "Đường huyết",
+            temperature: "Nhiệt độ",
+            oxygenSaturation: "SpO₂",
+            weight: "Cân nặng",
+        },
+    },
+    en: {
+        locale: "en-US",
+        backButton: "Back",
+        pageTitle: "Patient Profile",
+        loadingPatient: "Loading patient profile...",
+        loadPatientErrorTitle: "Unable to load patient profile",
+        loadPatientErrorHint: "Please try again later",
+        photoCardTitle: "Profile Photo",
+        patientPhotoUploadLabel: "Upload new photo",
+        photoUploadFailed: "Photo upload failed. Please try again.",
+        photoUpdateSuccess: "Profile photo updated.",
+        photoUploadButton: "Update photo",
+        uploadingLabel: "Uploading...",
+        savingLabel: "Saving...",
+        updatingLabel: "Updating...",
+        deletingLabel: "Deleting...",
+        vitalsCardTitle: "Vital Signs",
+        vitalRecordedAtLabel: "Recorded at",
+        vitalSourceLabel: "Data source",
+        vitalBpSystolicLabel: "Systolic blood pressure",
+        vitalBpDiastolicLabel: "Diastolic blood pressure",
+        vitalHeartRateLabel: "Heart rate (bpm)",
+        vitalSpo2Label: "SpO₂ (%)",
+        vitalTemperatureLabel: "Temperature (°C)",
+        vitalWeightLabel: "Weight (kg)",
+        vitalBloodGlucoseLabel: "Blood glucose (mmol/L)",
+        vitalGlucoseTimingLabel: "Measurement timing",
+        vitalNotesLabel: "Notes",
+        vitalNotesPlaceholder: "Add notes if needed",
+        vitalSaveFailed: "Saving vital signs failed. Please try again.",
+        vitalSaveButton: "Save vitals",
+        vitalSaveSuccess: "Vital signs saved.",
+        recentHistoryLabel: "Recent history",
+        recordCountSuffix: "records",
+        vitalsLoading: "Loading vital data...",
+        vitalsLoadFailed: "Unable to load vital data.",
+        vitalsEmpty: "No vital records yet.",
+        medicalRecordsTitle: "Medical Records",
+        medicalRecordsSubtitle: "View and filter uploaded documents",
+        recordsLoading: "Loading medical records...",
+        recordsLoadFailed: "Unable to load medical records.",
+        recordsEmpty: "No medical records yet.",
+        recordVerifiedBadge: "Verified",
+        editButton: "Edit",
+        deleteButton: "Delete",
+        downloadPdf: "Download PDF",
+        noAttachment: "No attachment",
+        imagingCardTitle: "Clinical Images",
+        imagingTypeLabel: "Image type",
+        recordTitleLabel: "Title (optional)",
+        recordTitlePlaceholder: "Example: Chest CT 2026-02-01",
+        recordFileLabel: "Upload clinical image",
+        recordUploadFailed: "Image upload failed. Please try again.",
+        recordUploadButton: "Upload clinical image",
+        postUploadDialogTitle: "Add doctor comment (optional)",
+        postUploadDialogHint: "AI analysis is complete. You can add doctor comments for this record.",
+        postUploadNoAnalysis: "No AI analysis available for reference yet.",
+        doctorCommentPlaceholder: "Enter doctor comment...",
+        skipButton: "Skip",
+        saveCommentButton: "Save comment",
+        editDialogTitle: "Update medical record",
+        editRecordTitleLabel: "Title",
+        editRecordTypeLabel: "Record type",
+        editRecordFileLabel: "Replace file (optional)",
+        editRecordFileHint: "Replacing the file will trigger AI analysis again.",
+        editRecordCommentLabel: "Doctor comment",
+        cancelButton: "Cancel",
+        saveChangesButton: "Save changes",
+        deleteDialogTitle: "Delete medical record?",
+        deleteDialogDescription: "The file, AI analysis result, and related data of this record will be deleted.",
+        activeRecordFallbackTitle: "Clinical image",
+        activeRecordNoImage: "No image available",
+        uploadProgressTitle: "Processing clinical image upload",
+        uploadCompleted: "Completed. Updating data...",
+        uploadFailed: "Upload failed.",
+        uploadStageUpload: "Uploading file to server...",
+        uploadStageValidate: "Validating and saving file...",
+        uploadStageEcgEmbedding: "Generating ECG embedding (MedSigLIP)...",
+        uploadStageEcgClassifier: "Running ECG classifier...",
+        uploadStageImageAnalysis: "Analyzing image...",
+        uploadStageAiAnalysis: "Running AI analysis with MedGemma...",
+        uploadStageSave: "Saving result to record...",
+        errors: {
+            missingPatientId: "Patient id not found.",
+            choosePhotoFirst: "Please choose a photo before uploading.",
+            invalidPhotoFile: "Invalid file. Please choose an image.",
+            chooseImagingFileFirst: "Please choose a clinical image.",
+            invalidImagingFile: "Invalid file. Please choose an image.",
+            recordUploadFallback: "Image upload failed. Please try again.",
+            saveDoctorCommentFailed: "Unable to save doctor comment.",
+            replacementFileInvalid: "Replacement file must be an image or PDF.",
+            updateRecordFailed: "Failed to update medical record.",
+            deleteRecordFailed: "Failed to delete medical record.",
+            enterAtLeastOneVital: "Please enter at least one measurement.",
+        },
+        success: {
+            recordUploadSuccess: "File uploaded successfully.",
+            saveDoctorCommentSuccess: "Doctor comment saved.",
+            updateRecordSuccess: "Medical record updated.",
+            deleteRecordSuccess: "Medical record deleted successfully.",
+        },
+        options: {
+            imagingType: {
+                xray: "X-ray",
+                ecg: "Electrocardiogram (ECG)",
+                ct: "CT",
+                mri: "MRI",
+            },
+            recordType: {
+                "": "All",
+                prescription: "Prescription",
+                lab: "Lab result",
+                xray: "X-ray",
+                ecg: "ECG",
+                ct: "CT",
+                mri: "MRI",
+                notes: "Notes",
+                referral: "Referral",
+            },
+            vitalSource: {
+                self_reported: "Self reported",
+                clinic: "Clinic",
+                hospital: "Hospital",
+                device: "Device",
+                unknown: "Unknown",
+            },
+            glucoseTiming: {
+                "": "Unknown",
+                fasting: "Fasting",
+                before_meal: "Before meal",
+                after_meal: "After meal",
+                random: "Random",
+            },
+        },
+        metrics: {
+            bloodPressure: "BP",
+            heartRate: "Heart rate",
+            bloodGlucose: "Blood glucose",
+            temperature: "Temperature",
+            oxygenSaturation: "SpO₂",
+            weight: "Weight",
+        },
+    },
+}
 
 type VitalFormState = {
     recordedAt: string
@@ -87,64 +572,23 @@ type RecordEditState = {
     file: File | null
 }
 
-const imagingTypeOptions: Array<{ value: ImagingRecordType; label: string }> = [
-    { value: "xray", label: "X-quang" },
-    { value: "ecg", label: "Điện tâm đồ (ECG)" },
-    { value: "ct", label: "CT" },
-    { value: "mri", label: "MRI" },
-]
-
-const recordTypeOptions = [
-    { value: "", label: "Tất cả" },
-    { value: "prescription", label: "Đơn thuốc" },
-    { value: "lab", label: "Xét nghiệm" },
-    { value: "xray", label: "X-quang" },
-    { value: "ecg", label: "ECG" },
-    { value: "ct", label: "CT" },
-    { value: "mri", label: "MRI" },
-    { value: "notes", label: "Ghi chú" },
-    { value: "referral", label: "Chuyển tuyến" },
-]
-
-const recordTypeLabels: Record<string, string> = {
-    prescription: "Đơn thuốc",
-    lab: "Xét nghiệm",
-    xray: "X-quang",
-    ecg: "ECG",
-    ct: "CT",
-    mri: "MRI",
-    notes: "Ghi chú",
-    referral: "Chuyển tuyến",
-}
-
-const vitalSourceOptions = [
-    { value: "self_reported", label: "Tự báo cáo" },
-    { value: "clinic", label: "Phòng khám" },
-    { value: "hospital", label: "Bệnh viện" },
-    { value: "device", label: "Thiết bị" },
-]
-
-const glucoseTimingOptions = [
-    { value: "", label: "Không rõ" },
-    { value: "fasting", label: "Lúc đói" },
-    { value: "before_meal", label: "Trước ăn" },
-    { value: "after_meal", label: "Sau ăn" },
-    { value: "random", label: "Ngẫu nhiên" },
-]
-
-function getRecordUploadStage(progress: number, recordType: ImagingRecordType): string {
-    if (progress < 18) return "Dang tai tep len may chu..."
-    if (progress < 34) return "Dang xac thuc va luu tep..."
+function getRecordUploadStage(
+    progress: number,
+    recordType: ImagingRecordType,
+    uiText: PatientDetailUiText
+): string {
+    if (progress < 18) return uiText.uploadStageUpload
+    if (progress < 34) return uiText.uploadStageValidate
 
     if (recordType === "ecg") {
-        if (progress < 52) return "Dang tao ECG embedding (MedSigLIP)..."
-        if (progress < 68) return "Dang chay ECG classifier..."
+        if (progress < 52) return uiText.uploadStageEcgEmbedding
+        if (progress < 68) return uiText.uploadStageEcgClassifier
     } else {
-        if (progress < 68) return "Dang phan tich hinh anh..."
+        if (progress < 68) return uiText.uploadStageImageAnalysis
     }
 
-    if (progress < 88) return "Dang phan tich AI bang MedGemma..."
-    return "Dang luu ket qua vao ho so..."
+    if (progress < 88) return uiText.uploadStageAiAnalysis
+    return uiText.uploadStageSave
 }
 
 function nextRecordUploadProgress(current: number): number {
@@ -159,10 +603,44 @@ function nextRecordUploadProgress(current: number): number {
 export default function PatientDetailPage() {
     const router = useRouter()
     const { role, user } = useAuth()
+    const { language } = useDashboardLanguage()
     const params = useParams()
     const patientId = Array.isArray(params.patientId) ? params.patientId[0] : params.patientId
+    const exportText = exportUiText[language]
+    const uiText = patientDetailUiText[language]
+    const imagingTypeOptions = useMemo(
+        () => (["xray", "ecg", "ct", "mri"] as const).map((value) => ({ value, label: uiText.options.imagingType[value] })),
+        [uiText]
+    )
+    const recordTypeOptions = useMemo(
+        () =>
+            (["", "prescription", "lab", "xray", "ecg", "ct", "mri", "notes", "referral"] as const).map((value) => ({
+                value,
+                label: uiText.options.recordType[value],
+            })),
+        [uiText]
+    )
+    const vitalSourceOptions = useMemo(
+        () =>
+            (["self_reported", "clinic", "hospital", "device"] as const).map((value) => ({
+                value,
+                label: uiText.options.vitalSource[value],
+            })),
+        [uiText]
+    )
+    const glucoseTimingOptions = useMemo(
+        () =>
+            (["", "fasting", "before_meal", "after_meal", "random"] as const).map((value) => ({
+                value,
+                label: uiText.options.glucoseTiming[value],
+            })),
+        [uiText]
+    )
+    const recordTypeLabels = uiText.options.recordType
 
     const [recordFilter, setRecordFilter] = useState("")
+    const [textExportFormat, setTextExportFormat] = useState<TextExportFormat>("json")
+    const [vitalExportFormat, setVitalExportFormat] = useState<TextExportFormat>("json")
     const [activeRecord, setActiveRecord] = useState<MedicalRecord | null>(null)
 
     const { data, isLoading, error } = usePatient(patientId ?? "")
@@ -180,11 +658,20 @@ export default function PatientDetailPage() {
     const recordUploadMutation = useUploadPatientRecordImage()
     const recordUpdateMutation = useUpdatePatientRecord()
     const recordDeleteMutation = useDeletePatientRecord()
+    const exportPatientTextMutation = useExportPatientText()
+    const exportVitalSignsMutation = useExportVitalSigns()
+    const importVitalPreviewMutation = useImportVitalSignsPreview()
+    const importPatientTextMutation = useImportPatientText()
     const createVitalMutation = useCreateVitalSign()
 
     const [photoFile, setPhotoFile] = useState<File | null>(null)
     const [photoError, setPhotoError] = useState<string | null>(null)
     const photoInputRef = useRef<HTMLInputElement>(null)
+    const importInputRef = useRef<HTMLInputElement>(null)
+    const vitalImportInputRef = useRef<HTMLInputElement>(null)
+    const [isImportProgressOpen, setIsImportProgressOpen] = useState(false)
+    const [importProgressValue, setImportProgressValue] = useState(0)
+    const [importProgressStage, setImportProgressStage] = useState("")
 
     const [recordFile, setRecordFile] = useState<File | null>(null)
     const [recordType, setRecordType] = useState<ImagingRecordType>("xray")
@@ -242,7 +729,7 @@ export default function PatientDetailPage() {
         clearUploadProgressHideTimeout()
         setUploadProgressType(recordTypeForUpload)
         setUploadProgressValue(4)
-        setUploadProgressStage(getRecordUploadStage(4, recordTypeForUpload))
+        setUploadProgressStage("")
         setIsUploadProgressOpen(true)
 
         uploadProgressTimerRef.current = window.setInterval(() => {
@@ -255,7 +742,7 @@ export default function PatientDetailPage() {
 
         if (status === "success") {
             setUploadProgressValue(100)
-            setUploadProgressStage("Hoan tat. Dang cap nhat du lieu...")
+            setUploadProgressStage(uiText.uploadCompleted)
             clearUploadProgressHideTimeout()
             uploadProgressHideTimeoutRef.current = window.setTimeout(() => {
                 setIsUploadProgressOpen(false)
@@ -265,7 +752,7 @@ export default function PatientDetailPage() {
             return
         }
 
-        setUploadProgressStage("Tai len that bai.")
+        setUploadProgressStage(uiText.uploadFailed)
         clearUploadProgressHideTimeout()
         uploadProgressHideTimeoutRef.current = window.setTimeout(() => {
             setIsUploadProgressOpen(false)
@@ -273,12 +760,6 @@ export default function PatientDetailPage() {
             setUploadProgressStage("")
         }, 1200)
     }
-
-    useEffect(() => {
-        if (!isUploadProgressOpen) return
-        if (uploadProgressValue >= 100) return
-        setUploadProgressStage(getRecordUploadStage(uploadProgressValue, uploadProgressType))
-    }, [isUploadProgressOpen, uploadProgressType, uploadProgressValue])
 
     useEffect(() => {
         return () => {
@@ -295,15 +776,15 @@ export default function PatientDetailPage() {
 
     const handleUpload = () => {
         if (!patientId) {
-            setPhotoError("Không tìm thấy mã bệnh nhân.")
+            setPhotoError(uiText.errors.missingPatientId)
             return
         }
         if (!photoFile) {
-            setPhotoError("Vui lòng chọn ảnh trước khi tải lên.")
+            setPhotoError(uiText.errors.choosePhotoFirst)
             return
         }
         if (!photoFile.type.startsWith("image/")) {
-            setPhotoError("Tệp không hợp lệ. Vui lòng chọn ảnh.")
+            setPhotoError(uiText.errors.invalidPhotoFile)
             return
         }
 
@@ -331,15 +812,15 @@ export default function PatientDetailPage() {
         setRecordError(null)
         setRecordListError(null)
         if (!patientId) {
-            setRecordError("Không tìm thấy mã bệnh nhân.")
+            setRecordError(uiText.errors.missingPatientId)
             return
         }
         if (!recordFile) {
-            setRecordError("Vui lòng chọn ảnh cận lâm sàng.")
+            setRecordError(uiText.errors.chooseImagingFileFirst)
             return
         }
         if (!recordFile.type.startsWith("image/")) {
-            setRecordError("Tệp không hợp lệ. Vui lòng chọn ảnh.")
+            setRecordError(uiText.errors.invalidImagingFile)
             return
         }
 
@@ -357,7 +838,7 @@ export default function PatientDetailPage() {
                     finishUploadProgress("success")
                     setRecordFile(null)
                     setRecordTitle("")
-                    toast.success("Đã tải tệp thành công.")
+                    toast.success(uiText.success.recordUploadSuccess)
                     setPostUploadRecordId(response.record_id)
                     setPostUploadComment("")
                     setPostUploadAiAnalysis(response.ai_analysis ?? null)
@@ -369,7 +850,7 @@ export default function PatientDetailPage() {
                 },
                 onError: (err) => {
                     finishUploadProgress("error")
-                    setRecordError(getErrorMessage(err, "Tai anh that bai. Vui long thu lai."))
+                    setRecordError(getErrorMessage(err, uiText.errors.recordUploadFallback))
                 },
             }
         )
@@ -393,11 +874,11 @@ export default function PatientDetailPage() {
                     setPostUploadRecordId(null)
                     setPostUploadComment("")
                     setPostUploadAiAnalysis(null)
-                    toast.success("Đã lưu nhận xét bác sĩ.")
+                    toast.success(uiText.success.saveDoctorCommentSuccess)
                     void refetchRecords()
                 },
                 onError: (err) => {
-                    setRecordError(getErrorMessage(err, "Không thể lưu nhận xét bác sĩ."))
+                    setRecordError(getErrorMessage(err, uiText.errors.saveDoctorCommentFailed))
                 },
             }
         )
@@ -435,7 +916,7 @@ export default function PatientDetailPage() {
         setRecordListError(null)
 
         if (editState.file && !editState.file.type.startsWith("image/") && editState.file.type !== "application/pdf") {
-            setEditError("Tệp thay thế phải là ảnh hoặc PDF.")
+            setEditError(uiText.errors.replacementFileInvalid)
             return
         }
 
@@ -452,14 +933,14 @@ export default function PatientDetailPage() {
                 onSuccess: () => {
                     setEditState(null)
                     setEditError(null)
-                    toast.success("Đã cập nhật hồ sơ y khoa.")
+                    toast.success(uiText.success.updateRecordSuccess)
                     if (activeRecord?.id === editState.recordId) {
                         setActiveRecord(null)
                     }
                     void refetchRecords()
                 },
                 onError: (err) => {
-                    setEditError(getErrorMessage(err, "Cập nhật hồ sơ y khoa thất bại."))
+                    setEditError(getErrorMessage(err, uiText.errors.updateRecordFailed))
                 },
             }
         )
@@ -483,11 +964,242 @@ export default function PatientDetailPage() {
                         setActiveRecord(null)
                     }
                     setDeleteRecord(null)
-                    toast.success("Đã xóa hồ sơ y khoa thành công.")
+                    toast.success(uiText.success.deleteRecordSuccess)
                     void refetchRecords()
                 },
                 onError: (err) => {
-                    setRecordListError(getErrorMessage(err, "Xóa hồ sơ y khoa thất bại."))
+                    setRecordListError(getErrorMessage(err, uiText.errors.deleteRecordFailed))
+                },
+            }
+        )
+    }
+
+    const handleExportPatientText = () => {
+        if (!patientId) {
+            toast.error(exportText.missingPatientDataId)
+            return
+        }
+
+        exportPatientTextMutation.mutate(
+            {
+                patientId,
+                format: textExportFormat,
+                language,
+            },
+            {
+                onSuccess: (result) => {
+                    const fallbackName = buildDownloadName(
+                        data?.patient?.full_name,
+                        `patient-${patientId}.zip`
+                    )
+                    triggerFileDownload(result.blob, result.filename ?? fallbackName)
+                    toast.success(
+                        textExportFormat === "json"
+                            ? exportText.exportTextSuccessJson
+                            : exportText.exportTextSuccessPdf
+                    )
+                },
+                onError: (err) => {
+                    toast.error(getErrorMessage(err, exportText.exportTextFailed))
+                },
+            }
+        )
+    }
+
+    const handleExportVitalSigns = () => {
+        if (!patientId) {
+            toast.error(exportText.missingPatientDataId)
+            return
+        }
+
+        exportVitalSignsMutation.mutate(
+            { patientId, format: vitalExportFormat, language },
+            {
+                onSuccess: (result) => {
+                    const fallbackName = buildDownloadName(
+                        data?.patient?.full_name,
+                        `patient-${patientId}-vitals.${vitalExportFormat}`,
+                        "-vitals"
+                    )
+                    triggerFileDownload(result.blob, result.filename ?? fallbackName)
+                    toast.success(
+                        language === "vi"
+                            ? "Đã xuất dữ liệu sinh tồn."
+                            : "Vital-sign data exported."
+                    )
+                },
+                onError: (err) => {
+                    toast.error(
+                        getErrorMessage(
+                            err,
+                            language === "vi"
+                                ? "Xuất dữ liệu sinh tồn thất bại."
+                                : "Failed to export vital-sign data."
+                        )
+                    )
+                },
+            }
+        )
+    }
+
+    const handleVitalImportButtonClick = () => {
+        vitalImportInputRef.current?.click()
+    }
+
+    const handleVitalImportFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+        const selected = event.target.files?.[0] ?? null
+        if (!selected) {
+            return
+        }
+
+        const resetInput = () => {
+            if (vitalImportInputRef.current) {
+                vitalImportInputRef.current.value = ""
+            }
+        }
+
+        if (!patientId) {
+            toast.error(uiText.errors.missingPatientId)
+            resetInput()
+            return
+        }
+
+        const lowerName = selected.name.toLowerCase()
+        if (!lowerName.endsWith(".json") && !lowerName.endsWith(".pdf")) {
+            toast.error(
+                language === "vi"
+                    ? "Tệp nhập sinh tồn không hợp lệ. Chỉ hỗ trợ .json hoặc .pdf."
+                    : "Invalid vital import file. Only .json or .pdf is supported."
+            )
+            resetInput()
+            return
+        }
+
+        importVitalPreviewMutation.mutate(
+            { patientId, file: selected },
+            {
+                onSuccess: (result) => {
+                    setVitalForm((prev) => ({
+                        ...prev,
+                        ...result.prefill,
+                        source: (
+                            result.prefill.source === "clinic"
+                            || result.prefill.source === "hospital"
+                            || result.prefill.source === "device"
+                            || result.prefill.source === "self_reported"
+                        )
+                            ? result.prefill.source
+                            : prev.source,
+                        bloodGlucoseTiming: (
+                            result.prefill.bloodGlucoseTiming === "fasting"
+                            || result.prefill.bloodGlucoseTiming === "before_meal"
+                            || result.prefill.bloodGlucoseTiming === "after_meal"
+                            || result.prefill.bloodGlucoseTiming === "random"
+                        )
+                            ? result.prefill.bloodGlucoseTiming
+                            : "",
+                    }))
+                    setVitalError(null)
+                    setVitalSuccess(
+                        language === "vi"
+                            ? "Đã điền sẵn biểu mẫu từ tệp nhập. Vui lòng kiểm tra trước khi lưu."
+                            : "Form prefilled from imported data. Review and edit before saving."
+                    )
+                    if (result.warning) {
+                        toast.warning(result.warning)
+                    } else {
+                        toast.success(
+                            language === "vi"
+                                ? "Đã nhập dữ liệu sinh tồn để điền sẵn."
+                                : "Vital-sign data imported for prefill."
+                        )
+                    }
+                },
+                onError: (err) => {
+                    toast.error(
+                        getErrorMessage(
+                            err,
+                            language === "vi"
+                                ? "Nhập dữ liệu sinh tồn thất bại."
+                                : "Failed to import vital-sign data."
+                        )
+                    )
+                },
+                onSettled: () => {
+                    resetInput()
+                },
+            }
+        )
+    }
+
+    const handleImportButtonClick = () => {
+        importInputRef.current?.click()
+    }
+
+    const handleImportProgress = (status: PatientTextImportStatusResponse) => {
+        const nextProgress = Number.isFinite(status.progress) ? Math.max(0, Math.min(100, status.progress)) : 0
+        setImportProgressValue(nextProgress)
+        setImportProgressStage(status.stage || exportText.importing)
+    }
+
+    const handleImportFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+        const selected = event.target.files?.[0] ?? null
+        if (!selected) {
+            return
+        }
+
+        const resetInput = () => {
+            if (importInputRef.current) {
+                importInputRef.current.value = ""
+            }
+        }
+
+        if (!patientId) {
+            toast.error(exportText.missingPatientImportId)
+            resetInput()
+            return
+        }
+
+        const lowerName = selected.name.toLowerCase()
+        if (!lowerName.endsWith(".zip")) {
+            toast.error(exportText.invalidImportFileType)
+            resetInput()
+            return
+        }
+
+        setIsImportProgressOpen(true)
+        setImportProgressValue(2)
+        setImportProgressStage(exportText.importing)
+
+        importPatientTextMutation.mutate(
+            { patientId, file: selected, onProgress: handleImportProgress },
+            {
+                onSuccess: (result) => {
+                    setImportProgressValue(100)
+                    setImportProgressStage(result.message || exportText.importSuccess)
+                    toast.success(result.message || exportText.importSuccess)
+                    if (result.warning) {
+                        toast.warning(result.warning)
+                    }
+                    void refetchRecords()
+                    window.setTimeout(() => {
+                        setIsImportProgressOpen(false)
+                        setImportProgressValue(0)
+                        setImportProgressStage("")
+                    }, 700)
+                },
+                onError: (err) => {
+                    const message = getErrorMessage(err, exportText.importFailed)
+                    setImportProgressStage(message)
+                    toast.error(message)
+                    window.setTimeout(() => {
+                        setIsImportProgressOpen(false)
+                        setImportProgressValue(0)
+                        setImportProgressStage("")
+                    }, 900)
+                },
+                onSettled: () => {
+                    resetInput()
                 },
             }
         )
@@ -505,7 +1217,7 @@ export default function PatientDetailPage() {
         setVitalSuccess(null)
 
         if (!patientId) {
-            setVitalError("Không tìm thấy mã bệnh nhân.")
+            setVitalError(uiText.errors.missingPatientId)
             return
         }
 
@@ -520,7 +1232,7 @@ export default function PatientDetailPage() {
         ].some(value => value.trim() !== "")
 
         if (!hasMeasurements) {
-            setVitalError("Vui lòng nhập ít nhất một chỉ số.")
+            setVitalError(uiText.errors.enterAtLeastOneVital)
             return
         }
 
@@ -563,7 +1275,7 @@ export default function PatientDetailPage() {
             { patientId, data: payload },
             {
                 onSuccess: () => {
-                    setVitalSuccess("Đã lưu chỉ số sinh tồn.")
+                    setVitalSuccess(uiText.vitalSaveSuccess)
                     setVitalForm({
                         recordedAt: "",
                         source: role === "doctor" ? "clinic" : "self_reported",
@@ -583,16 +1295,16 @@ export default function PatientDetailPage() {
     }
 
     if (isLoading) {
-        return <LoadingOverlay text="Đang tải hồ sơ bệnh nhân..." />
+        return <LoadingOverlay text={uiText.loadingPatient} />
     }
 
     if (error || !data?.patient) {
         return (
             <Card className="border-destructive/30 bg-destructive/5">
                 <CardContent className="p-6 text-center">
-                    <p className="text-destructive font-medium">Không thể tải hồ sơ bệnh nhân</p>
+                    <p className="text-destructive font-medium">{uiText.loadPatientErrorTitle}</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                        Vui lòng thử lại sau
+                        {uiText.loadPatientErrorHint}
                     </p>
                 </CardContent>
             </Card>
@@ -609,17 +1321,75 @@ export default function PatientDetailPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center gap-3">
-                <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/patients")}>
-                    <ArrowLeft className="h-4 w-4 mr-1" />
-                    Quay lại
-                </Button>
-                <PageHeader title="Hồ sơ bệnh nhân" description={patient.full_name} />
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="flex items-center gap-3">
+                    <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/patients")}>
+                        <ArrowLeft className="h-4 w-4 mr-1" />
+                        {uiText.backButton}
+                    </Button>
+                    <PageHeader title={uiText.pageTitle} description={patient.full_name} />
+                </div>
+                <div className="w-full space-y-2 md:w-auto md:pt-1">
+                    <input
+                        ref={importInputRef}
+                        type="file"
+                        accept=".zip,application/zip"
+                        className="hidden"
+                        onChange={handleImportFileChange}
+                    />
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                        <div className="flex w-full sm:w-auto">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="rounded-r-none border-r-0"
+                                onClick={handleExportPatientText}
+                                disabled={
+                                    exportPatientTextMutation.isPending
+                                    || importPatientTextMutation.isPending
+                                }
+                            >
+                                <FileText className="h-4 w-4 mr-2" />
+                                {exportPatientTextMutation.isPending ? exportText.exporting : exportText.exportTextButton}
+                            </Button>
+                            <select
+                                aria-label={exportText.formatAriaLabel}
+                                value={textExportFormat}
+                                onChange={(event) => setTextExportFormat(event.target.value as TextExportFormat)}
+                                disabled={
+                                    exportPatientTextMutation.isPending
+                                    || importPatientTextMutation.isPending
+                                }
+                                className="border-input h-9 w-24 rounded-l-none rounded-r-md border bg-transparent px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50"
+                            >
+                                <option value="json">JSON</option>
+                                <option value="pdf">PDF</option>
+                            </select>
+                        </div>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={handleImportButtonClick}
+                            disabled={
+                                exportPatientTextMutation.isPending
+                                || importPatientTextMutation.isPending
+                            }
+                        >
+                            <Upload className="h-4 w-4 mr-2" />
+                            {importPatientTextMutation.isPending ? exportText.importing : exportText.importTextButton}
+                        </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground sm:text-right">
+                        {exportText.exportHint}
+                    </p>
+                </div>
             </div>
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Ảnh hồ sơ</CardTitle>
+                    <CardTitle>{uiText.photoCardTitle}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="flex items-center gap-4">
@@ -641,7 +1411,7 @@ export default function PatientDetailPage() {
                     </div>
 
                     <div className="grid gap-2">
-                        <Label htmlFor="patient-photo">Tải ảnh mới</Label>
+                        <Label htmlFor="patient-photo">{uiText.patientPhotoUploadLabel}</Label>
                         <Input
                             id="patient-photo"
                             type="file"
@@ -656,12 +1426,12 @@ export default function PatientDetailPage() {
                     )}
                     {photoUploadMutation.isError && (
                         <p className="text-sm text-destructive">
-                            Tải ảnh thất bại. Vui lòng thử lại.
+                            {uiText.photoUploadFailed}
                         </p>
                     )}
                     {photoUploadMutation.isSuccess && (
                         <p className="text-sm text-emerald-600">
-                            Đã cập nhật ảnh hồ sơ.
+                            {uiText.photoUpdateSuccess}
                         </p>
                     )}
 
@@ -670,21 +1440,67 @@ export default function PatientDetailPage() {
                         disabled={!photoFile || photoUploadMutation.isPending}
                     >
                         <Upload className="h-4 w-4 mr-2" />
-                        {photoUploadMutation.isPending ? "Đang tải..." : "Cập nhật ảnh"}
+                        {photoUploadMutation.isPending ? uiText.uploadingLabel : uiText.photoUploadButton}
                     </Button>
                 </CardContent>
             </Card>
 
             <Card>
-                <CardHeader>
-                    <CardTitle>Chỉ số sinh tồn</CardTitle>
+                <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <CardTitle>{uiText.vitalsCardTitle}</CardTitle>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <input
+                            ref={vitalImportInputRef}
+                            type="file"
+                            accept=".json,.pdf,application/json,application/pdf"
+                            className="hidden"
+                            onChange={handleVitalImportFileChange}
+                        />
+                        <div className="flex w-full sm:w-auto">
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="rounded-r-none border-r-0"
+                                onClick={handleExportVitalSigns}
+                                disabled={exportVitalSignsMutation.isPending || importVitalPreviewMutation.isPending}
+                            >
+                                <FileText className="mr-2 h-4 w-4" />
+                                {exportVitalSignsMutation.isPending
+                                    ? exportText.exporting
+                                    : (language === "vi" ? "Xuất dữ liệu sinh tồn" : "Export vital signs")}
+                            </Button>
+                            <select
+                                aria-label={language === "vi" ? "Định dạng xuất sinh tồn" : "Vital export format"}
+                                value={vitalExportFormat}
+                                onChange={(event) => setVitalExportFormat(event.target.value as TextExportFormat)}
+                                disabled={exportVitalSignsMutation.isPending || importVitalPreviewMutation.isPending}
+                                className="border-input h-9 w-24 rounded-l-none rounded-r-md border bg-transparent px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50"
+                            >
+                                <option value="json">JSON</option>
+                                <option value="pdf">PDF</option>
+                            </select>
+                        </div>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={handleVitalImportButtonClick}
+                            disabled={exportVitalSignsMutation.isPending || importVitalPreviewMutation.isPending}
+                        >
+                            <Upload className="mr-2 h-4 w-4" />
+                            {importVitalPreviewMutation.isPending
+                                ? exportText.importing
+                                : (language === "vi" ? "Nhập dữ liệu sinh tồn" : "Import vital signs")}
+                        </Button>
+                    </div>
                 </CardHeader>
                 <CardContent className="space-y-6">
                     <div className="grid gap-6 lg:grid-cols-2">
                         <div className="space-y-4">
                             <div className="grid gap-3 md:grid-cols-2">
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-recorded-at">Thời gian đo</Label>
+                                    <Label htmlFor="vital-recorded-at">{uiText.vitalRecordedAtLabel}</Label>
                                     <Input
                                         id="vital-recorded-at"
                                         type="datetime-local"
@@ -693,7 +1509,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-source">Nguồn dữ liệu</Label>
+                                    <Label htmlFor="vital-source">{uiText.vitalSourceLabel}</Label>
                                     <select
                                         id="vital-source"
                                         value={vitalForm.source}
@@ -708,7 +1524,7 @@ export default function PatientDetailPage() {
                                     </select>
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-bp-sys">Huyết áp tâm thu</Label>
+                                    <Label htmlFor="vital-bp-sys">{uiText.vitalBpSystolicLabel}</Label>
                                     <Input
                                         id="vital-bp-sys"
                                         type="number"
@@ -719,7 +1535,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-bp-dia">Huyết áp tâm trương</Label>
+                                    <Label htmlFor="vital-bp-dia">{uiText.vitalBpDiastolicLabel}</Label>
                                     <Input
                                         id="vital-bp-dia"
                                         type="number"
@@ -730,7 +1546,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-heart-rate">Nhịp tim (bpm)</Label>
+                                    <Label htmlFor="vital-heart-rate">{uiText.vitalHeartRateLabel}</Label>
                                     <Input
                                         id="vital-heart-rate"
                                         type="number"
@@ -741,7 +1557,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-spo2">SpO₂ (%)</Label>
+                                    <Label htmlFor="vital-spo2">{uiText.vitalSpo2Label}</Label>
                                     <Input
                                         id="vital-spo2"
                                         type="number"
@@ -752,7 +1568,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-temperature">Nhiệt độ (°C)</Label>
+                                    <Label htmlFor="vital-temperature">{uiText.vitalTemperatureLabel}</Label>
                                     <Input
                                         id="vital-temperature"
                                         type="number"
@@ -764,7 +1580,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-weight">Cân nặng (kg)</Label>
+                                    <Label htmlFor="vital-weight">{uiText.vitalWeightLabel}</Label>
                                     <Input
                                         id="vital-weight"
                                         type="number"
@@ -776,7 +1592,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-glucose">Đường huyết (mmol/L)</Label>
+                                    <Label htmlFor="vital-glucose">{uiText.vitalBloodGlucoseLabel}</Label>
                                     <Input
                                         id="vital-glucose"
                                         type="number"
@@ -788,7 +1604,7 @@ export default function PatientDetailPage() {
                                     />
                                 </div>
                                 <div className="grid gap-2">
-                                    <Label htmlFor="vital-glucose-timing">Thời điểm đo</Label>
+                                    <Label htmlFor="vital-glucose-timing">{uiText.vitalGlucoseTimingLabel}</Label>
                                     <select
                                         id="vital-glucose-timing"
                                         value={vitalForm.bloodGlucoseTiming}
@@ -803,10 +1619,10 @@ export default function PatientDetailPage() {
                                     </select>
                                 </div>
                                 <div className="grid gap-2 md:col-span-2">
-                                    <Label htmlFor="vital-notes">Ghi chú</Label>
+                                    <Label htmlFor="vital-notes">{uiText.vitalNotesLabel}</Label>
                                     <Textarea
                                         id="vital-notes"
-                                        placeholder="Nhập ghi chú nếu cần"
+                                        placeholder={uiText.vitalNotesPlaceholder}
                                         value={vitalForm.notes}
                                         onChange={(event) => updateVitalForm("notes", event.target.value)}
                                         rows={3}
@@ -819,7 +1635,7 @@ export default function PatientDetailPage() {
                             )}
                             {createVitalMutation.isError && (
                                 <p className="text-sm text-destructive">
-                                    Lưu chỉ số thất bại. Vui lòng thử lại.
+                                    {uiText.vitalSaveFailed}
                                 </p>
                             )}
                             {vitalSuccess && (
@@ -831,52 +1647,52 @@ export default function PatientDetailPage() {
                                 disabled={createVitalMutation.isPending}
                             >
                                 <Activity className="h-4 w-4 mr-2" />
-                                {createVitalMutation.isPending ? "Đang lưu..." : "Lưu chỉ số"}
+                                {createVitalMutation.isPending ? uiText.savingLabel : uiText.vitalSaveButton}
                             </Button>
                         </div>
 
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium text-foreground">Lịch sử gần đây</p>
-                                <Badge variant="secondary">{vitals?.length ?? 0} bản ghi</Badge>
+                                <p className="text-sm font-medium text-foreground">{uiText.recentHistoryLabel}</p>
+                                <Badge variant="secondary">{vitals?.length ?? 0} {uiText.recordCountSuffix}</Badge>
                             </div>
 
                             {vitalsLoading && (!vitals || vitals.length === 0) && (
                                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                                    Đang tải dữ liệu sinh tồn...
+                                    {uiText.vitalsLoading}
                                 </div>
                             )}
 
                             {vitalsError && (
                                 <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                                    Không thể tải dữ liệu sinh tồn.
+                                    {uiText.vitalsLoadFailed}
                                 </div>
                             )}
 
                             {!vitalsLoading && !vitalsError && vitals && vitals.length === 0 && (
                                 <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                                    Chưa có chỉ số sinh tồn nào.
+                                    {uiText.vitalsEmpty}
                                 </div>
                             )}
 
                             {!vitalsError && vitals && vitals.length > 0 && (
                                 <div className="space-y-3">
                                     {vitals.map((vital) => {
-                                        const metrics = formatVitalMetrics(vital)
+                                        const metrics = formatVitalMetrics(vital, uiText)
                                         return (
                                             <div key={vital.id} className="rounded-lg border p-4">
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div>
                                                         <p className="text-sm font-medium text-foreground">
-                                                            {formatDateTime(vital.recorded_at)}
+                                                            {formatDateTime(vital.recorded_at, uiText.locale)}
                                                         </p>
                                                         <p className="text-xs text-muted-foreground">
-                                                            {formatVitalSource(vital.source)}
+                                                            {formatVitalSource(vital.source, uiText)}
                                                         </p>
                                                     </div>
                                                     {vital.source && (
                                                         <Badge variant="outline">
-                                                            {formatVitalSource(vital.source)}
+                                                            {formatVitalSource(vital.source, uiText)}
                                                         </Badge>
                                                     )}
                                                 </div>
@@ -907,13 +1723,17 @@ export default function PatientDetailPage() {
             <Card>
                 <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
-                        <CardTitle>Hồ sơ y khoa</CardTitle>
+                        <CardTitle>{uiText.medicalRecordsTitle}</CardTitle>
                         <p className="text-sm text-muted-foreground">
-                            Xem và lọc các tài liệu đã tải lên
+                            {uiText.medicalRecordsSubtitle}
                         </p>
                     </div>
                     <div className="w-full md:w-56">
+                        <Label htmlFor="record-filter" className="sr-only">
+                            {exportText.filterAriaLabel}
+                        </Label>
                         <select
+                            id="record-filter"
                             value={recordFilter}
                             onChange={(event) => setRecordFilter(event.target.value)}
                             className="border-input h-9 w-full rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] md:text-sm"
@@ -935,19 +1755,19 @@ export default function PatientDetailPage() {
 
                     {recordsLoading && (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Đang tải hồ sơ y khoa...
+                            {uiText.recordsLoading}
                         </div>
                     )}
 
                     {recordsError && (
                         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                            Không thể tải hồ sơ y khoa.
+                            {uiText.recordsLoadFailed}
                         </div>
                     )}
 
                     {!recordsLoading && !recordsError && recordsData?.records.length === 0 && (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Chưa có hồ sơ y khoa nào.
+                            {uiText.recordsEmpty}
                         </div>
                     )}
 
@@ -962,14 +1782,14 @@ export default function PatientDetailPage() {
                                                     {recordTypeLabels[record.record_type] ?? record.record_type}
                                                 </Badge>
                                                 {record.is_verified && (
-                                                    <Badge variant="outline">Đã xác thực</Badge>
+                                                    <Badge variant="outline">{uiText.recordVerifiedBadge}</Badge>
                                                 )}
                                             </div>
                                             <p className="mt-2 text-sm font-semibold text-foreground">
                                                 {record.title}
                                             </p>
                                             <p className="text-xs text-muted-foreground">
-                                                {formatDateTime(record.created_at)}
+                                                {formatDateTime(record.created_at, uiText.locale)}
                                             </p>
                                             {record.content_text && !hasAnalysis(record.analysis_result) && (
                                                 <p className="mt-2 text-sm text-muted-foreground">
@@ -987,7 +1807,7 @@ export default function PatientDetailPage() {
                                                         variant="outline"
                                                         onClick={() => openEditRecord(record)}
                                                     >
-                                                        Chỉnh sửa
+                                                        {uiText.editButton}
                                                     </Button>
                                                     <Button
                                                         size="sm"
@@ -997,7 +1817,7 @@ export default function PatientDetailPage() {
                                                             setDeleteRecord(record)
                                                         }}
                                                     >
-                                                        Xóa
+                                                        {uiText.deleteButton}
                                                     </Button>
                                                 </div>
                                             )}
@@ -1017,14 +1837,14 @@ export default function PatientDetailPage() {
                                             {record.file_kind === "pdf" && record.file_url && (
                                                 <Button size="sm" variant="outline" asChild>
                                                     <a href={record.file_url} target="_blank" rel="noreferrer">
-                                                        Tải PDF
+                                                        {uiText.downloadPdf}
                                                     </a>
                                                 </Button>
                                             )}
                                             {!record.file_url && (
                                                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                                     <FileText className="h-4 w-4" />
-                                                    <span>Không có tệp đính kèm</span>
+                                                    <span>{uiText.noAttachment}</span>
                                                 </div>
                                             )}
                                         </div>
@@ -1038,11 +1858,11 @@ export default function PatientDetailPage() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>Ảnh cận lâm sàng</CardTitle>
+                    <CardTitle>{uiText.imagingCardTitle}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="grid gap-2">
-                        <Label htmlFor="record-type">Loại ảnh</Label>
+                        <Label htmlFor="record-type">{uiText.imagingTypeLabel}</Label>
                         <select
                             id="record-type"
                             value={recordType}
@@ -1061,10 +1881,10 @@ export default function PatientDetailPage() {
                     </div>
 
                     <div className="grid gap-2">
-                        <Label htmlFor="record-title">Tiêu đề (tùy chọn)</Label>
+                        <Label htmlFor="record-title">{uiText.recordTitleLabel}</Label>
                         <Input
                             id="record-title"
-                            placeholder="Ví dụ: CT ngực 2026-02-01"
+                            placeholder={uiText.recordTitlePlaceholder}
                             value={recordTitle}
                             onChange={(event) => {
                                 setRecordTitle(event.target.value)
@@ -1073,7 +1893,7 @@ export default function PatientDetailPage() {
                     </div>
 
                     <div className="grid gap-2">
-                        <Label htmlFor="record-image">Tải ảnh cận lâm sàng</Label>
+                        <Label htmlFor="record-image">{uiText.recordFileLabel}</Label>
                         <Input
                             id="record-image"
                             type="file"
@@ -1088,7 +1908,7 @@ export default function PatientDetailPage() {
                     )}
                     {recordUploadMutation.isError && (
                         <p className="text-sm text-destructive">
-                            Tải ảnh thất bại. Vui lòng thử lại.
+                            {uiText.recordUploadFailed}
                         </p>
                     )}
 
@@ -1097,16 +1917,23 @@ export default function PatientDetailPage() {
                         disabled={!recordFile || recordUploadMutation.isPending}
                     >
                         <Upload className="h-4 w-4 mr-2" />
-                        {recordUploadMutation.isPending ? "Đang tải..." : "Tải ảnh cận lâm sàng"}
+                        {recordUploadMutation.isPending ? uiText.uploadingLabel : uiText.recordUploadButton}
                     </Button>
                 </CardContent>
             </Card>
 
             <UploadProgressOverlay
                 open={isUploadProgressOpen}
-                title="Dang xu ly tai anh can lam sang"
-                stage={uploadProgressStage}
+                title={uiText.uploadProgressTitle}
+                stage={uploadProgressStage || getRecordUploadStage(uploadProgressValue, uploadProgressType, uiText)}
                 progress={uploadProgressValue}
+            />
+
+            <UploadProgressOverlay
+                open={isImportProgressOpen}
+                title={exportText.importTextButton}
+                stage={importProgressStage || exportText.importing}
+                progress={importProgressValue}
             />
 
             <Dialog
@@ -1122,23 +1949,23 @@ export default function PatientDetailPage() {
             >
                 <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
-                        <DialogTitle>Thêm nhận xét bác sĩ (tùy chọn)</DialogTitle>
+                        <DialogTitle>{uiText.postUploadDialogTitle}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-3">
                         <p className="text-sm text-muted-foreground">
-                            AI đã phân tích xong. Bạn có thể bổ sung nhận xét bác sĩ cho hồ sơ này.
+                            {uiText.postUploadDialogHint}
                         </p>
                         {postUploadAnalysis ? (
                             <RecordAIAnalysis analysis={postUploadAnalysis} />
                         ) : (
                             <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-                                Chưa có nội dung phân tích AI để tham khảo.
+                                {uiText.postUploadNoAnalysis}
                             </div>
                         )}
                         <Textarea
                             value={postUploadComment}
                             onChange={(event) => setPostUploadComment(event.target.value)}
-                            placeholder="Nhập nhận xét bác sĩ..."
+                            placeholder={uiText.doctorCommentPlaceholder}
                             rows={4}
                         />
                     </div>
@@ -1152,13 +1979,13 @@ export default function PatientDetailPage() {
                                 setPostUploadAiAnalysis(null)
                             }}
                         >
-                            Bỏ qua
+                            {uiText.skipButton}
                         </Button>
                         <Button
                             onClick={handlePostUploadCommentSave}
                             disabled={!postUploadRecordId || recordUpdateMutation.isPending}
                         >
-                            {recordUpdateMutation.isPending ? "Đang lưu..." : "Lưu nhận xét"}
+                            {recordUpdateMutation.isPending ? uiText.savingLabel : uiText.saveCommentButton}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -1175,12 +2002,12 @@ export default function PatientDetailPage() {
             >
                 <DialogContent className="sm:max-w-xl">
                     <DialogHeader>
-                        <DialogTitle>Cập nhật hồ sơ y khoa</DialogTitle>
+                        <DialogTitle>{uiText.editDialogTitle}</DialogTitle>
                     </DialogHeader>
                     {editState && (
                         <div className="space-y-4">
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-title">Tiêu đề</Label>
+                                <Label htmlFor="edit-record-title">{uiText.editRecordTitleLabel}</Label>
                                 <Input
                                     id="edit-record-title"
                                     value={editState.title}
@@ -1198,7 +2025,7 @@ export default function PatientDetailPage() {
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-type">Loại hồ sơ</Label>
+                                <Label htmlFor="edit-record-type">{uiText.editRecordTypeLabel}</Label>
                                 <select
                                     id="edit-record-type"
                                     value={editState.recordType}
@@ -1225,7 +2052,7 @@ export default function PatientDetailPage() {
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-file">Thay tệp (tùy chọn)</Label>
+                                <Label htmlFor="edit-record-file">{uiText.editRecordFileLabel}</Label>
                                 <Input
                                     id="edit-record-file"
                                     type="file"
@@ -1233,12 +2060,12 @@ export default function PatientDetailPage() {
                                     onChange={handleEditRecordFileChange}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    Nếu thay tệp, hệ thống sẽ chạy lại phân tích AI.
+                                    {uiText.editRecordFileHint}
                                 </p>
                             </div>
 
                             <div className="grid gap-2">
-                                <Label htmlFor="edit-record-comment">Nhận xét bác sĩ</Label>
+                                <Label htmlFor="edit-record-comment">{uiText.editRecordCommentLabel}</Label>
                                 <Textarea
                                     id="edit-record-comment"
                                     value={editState.doctorComment}
@@ -1253,7 +2080,7 @@ export default function PatientDetailPage() {
                                         )
                                     }
                                     rows={4}
-                                    placeholder="Nhập nhận xét bác sĩ..."
+                                    placeholder={uiText.doctorCommentPlaceholder}
                                 />
                             </div>
 
@@ -1262,10 +2089,10 @@ export default function PatientDetailPage() {
                     )}
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditState(null)}>
-                            Hủy
+                            {uiText.cancelButton}
                         </Button>
                         <Button onClick={handleRecordUpdate} disabled={!editState || recordUpdateMutation.isPending}>
-                            {recordUpdateMutation.isPending ? "Đang cập nhật..." : "Lưu thay đổi"}
+                            {recordUpdateMutation.isPending ? uiText.updatingLabel : uiText.saveChangesButton}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -1281,18 +2108,18 @@ export default function PatientDetailPage() {
             >
                 <AlertDialogContent>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Xóa hồ sơ y khoa?</AlertDialogTitle>
+                        <AlertDialogTitle>{uiText.deleteDialogTitle}</AlertDialogTitle>
                         <AlertDialogDescription>
-                            Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bị xóa.
+                            {uiText.deleteDialogDescription}
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                        <AlertDialogCancel>Hủy</AlertDialogCancel>
+                        <AlertDialogCancel>{uiText.cancelButton}</AlertDialogCancel>
                         <AlertDialogAction
                             onClick={handleDeleteRecord}
                             disabled={recordDeleteMutation.isPending}
                         >
-                            {recordDeleteMutation.isPending ? "Đang xóa..." : "Xóa"}
+                            {recordDeleteMutation.isPending ? uiText.deletingLabel : uiText.deleteButton}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
@@ -1308,7 +2135,7 @@ export default function PatientDetailPage() {
             >
                 <DialogContent className="sm:max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>{activeRecord?.title || "Ảnh cận lâm sàng"}</DialogTitle>
+                        <DialogTitle>{activeRecord?.title || uiText.activeRecordFallbackTitle}</DialogTitle>
                     </DialogHeader>
                     {activeRecord?.file_url ? (
                         <div className="space-y-3">
@@ -1327,7 +2154,7 @@ export default function PatientDetailPage() {
                         </div>
                     ) : (
                         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                            Không có ảnh để hiển thị
+                            {uiText.activeRecordNoImage}
                         </div>
                     )}
                 </DialogContent>
@@ -1345,12 +2172,12 @@ function getInitials(name: string): string {
         .slice(0, 2)
 }
 
-function formatDateTime(value: string): string {
+function formatDateTime(value: string, locale: string): string {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) {
         return value
     }
-    return date.toLocaleString("vi-VN", {
+    return date.toLocaleString(locale, {
         day: "2-digit",
         month: "2-digit",
         year: "numeric",
@@ -1359,62 +2186,45 @@ function formatDateTime(value: string): string {
     })
 }
 
-function formatVitalMetrics(vital: VitalSign): string[] {
+function formatVitalMetrics(vital: VitalSign, uiText: PatientDetailUiText): string[] {
     const metrics: string[] = []
 
     if (vital.blood_pressure_systolic || vital.blood_pressure_diastolic) {
         const systolic = vital.blood_pressure_systolic ?? "--"
         const diastolic = vital.blood_pressure_diastolic ?? "--"
-        metrics.push(`HA ${systolic}/${diastolic} mmHg`)
+        metrics.push(`${uiText.metrics.bloodPressure} ${systolic}/${diastolic} mmHg`)
     }
     if (vital.heart_rate) {
-        metrics.push(`Mạch ${vital.heart_rate} bpm`)
+        metrics.push(`${uiText.metrics.heartRate} ${vital.heart_rate} bpm`)
     }
     if (vital.blood_glucose) {
-        const timingLabel = formatGlucoseTiming(vital.blood_glucose_timing)
-        metrics.push(`Đường huyết ${vital.blood_glucose} mmol/L${timingLabel ? ` (${timingLabel})` : ""}`)
+        const timingLabel = formatGlucoseTiming(vital.blood_glucose_timing, uiText)
+        metrics.push(`${uiText.metrics.bloodGlucose} ${vital.blood_glucose} mmol/L${timingLabel ? ` (${timingLabel})` : ""}`)
     }
     if (vital.temperature) {
-        metrics.push(`Nhiệt độ ${vital.temperature} °C`)
+        metrics.push(`${uiText.metrics.temperature} ${vital.temperature} °C`)
     }
     if (vital.oxygen_saturation) {
-        metrics.push(`SpO₂ ${vital.oxygen_saturation}%`)
+        metrics.push(`${uiText.metrics.oxygenSaturation} ${vital.oxygen_saturation}%`)
     }
     if (vital.weight_kg) {
-        metrics.push(`Cân nặng ${vital.weight_kg} kg`)
+        metrics.push(`${uiText.metrics.weight} ${vital.weight_kg} kg`)
     }
 
     return metrics
 }
 
-function formatVitalSource(source?: VitalSign["source"]): string {
-    switch (source) {
-        case "self_reported":
-            return "Tự báo cáo"
-        case "clinic":
-            return "Phòng khám"
-        case "hospital":
-            return "Bệnh viện"
-        case "device":
-            return "Thiết bị"
-        default:
-            return "Không rõ"
-    }
+function formatVitalSource(source: VitalSign["source"] | undefined, uiText: PatientDetailUiText): string {
+    if (!source) return uiText.options.vitalSource.unknown
+    return uiText.options.vitalSource[source] ?? uiText.options.vitalSource.unknown
 }
 
-function formatGlucoseTiming(timing?: VitalSign["blood_glucose_timing"]): string {
-    switch (timing) {
-        case "fasting":
-            return "lúc đói"
-        case "before_meal":
-            return "trước ăn"
-        case "after_meal":
-            return "sau ăn"
-        case "random":
-            return "ngẫu nhiên"
-        default:
-            return ""
-    }
+function formatGlucoseTiming(
+    timing: VitalSign["blood_glucose_timing"] | undefined,
+    uiText: PatientDetailUiText
+): string {
+    if (!timing) return ""
+    return uiText.options.glucoseTiming[timing] ?? ""
 }
 
 function truncateText(text: string, maxLength: number): string {
@@ -1435,5 +2245,36 @@ function getErrorMessage(error: unknown, fallback: string): string {
         if (message) return message
     }
     return fallback
+}
+
+function triggerFileDownload(blob: Blob, fileName: string): void {
+    const objectUrl = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = objectUrl
+    anchor.download = fileName
+    anchor.rel = "noopener"
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+}
+
+function buildDownloadName(name: string | undefined, fallback: string, suffix = ""): string {
+    const candidate = String(name || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+
+    if (!candidate) {
+        return fallback
+    }
+
+    const extension = fallback.includes(".") ? fallback.slice(fallback.lastIndexOf(".")) : ""
+    if (!extension) {
+        return candidate
+    }
+
+    return `${candidate}${suffix}${extension}`
 }
 

@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # Upload pipeline behavior
     # False by default: image uploads go directly to LLM (no OCR in hot path)
     image_upload_run_ocr: bool = False
+    # Import OCR controls (PDF patient import)
+    import_pdf_ocr_dpi: int = 140
+    import_pdf_ocr_max_pages: int = 25
+    import_pdf_ocr_preprocess: bool = False
+    import_pdf_render_threads: int = 2
 
     # Verification model for input validation + safety checks.
     # In Vertex endpoint mode this typically points to the same deployed endpoint model.

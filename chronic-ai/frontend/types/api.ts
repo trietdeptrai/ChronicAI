@@ -104,3 +104,85 @@ export interface VitalSignCreateResponse {
     status: string
     vital: VitalSign
 }
+
+export interface PatientTextImportResponse {
+    status: string
+    patient_id: string
+    import_format: "zip"
+    vitals_imported: number
+    consultations_imported: number
+    records_imported: number
+    files_imported?: number
+    warning?: string
+    message: string
+}
+
+export interface PatientTextImportStartResponse {
+    status: "accepted"
+    job_id: string
+    patient_id: string
+    import_format: "zip"
+    progress: number
+    stage: string
+    message: string
+}
+
+export interface PatientTextImportStatusResponse {
+    job_id: string
+    patient_id: string
+    import_format: "zip"
+    status: "queued" | "running" | "completed" | "failed"
+    stage: string
+    progress: number
+    ocr_current_page?: number | null
+    ocr_total_pages?: number | null
+    created_at?: string
+    updated_at?: string
+    error?: string
+    result?: PatientTextImportResponse
+}
+
+export interface VitalImportPreview {
+    recordedAt: string
+    source: "self_reported" | "clinic" | "hospital" | "device" | string
+    bloodPressureSystolic: string
+    bloodPressureDiastolic: string
+    heartRate: string
+    bloodGlucose: string
+    bloodGlucoseTiming: "fasting" | "before_meal" | "after_meal" | "random" | "" | string
+    temperature: string
+    oxygenSaturation: string
+    weightKg: string
+    notes: string
+}
+
+export interface VitalImportPreviewResponse {
+    status: string
+    patient_id: string
+    total_vitals: number
+    prefill: VitalImportPreview
+    warning?: string
+    message: string
+}
+
+export interface PatientMetadataImportPreview {
+    full_name?: string
+    date_of_birth?: string
+    gender?: "male" | "female" | "other" | string
+    phone_primary?: string
+    email?: string
+    address_ward?: string
+    address_district?: string
+    address_province?: string
+    emergency_contact_name?: string
+    emergency_contact_phone?: string
+    emergency_contact_relationship?: string
+    triage_priority?: "low" | "medium" | "high" | "urgent" | string
+    profile_status?: "active" | "inactive" | "deceased" | "suspended" | string
+}
+
+export interface PatientMetadataImportPreviewResponse {
+    status: string
+    metadata: PatientMetadataImportPreview
+    message: string
+}

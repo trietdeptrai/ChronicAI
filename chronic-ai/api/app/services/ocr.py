@@ -6,8 +6,9 @@ Provides Vietnamese medical document text extraction from:
 - Images (X-ray labels, prescriptions, lab results)
 """
 from __future__ import annotations
-from typing import List, Optional, TYPE_CHECKING, Any
+from typing import Callable, List, Optional, TYPE_CHECKING, Any
 from pathlib import Path
+from functools import partial
 import tempfile
 import os
 import logging
@@ -21,6 +22,7 @@ try:
     from paddleocr import PaddleOCR
     from pdf2image import convert_from_path
     from PIL import Image, ImageEnhance, ImageFilter
+    import numpy as np
     PADDLEOCR_AVAILABLE = True
 except ImportError:
     PADDLEOCR_AVAILABLE = False
@@ -28,6 +30,7 @@ except ImportError:
     Image = None
     ImageEnhance = None
     ImageFilter = None
+    np = None
 
 
 def _safe_unlink(path: str, retries: int = 8, delay_seconds: float = 0.2) -> None:
@@ -120,6 +123,33 @@ class OCRService:
         image = image.filter(ImageFilter.MedianFilter(size=3))
         
         return image
+
+    def _run_ocr_on_pil_image(self, image: Any) -> Any:
+        """
+        Run OCR directly from PIL image buffer (no disk temp files when possible).
+        """
+        logger = logging.getLogger(__name__)
+
+        if np is not None:
+            try:
+                rgb_image = image.convert("RGB")
+                image_array = np.array(rgb_image)
+                return self.ocr.ocr(image_array)
+            except Exception:
+                logger.debug("[ocr] ndarray OCR path failed; fallback to temp file", exc_info=True)
+
+        tmp_name = None
+        with tempfile.NamedTemporaryFile(
+            suffix=".png",
+            delete=False
+        ) as tmp:
+            tmp_name = tmp.name
+            image.save(tmp_name)
+        try:
+            return self.ocr.ocr(tmp_name)
+        finally:
+            if tmp_name:
+                _safe_unlink(tmp_name)
     
     def extract_text_from_image(
         self,
@@ -137,24 +167,9 @@ class OCRService:
             Extracted text as string
         """
         if preprocess:
-            # Load and preprocess
-            image = Image.open(image_path)
-            image = self.preprocess_image(image)
-
-            # Save to temp file for PaddleOCR.
-            # On Windows, file must be closed before OCR reads it.
-            tmp_name = None
-            with tempfile.NamedTemporaryFile(
-                suffix='.png',
-                delete=False
-            ) as tmp:
-                tmp_name = tmp.name
-                image.save(tmp_name)
-            try:
-                result = self.ocr.ocr(tmp_name)
-            finally:
-                if tmp_name:
-                    _safe_unlink(tmp_name)
+            with Image.open(image_path) as image:
+                processed = self.preprocess_image(image)
+                result = self._run_ocr_on_pil_image(processed)
         else:
             result = self.ocr.ocr(image_path)
         
@@ -163,7 +178,11 @@ class OCRService:
     def extract_text_from_pdf(
         self,
         pdf_path: str,
-        dpi: int = 200
+        dpi: int = 200,
+        max_pages: Optional[int] = None,
+        preprocess: bool = True,
+        render_threads: int = 1,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> str:
         """
         Extract text from a PDF file.
@@ -175,34 +194,63 @@ class OCRService:
         Returns:
             Extracted text from all pages
         """
+        logger = logging.getLogger(__name__)
+        convert_kwargs: dict[str, Any] = {"dpi": dpi}
+        if render_threads and render_threads > 1:
+            convert_kwargs["thread_count"] = int(render_threads)
+        if isinstance(max_pages, int) and max_pages > 0:
+            convert_kwargs["first_page"] = 1
+            convert_kwargs["last_page"] = max_pages
+
+        logger.info(
+            "[ocr] converting pdf path=%s dpi=%s max_pages=%s",
+            pdf_path,
+            dpi,
+            max_pages if isinstance(max_pages, int) and max_pages > 0 else "all",
+        )
         # Convert PDF pages to images
-        images = convert_from_path(pdf_path, dpi=dpi)
+        images = convert_from_path(pdf_path, **convert_kwargs)
+        logger.info("[ocr] pdf converted pages=%s", len(images))
         
         all_text = []
         
         for page_num, image in enumerate(images, 1):
-            # Preprocess each page
-            processed = self.preprocess_image(image)
-
-            # Save to temp file and close before OCR to avoid Windows lock errors.
-            tmp_name = None
-            with tempfile.NamedTemporaryFile(
-                suffix='.png',
-                delete=False
-            ) as tmp:
-                tmp_name = tmp.name
-                processed.save(tmp_name)
+            logger.info("[ocr] processing page=%s/%s", page_num, len(images))
+            if progress_callback:
+                try:
+                    progress_callback(page_num, len(images))
+                except Exception:
+                    logger.debug("[ocr] progress callback failed", exc_info=True)
             try:
-                result = self.ocr.ocr(tmp_name)
+                if preprocess:
+                    processed = self.preprocess_image(image)
+                else:
+                    processed = image
+                result = self._run_ocr_on_pil_image(processed)
             finally:
-                if tmp_name:
-                    _safe_unlink(tmp_name)
+                try:
+                    image.close()
+                except Exception:
+                    pass
             
             page_text = self._format_ocr_result(result)
+            logger.warning(
+                "[ocr] page=%s/%s text_begin\n%s\n[ocr] page=%s/%s text_end",
+                page_num,
+                len(images),
+                page_text or "<empty>",
+                page_num,
+                len(images),
+            )
             if page_text:
                 all_text.append(f"--- Trang {page_num} ---\n{page_text}")
-        
-        return "\n\n".join(all_text)
+
+        full_text = "\n\n".join(all_text)
+        logger.warning(
+            "[ocr] full_text_begin\n%s\n[ocr] full_text_end",
+            full_text or "<empty>",
+        )
+        return full_text
     
     def _format_ocr_result(self, result: List) -> str:
         """
@@ -391,7 +439,13 @@ def get_ocr_service() -> OCRService:
 
 async def extract_text(
     file_path: str,
-    file_type: str = "auto"
+    file_type: str = "auto",
+    *,
+    pdf_dpi: int = 200,
+    pdf_max_pages: Optional[int] = None,
+    pdf_preprocess: bool = True,
+    pdf_render_threads: int = 1,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> str:
     """
     Async wrapper for text extraction.
@@ -421,8 +475,15 @@ async def extract_text(
     if file_type == "pdf":
         text = await loop.run_in_executor(
             None,
-            ocr.extract_text_from_pdf,
-            file_path
+            partial(
+                ocr.extract_text_from_pdf,
+                file_path,
+                pdf_dpi,
+                pdf_max_pages,
+                pdf_preprocess,
+                pdf_render_threads,
+                progress_callback,
+            ),
         )
     else:
         text = await loop.run_in_executor(

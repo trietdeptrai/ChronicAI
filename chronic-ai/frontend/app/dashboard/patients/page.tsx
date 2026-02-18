@@ -4,16 +4,18 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { ArrowRight, Search, Settings, UserPlus, X } from "lucide-react"
+import { ArrowRight, FileText, Search, Settings, Upload, UserPlus, X } from "lucide-react"
 
 import { useAuth, useDashboardLanguage, type DashboardLanguage } from "@/contexts"
 import {
     useCreatePatient,
     useDebounce,
     useDeletePatientProfile,
+    useExportPatientMetadata,
+    useImportPatientMetadataPreview,
     usePatients,
     useUpdatePatient,
 } from "@/lib/hooks"
@@ -45,6 +47,7 @@ type KnownPriority = Exclude<PriorityFilter, "">
 type GenderOption = (typeof genderOptions)[number]
 type TriageOption = (typeof triageOptions)[number]
 type StatusOption = (typeof statusOptions)[number]
+type TextExportFormat = "json" | "pdf"
 
 type Translation = {
     title: string
@@ -289,8 +292,37 @@ export default function PatientsPage() {
     const [deletePatient, setDeletePatient] = useState<Patient | null>(null)
     const [form, setForm] = useState<PatientFormState>(EMPTY_FORM)
     const [formError, setFormError] = useState<string | null>(null)
+    const [metadataExportFormat, setMetadataExportFormat] = useState<TextExportFormat>("json")
+    const metadataImportInputRef = useRef<HTMLInputElement>(null)
     const debouncedSearch = useDebounce(search, 300)
     const t = translations[language]
+    const metadataActionText = language === "vi"
+        ? {
+            exportButton: "Xuất metadata",
+            importButton: "Nhập metadata",
+            exporting: "Đang xuất...",
+            importing: "Đang nhập...",
+            exportSuccess: "Đã xuất metadata bệnh nhân.",
+            importSuccess: "Đã điền sẵn metadata từ tệp nhập. Vui lòng kiểm tra trước khi lưu.",
+            exportFailed: "Xuất metadata thất bại.",
+            importFailed: "Nhập metadata thất bại.",
+            invalidFileType: "Tệp không hợp lệ. Chỉ hỗ trợ .json hoặc .pdf.",
+            hint: "Nhập chỉ điền sẵn biểu mẫu, không tự lưu.",
+            formatLabel: "Định dạng xuất metadata",
+        }
+        : {
+            exportButton: "Export metadata",
+            importButton: "Import metadata",
+            exporting: "Exporting...",
+            importing: "Importing...",
+            exportSuccess: "Patient metadata exported.",
+            importSuccess: "Form prefilled from imported metadata. Review before saving.",
+            exportFailed: "Failed to export metadata.",
+            importFailed: "Failed to import metadata.",
+            invalidFileType: "Invalid file type. Only .json or .pdf is supported.",
+            hint: "Import only prefills the form and does not save automatically.",
+            formatLabel: "Metadata export format",
+        }
 
     const listQuery = usePatients({
         page: 1,
@@ -301,6 +333,8 @@ export default function PatientsPage() {
     const createMutation = useCreatePatient()
     const updateMutation = useUpdatePatient()
     const deleteMutation = useDeletePatientProfile()
+    const exportMetadataMutation = useExportPatientMetadata()
+    const importMetadataMutation = useImportPatientMetadataPreview()
 
     const patients = listQuery.data?.patients ?? []
     const pageLabel = useMemo(() => {
@@ -445,6 +479,120 @@ export default function PatientsPage() {
         )
     }
 
+    const buildMetadataPayloadFromForm = () => {
+        const payload = {
+            full_name: form.full_name.trim() || undefined,
+            date_of_birth: form.date_of_birth || undefined,
+            gender: form.gender || undefined,
+            phone_primary: form.phone_primary.trim() || undefined,
+            email: form.email.trim() || undefined,
+            address_ward: form.address_ward.trim() || undefined,
+            address_district: form.address_district.trim() || undefined,
+            address_province: form.address_province.trim() || undefined,
+            emergency_contact_name: form.emergency_contact_name.trim() || undefined,
+            emergency_contact_phone: form.emergency_contact_phone.trim() || undefined,
+            emergency_contact_relationship: form.emergency_contact_relationship.trim() || undefined,
+            triage_priority: form.triage_priority || undefined,
+            profile_status: form.profile_status || undefined,
+        }
+        return payload
+    }
+
+    const applyImportedMetadataToForm = (metadata: Record<string, unknown>) => {
+        setForm((prev) => ({
+            ...prev,
+            full_name: typeof metadata.full_name === "string" ? metadata.full_name : prev.full_name,
+            date_of_birth: typeof metadata.date_of_birth === "string" ? metadata.date_of_birth : prev.date_of_birth,
+            gender: metadata.gender === "male" || metadata.gender === "female" || metadata.gender === "other"
+                ? metadata.gender
+                : prev.gender,
+            phone_primary: typeof metadata.phone_primary === "string" ? metadata.phone_primary : prev.phone_primary,
+            email: typeof metadata.email === "string" ? metadata.email : prev.email,
+            address_ward: typeof metadata.address_ward === "string" ? metadata.address_ward : prev.address_ward,
+            address_district: typeof metadata.address_district === "string" ? metadata.address_district : prev.address_district,
+            address_province: typeof metadata.address_province === "string" ? metadata.address_province : prev.address_province,
+            emergency_contact_name: typeof metadata.emergency_contact_name === "string" ? metadata.emergency_contact_name : prev.emergency_contact_name,
+            emergency_contact_phone: typeof metadata.emergency_contact_phone === "string" ? metadata.emergency_contact_phone : prev.emergency_contact_phone,
+            emergency_contact_relationship: typeof metadata.emergency_contact_relationship === "string"
+                ? metadata.emergency_contact_relationship
+                : prev.emergency_contact_relationship,
+            triage_priority: metadata.triage_priority === "low"
+                || metadata.triage_priority === "medium"
+                || metadata.triage_priority === "high"
+                || metadata.triage_priority === "urgent"
+                ? metadata.triage_priority
+                : prev.triage_priority,
+            profile_status: metadata.profile_status === "active"
+                || metadata.profile_status === "inactive"
+                || metadata.profile_status === "deceased"
+                || metadata.profile_status === "suspended"
+                ? metadata.profile_status
+                : prev.profile_status,
+        }))
+    }
+
+    const handleMetadataExport = () => {
+        exportMetadataMutation.mutate(
+            {
+                metadata: buildMetadataPayloadFromForm(),
+                format: metadataExportFormat,
+                language,
+            },
+            {
+                onSuccess: (result) => {
+                    const fallbackName = buildDownloadName(
+                        form.full_name,
+                        `patient-metadata.${metadataExportFormat}`,
+                        "-metadata"
+                    )
+                    triggerFileDownload(result.blob, result.filename ?? fallbackName)
+                    toast.success(metadataActionText.exportSuccess)
+                },
+                onError: (error) => {
+                    toast.error(getErrorMessage(error, metadataActionText.exportFailed))
+                },
+            }
+        )
+    }
+
+    const handleMetadataImportButtonClick = () => {
+        metadataImportInputRef.current?.click()
+    }
+
+    const handleMetadataImportFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+        const selected = event.target.files?.[0] ?? null
+        if (!selected) return
+
+        const resetInput = () => {
+            if (metadataImportInputRef.current) {
+                metadataImportInputRef.current.value = ""
+            }
+        }
+
+        const lowerName = selected.name.toLowerCase()
+        if (!lowerName.endsWith(".json") && !lowerName.endsWith(".pdf")) {
+            toast.error(metadataActionText.invalidFileType)
+            resetInput()
+            return
+        }
+
+        importMetadataMutation.mutate(
+            { file: selected },
+            {
+                onSuccess: (result) => {
+                    applyImportedMetadataToForm(result.metadata as Record<string, unknown>)
+                    toast.success(metadataActionText.importSuccess)
+                },
+                onError: (error) => {
+                    toast.error(getErrorMessage(error, metadataActionText.importFailed))
+                },
+                onSettled: () => {
+                    resetInput()
+                },
+            }
+        )
+    }
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -513,9 +661,55 @@ export default function PatientsPage() {
                 </CardContent>
             </Card>
 
+            <input
+                ref={metadataImportInputRef}
+                type="file"
+                accept=".json,.pdf,application/json,application/pdf"
+                className="hidden"
+                onChange={handleMetadataImportFileChange}
+            />
+
             <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setForm(EMPTY_FORM); setFormError(null) } }}>
                 <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader><DialogTitle>{t.createPatient}</DialogTitle></DialogHeader>
+                    <div className="space-y-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                            <div className="flex w-full sm:w-auto">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="rounded-r-none border-r-0"
+                                    onClick={handleMetadataExport}
+                                    disabled={exportMetadataMutation.isPending || importMetadataMutation.isPending}
+                                >
+                                    <FileText className="mr-2 h-4 w-4" />
+                                    {exportMetadataMutation.isPending ? metadataActionText.exporting : metadataActionText.exportButton}
+                                </Button>
+                                <select
+                                    aria-label={metadataActionText.formatLabel}
+                                    value={metadataExportFormat}
+                                    onChange={(event) => setMetadataExportFormat(event.target.value as TextExportFormat)}
+                                    disabled={exportMetadataMutation.isPending || importMetadataMutation.isPending}
+                                    className="border-input h-9 w-24 rounded-l-none rounded-r-md border bg-transparent px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50"
+                                >
+                                    <option value="json">JSON</option>
+                                    <option value="pdf">PDF</option>
+                                </select>
+                            </div>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={handleMetadataImportButtonClick}
+                                disabled={exportMetadataMutation.isPending || importMetadataMutation.isPending}
+                            >
+                                <Upload className="mr-2 h-4 w-4" />
+                                {importMetadataMutation.isPending ? metadataActionText.importing : metadataActionText.importButton}
+                            </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{metadataActionText.hint}</p>
+                    </div>
                     <PatientForm form={form} setForm={setForm} t={t} />
                     {formError && <p className="text-sm text-destructive">{formError}</p>}
                     <DialogFooter>
@@ -528,6 +722,44 @@ export default function PatientsPage() {
             <Dialog open={!!editPatient} onOpenChange={(open) => { if (!open) { setEditPatient(null); setFormError(null) } }}>
                 <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
                     <DialogHeader><DialogTitle>{t.updatePatient}</DialogTitle></DialogHeader>
+                    <div className="space-y-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                            <div className="flex w-full sm:w-auto">
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="rounded-r-none border-r-0"
+                                    onClick={handleMetadataExport}
+                                    disabled={exportMetadataMutation.isPending || importMetadataMutation.isPending}
+                                >
+                                    <FileText className="mr-2 h-4 w-4" />
+                                    {exportMetadataMutation.isPending ? metadataActionText.exporting : metadataActionText.exportButton}
+                                </Button>
+                                <select
+                                    aria-label={metadataActionText.formatLabel}
+                                    value={metadataExportFormat}
+                                    onChange={(event) => setMetadataExportFormat(event.target.value as TextExportFormat)}
+                                    disabled={exportMetadataMutation.isPending || importMetadataMutation.isPending}
+                                    className="border-input h-9 w-24 rounded-l-none rounded-r-md border bg-transparent px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50"
+                                >
+                                    <option value="json">JSON</option>
+                                    <option value="pdf">PDF</option>
+                                </select>
+                            </div>
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={handleMetadataImportButtonClick}
+                                disabled={exportMetadataMutation.isPending || importMetadataMutation.isPending}
+                            >
+                                <Upload className="mr-2 h-4 w-4" />
+                                {importMetadataMutation.isPending ? metadataActionText.importing : metadataActionText.importButton}
+                            </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{metadataActionText.hint}</p>
+                    </div>
                     <PatientForm form={form} setForm={setForm} t={t} />
                     {formError && <p className="text-sm text-destructive">{formError}</p>}
                     <DialogFooter>
@@ -630,4 +862,34 @@ function getErrorMessage(error: unknown, fallback: string): string {
         if (message) return message
     }
     return fallback
+}
+
+function triggerFileDownload(blob: Blob, fileName: string): void {
+    const objectUrl = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = objectUrl
+    anchor.download = fileName
+    anchor.rel = "noopener"
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+}
+
+function buildDownloadName(name: string | undefined, fallback: string, suffix = ""): string {
+    const candidate = String(name || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+
+    if (!candidate) {
+        return fallback
+    }
+
+    const extension = fallback.includes(".") ? fallback.slice(fallback.lastIndexOf(".")) : ""
+    if (!extension) {
+        return `${candidate}${suffix}`
+    }
+    return `${candidate}${suffix}${extension}`
 }
