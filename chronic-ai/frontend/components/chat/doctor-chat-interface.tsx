@@ -33,11 +33,16 @@ export function DoctorChatInterface() {
         clearMessages,
     } = useDoctorChat()
 
-    const pendingPatientMatches = pendingHITL?.type === "patient_confirmation"
-        ? ((pendingHITL.details as {
+    const patientConfirmationDetails = pendingHITL?.type === "patient_confirmation"
+        ? (pendingHITL.details as {
             matches?: Array<{ id: string; name: string; match_confidence?: number }>
-        }).matches || [])
-        : []
+            require_single_selection?: boolean
+            selection_reason?: string
+        })
+        : undefined
+    const pendingPatientMatches = patientConfirmationDetails?.matches || []
+    const requireSingleSelection = !!patientConfirmationDetails?.require_single_selection
+    const selectionReason = patientConfirmationDetails?.selection_reason
 
     // Scroll to bottom when messages or streaming state changes
     useEffect(() => {
@@ -146,6 +151,9 @@ export function DoctorChatInterface() {
                             <Card className="p-4 border-amber-400/40 bg-amber-50/40">
                                 <p className="text-sm font-medium text-amber-700">Cần xác nhận</p>
                                 <p className="text-sm text-muted-foreground mt-1">{pendingHITL.message}</p>
+                                {selectionReason && (
+                                    <p className="text-xs text-amber-700 mt-2">{selectionReason}</p>
+                                )}
 
                                 {pendingPatientMatches.length > 0 ? (
                                     <div className="mt-3 space-y-2">
@@ -159,21 +167,20 @@ export function DoctorChatInterface() {
                                                 onClick={() => handleResumeHITL({ patient_ids: [match.id] })}
                                             >
                                                 Chọn: {match.name}
-                                                {typeof match.match_confidence === "number"
-                                                    ? ` (${Math.round(match.match_confidence * 100)}%)`
-                                                    : ""}
                                             </Button>
                                         ))}
                                         <div className="flex gap-2 pt-1">
-                                            <Button
-                                                size="sm"
-                                                disabled={isResolvingHITL}
-                                                onClick={() => handleResumeHITL({
-                                                    patient_ids: pendingPatientMatches.map((m) => m.id),
-                                                })}
-                                            >
-                                                Giữ tất cả
-                                            </Button>
+                                            {!requireSingleSelection && (
+                                                <Button
+                                                    size="sm"
+                                                    disabled={isResolvingHITL}
+                                                    onClick={() => handleResumeHITL({
+                                                        patient_ids: pendingPatientMatches.map((m) => m.id),
+                                                    })}
+                                                >
+                                                    Giữ tất cả
+                                                </Button>
+                                            )}
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
