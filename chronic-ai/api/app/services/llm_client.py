@@ -157,19 +157,45 @@ class LLMClient:
             stream=False,
         )
         headers = await self._vertex_headers()
-        url = self._vertex_chat_completions_url()
+        primary_url = self._vertex_chat_completions_url()
+        candidate_urls = [primary_url]
+        custom_path = (settings.vertex_ai_chat_completions_path or "").strip()
+        fallback_host = self._default_vertex_service_host()
+        configured_host = (settings.vertex_ai_host or "").strip().rstrip("/")
+        if configured_host and configured_host != fallback_host and not custom_path:
+            candidate_urls.append(self._vertex_chat_completions_url(host_override=fallback_host))
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                )
-                response.raise_for_status()
-                return self._extract_vertex_text(response.json())
+                last_connect_error: Optional[Exception] = None
+                for idx, url in enumerate(candidate_urls):
+                    try:
+                        response = await client.post(
+                            url,
+                            headers=headers,
+                            json=payload,
+                        )
+                        response.raise_for_status()
+                        return self._extract_vertex_text(response.json())
+                    except httpx.ConnectError as e:
+                        last_connect_error = e
+                        if idx + 1 < len(candidate_urls):
+                            logger.warning(
+                                "Vertex host '%s' unreachable, retrying with fallback host '%s'",
+                                configured_host or self._default_vertex_service_host(),
+                                fallback_host,
+                            )
+                            continue
+                        raise
+                if last_connect_error:
+                    raise last_connect_error
+                raise RuntimeError("Vertex generation failed before request dispatch")
         except httpx.ConnectError:
-            raise RuntimeError(f"Cannot connect to Vertex AI endpoint at {settings.vertex_ai_host}")
+            tried_hosts = [self._host_from_url(url) for url in candidate_urls]
+            raise RuntimeError(
+                "Cannot connect to Vertex AI endpoint host(s): "
+                + ", ".join(tried_hosts)
+            )
         except httpx.TimeoutException:
             raise RuntimeError("Vertex AI request timed out")
         except httpx.HTTPStatusError as e:
@@ -224,10 +250,23 @@ class LLMClient:
         if text:
             yield text
 
-    def _vertex_chat_completions_url(self) -> str:
-        host = (settings.vertex_ai_host or "").strip().rstrip("/")
+    def _default_vertex_service_host(self) -> str:
+        location = (settings.vertex_ai_location or "us-central1").strip() or "us-central1"
+        return f"https://{location}-aiplatform.googleapis.com"
+
+    @staticmethod
+    def _host_from_url(url: str) -> str:
+        if not url:
+            return ""
+        parts = url.split("/", 3)
+        if len(parts) >= 3:
+            return f"{parts[0]}//{parts[2]}"
+        return url
+
+    def _vertex_chat_completions_url(self, host_override: Optional[str] = None) -> str:
+        host = (host_override or settings.vertex_ai_host or "").strip().rstrip("/")
         if not host:
-            raise RuntimeError("VERTEX_AI_HOST is not configured")
+            host = self._default_vertex_service_host()
 
         custom_path = (settings.vertex_ai_chat_completions_path or "").strip()
         if custom_path:
@@ -866,7 +905,6 @@ class LLMClient:
             return True
 
         if self._provider != "ollama":
-            host = bool((settings.vertex_ai_host or "").strip())
             project = bool((settings.vertex_ai_project_id or "").strip())
             location = bool((settings.vertex_ai_location or "").strip())
             endpoint_id = bool((settings.vertex_ai_endpoint_id or "").strip())
@@ -878,7 +916,7 @@ class LLMClient:
                     model,
                     model_name,
                 )
-            return host and project and location and endpoint_id and bool(model_name)
+            return project and location and endpoint_id and bool(model_name)
 
         models = await self.list_models()
         model_names = [m.get("name", "") for m in models]

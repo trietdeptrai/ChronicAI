@@ -57,9 +57,69 @@ export interface Patient {
   last_checkup_date?: string
   next_appointment_date?: string
   triage_priority?: "low" | "medium" | "high" | "urgent"
-  profile_status: "active" | "inactive" | "deceased"
+  profile_status: "active" | "inactive" | "deceased" | "suspended"
   created_at: string
   updated_at: string
+}
+
+export interface PatientCreateInput {
+  full_name: string
+  date_of_birth: string
+  gender: "male" | "female" | "other"
+  national_id?: string
+  phone_primary: string
+  phone_secondary?: string
+  email?: string
+  address_street?: string
+  address_ward: string
+  address_district: string
+  address_province: string
+  emergency_contact_name: string
+  emergency_contact_phone: string
+  emergency_contact_relationship: string
+  blood_type?: "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-" | "unknown"
+  primary_diagnosis?: string
+  triage_priority?: "low" | "medium" | "high" | "urgent"
+  profile_status?: "active" | "inactive" | "deceased" | "suspended"
+  preferred_language?: "vi" | "en"
+  assigned_doctor_id?: string
+}
+
+export interface PatientUpdateInput {
+  full_name?: string
+  date_of_birth?: string
+  gender?: "male" | "female" | "other"
+  national_id?: string | null
+  phone_primary?: string
+  phone_secondary?: string | null
+  email?: string | null
+  address_street?: string | null
+  address_ward?: string
+  address_district?: string
+  address_province?: string
+  emergency_contact_name?: string
+  emergency_contact_phone?: string
+  emergency_contact_relationship?: string
+  blood_type?: "A+" | "A-" | "B+" | "B-" | "AB+" | "AB-" | "O+" | "O-" | "unknown"
+  primary_diagnosis?: string | null
+  triage_priority?: "low" | "medium" | "high" | "urgent"
+  profile_status?: "active" | "inactive" | "deceased" | "suspended"
+  preferred_language?: "vi" | "en"
+  assigned_doctor_id?: string | null
+}
+
+export interface PatientMutationResponse {
+  status: string
+  patient: Patient
+  message: string
+}
+
+export interface DeletePatientResponse {
+  status: string
+  patient_id: string
+  user_id?: string | null
+  warning?: string
+  message: string
 }
 
 export interface ChronicCondition {

@@ -2,17 +2,27 @@
  * Patient API functions
  */
 
-import { apiClient, uploadFile } from "./client"
+import { apiClient, downloadFile, uploadFile } from "./client"
 import type {
+    DeletePatientResponse,
     PatientListResponse,
     PatientDetailResponse,
+    PatientCreateInput,
+    PatientMutationResponse,
+    PatientUpdateInput,
     MedicalRecordsResponse,
     DashboardStats,
     PatientPhotoUploadResponse,
     UploadResponse,
+    PatientTextImportStartResponse,
+    PatientTextImportStatusResponse,
     VitalSignCreateResponse,
+    PatientTextImportResponse,
+    PatientMetadataImportPreview,
+    PatientMetadataImportPreviewResponse,
     VitalSignInput,
     VitalSignsResponse,
+    VitalImportPreviewResponse,
 } from "@/types"
 
 interface ListPatientsParams {
@@ -46,6 +56,38 @@ export async function getPatients(params: ListPatientsParams = {}): Promise<Pati
  */
 export async function getPatientDetail(patientId: string): Promise<PatientDetailResponse> {
     return apiClient<PatientDetailResponse>(`/doctor/patients/${patientId}`)
+}
+
+/**
+ * Create patient profile (general patient info only)
+ */
+export async function createPatient(payload: PatientCreateInput): Promise<PatientMutationResponse> {
+    return apiClient<PatientMutationResponse>("/doctor/patients", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    })
+}
+
+/**
+ * Update patient profile (general patient info only)
+ */
+export async function updatePatient(
+    patientId: string,
+    payload: PatientUpdateInput
+): Promise<PatientMutationResponse> {
+    return apiClient<PatientMutationResponse>(`/doctor/patients/${patientId}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+    })
+}
+
+/**
+ * Delete patient profile
+ */
+export async function deletePatient(patientId: string): Promise<DeletePatientResponse> {
+    return apiClient<DeletePatientResponse>(`/doctor/patients/${patientId}`, {
+        method: "DELETE",
+    })
 }
 
 /**
@@ -165,4 +207,118 @@ export async function deletePatientRecord(patientId: string, recordId: string): 
     return apiClient<{ status: string; record_id: string; patient_id: string; message: string }>(endpoint, {
         method: "DELETE",
     })
+}
+
+/**
+ * Export full patient record ZIP (text payload + medical files).
+ */
+export async function exportPatientText(
+    patientId: string,
+    format: "json" | "pdf" = "json",
+    language: "vi" | "en" = "en"
+) {
+    const endpoint = `/doctor/patients/${patientId}/export?format=${encodeURIComponent(format)}&lang=${encodeURIComponent(language)}`
+    return downloadFile(endpoint)
+}
+
+/**
+ * Export vital-sign data (sub-data scope).
+ */
+export async function exportPatientVitals(
+    patientId: string,
+    format: "json" | "pdf" = "json",
+    language: "vi" | "en" = "en"
+) {
+    const endpoint = `/doctor/patients/${patientId}/vitals/export?format=${encodeURIComponent(format)}&lang=${encodeURIComponent(language)}`
+    return downloadFile(endpoint)
+}
+
+/**
+ * Import vital-sign data for preview/prefill only (no DB write).
+ */
+export async function importPatientVitalsPreview(
+    patientId: string,
+    file: File
+): Promise<VitalImportPreviewResponse> {
+    const formData = new FormData()
+    formData.append("file", file)
+    const endpoint = `/doctor/patients/${patientId}/vitals/import/preview`
+    return uploadFile<VitalImportPreviewResponse>(endpoint, formData, "POST")
+}
+
+/**
+ * Export patient metadata from form payload.
+ */
+export async function exportPatientMetadata(
+    metadata: PatientMetadataImportPreview,
+    format: "json" | "pdf" = "json",
+    language: "vi" | "en" = "en"
+) {
+    const endpoint = `/doctor/patient-metadata/export?format=${encodeURIComponent(format)}&lang=${encodeURIComponent(language)}`
+    return downloadFile(endpoint, {
+        method: "POST",
+        body: JSON.stringify({ metadata }),
+        headers: {
+            "Content-Type": "application/json",
+        },
+    })
+}
+
+/**
+ * Import patient metadata for preview/prefill only (no DB write).
+ */
+export async function importPatientMetadataPreview(
+    file: File
+): Promise<PatientMetadataImportPreviewResponse> {
+    const formData = new FormData()
+    formData.append("file", file)
+    const endpoint = "/doctor/patient-metadata/import/preview"
+    return uploadFile<PatientMetadataImportPreviewResponse>(endpoint, formData, "POST")
+}
+
+/**
+ * Legacy endpoint: export original patient record files as ZIP.
+ * Kept for backward compatibility.
+ */
+export async function exportPatientFiles(patientId: string) {
+    const endpoint = `/doctor/patients/${patientId}/export/files`
+    return downloadFile(endpoint)
+}
+
+/**
+ * Import full patient record from exported ZIP.
+ */
+export async function importPatientText(patientId: string, file: File): Promise<PatientTextImportResponse> {
+    const start = await startPatientTextImport(patientId, file)
+    while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 900))
+        const status = await getPatientTextImportStatus(patientId, start.job_id)
+        if (status.status === "completed") {
+            if (!status.result) {
+                throw new Error("Import completed without result payload.")
+            }
+            return status.result
+        }
+        if (status.status === "failed") {
+            throw new Error(status.error || "Patient import failed.")
+        }
+    }
+}
+
+export async function startPatientTextImport(
+    patientId: string,
+    file: File
+): Promise<PatientTextImportStartResponse> {
+    const formData = new FormData()
+    formData.append("file", file)
+    const endpoint = `/doctor/patients/${patientId}/import`
+    return uploadFile<PatientTextImportStartResponse>(endpoint, formData, "POST")
+}
+
+export async function getPatientTextImportStatus(
+    patientId: string,
+    jobId: string
+): Promise<PatientTextImportStatusResponse> {
+    const endpoint = `/doctor/patients/${patientId}/import/${jobId}`
+    return apiClient<PatientTextImportStatusResponse>(endpoint)
 }

@@ -6,7 +6,7 @@
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { useAuth } from "@/contexts"
+import { useAuth, useDashboardLanguage } from "@/contexts"
 import {
     LayoutDashboard,
     Users,
@@ -43,7 +43,10 @@ const styles = {
 
 interface NavItem {
     id: string
-    label: string
+    label: {
+        vi: string
+        en: string
+    }
     href: string
     icon: React.ElementType
     doctorOnly?: boolean
@@ -51,21 +54,21 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-    { id: "dashboard", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { id: "patients", label: "Patients", href: "/dashboard/patients", icon: Users, doctorOnly: true },
-    { id: "calendar", label: "Calendar", href: "/dashboard/calendar", icon: Calendar },
-    { id: "analytics", label: "Analytics", href: "/dashboard/analytics", icon: BarChart3, doctorOnly: true },
-    { id: "chat", label: "AI Chat", href: "/dashboard/chat", icon: MessageSquare },
-    { id: "records", label: "Records", href: "/dashboard/records", icon: FileText },
-    { id: "settings", label: "Settings", href: "/dashboard/settings", icon: Settings },
+    { id: "dashboard", label: { vi: "Bảng điều khiển", en: "Dashboard" }, href: "/dashboard", icon: LayoutDashboard },
+    { id: "patients", label: { vi: "Bệnh nhân", en: "Patients" }, href: "/dashboard/patients", icon: Users, doctorOnly: true },
+    { id: "calendar", label: { vi: "Lịch", en: "Calendar" }, href: "/dashboard/calendar", icon: Calendar },
+    { id: "analytics", label: { vi: "Phân tích", en: "Analytics" }, href: "/dashboard/analytics", icon: BarChart3, doctorOnly: true },
+    { id: "chat", label: { vi: "AI Chat", en: "AI Chat" }, href: "/dashboard/chat", icon: MessageSquare },
+    { id: "records", label: { vi: "Hồ sơ", en: "Records" }, href: "/dashboard/records", icon: FileText },
+    { id: "settings", label: { vi: "Cài đặt", en: "Settings" }, href: "/dashboard/settings", icon: Settings },
 ]
 
 export function Sidebar() {
     const pathname = usePathname()
     const router = useRouter()
     const { role, logout } = useAuth()
+    const { language } = useDashboardLanguage()
 
-    // Filter nav items based on role
     const visibleItems = navItems.filter((item) => {
         if (item.doctorOnly && role !== "doctor") return false
         if (item.patientOnly && role !== "patient") return false
@@ -82,12 +85,10 @@ export function Sidebar() {
             className="flex flex-col items-center py-6 gap-4"
             style={styles.sidebar}
         >
-            {/* Logo */}
             <div style={styles.logoIcon} className="mb-4">
                 <LayoutDashboard className="w-6 h-6 text-white" />
             </div>
 
-            {/* Menu Items */}
             <div className="flex flex-col gap-2 w-full px-3 flex-1">
                 {visibleItems.map((item) => {
                     const Icon = item.icon
@@ -103,7 +104,7 @@ export function Sidebar() {
                                 !isActive && "hover:bg-white/60 rounded-[14px]"
                             )}
                             style={isActive ? styles.activeNavItem : undefined}
-                            title={item.label}
+                            title={item.label[language]}
                         >
                             <Icon className={cn(
                                 "w-5 h-5",
@@ -114,12 +115,11 @@ export function Sidebar() {
                 })}
             </div>
 
-            {/* Logout Button */}
             <div className="px-3 w-full">
                 <button
                     onClick={handleLogout}
                     className="w-full h-12 rounded-[14px] flex items-center justify-center transition-all hover:bg-red-100"
-                    title="Đăng xuất"
+                    title={language === "vi" ? "Đăng xuất" : "Logout"}
                 >
                     <LogOut className="w-5 h-5 text-red-500" />
                 </button>

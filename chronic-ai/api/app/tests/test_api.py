@@ -80,6 +80,22 @@ class TestChatEndpoints:
 
 class TestDoctorEndpoints:
     """Tests for doctor endpoints - require Supabase connection."""
+
+    def test_export_patient_text_rejects_invalid_uuid(self, client):
+        """Patient export text endpoint validates patient_id format."""
+        response = client.get("/doctor/patients/not-a-uuid/export?format=json")
+        assert response.status_code == 400
+
+    def test_export_patient_text_rejects_invalid_format(self, client):
+        """Patient export text endpoint validates export format."""
+        patient_id = "00000000-0000-0000-0000-000000000000"
+        response = client.get(f"/doctor/patients/{patient_id}/export?format=txt")
+        assert response.status_code == 422
+
+    def test_export_patient_files_rejects_invalid_uuid(self, client):
+        """Patient file export endpoint validates patient_id format."""
+        response = client.get("/doctor/patients/not-a-uuid/export/files")
+        assert response.status_code == 400
     
     @pytest.mark.skip(reason="Requires Supabase credentials - run with .env configured")
     def test_list_patients_pagination(self, client):
