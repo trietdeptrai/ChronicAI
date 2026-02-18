@@ -15,9 +15,10 @@ import base64
 import json
 import logging
 from pathlib import Path
-from typing import AsyncGenerator, Literal, Optional
+from typing import AsyncGenerator, Literal, Optional, Tuple
 from uuid import UUID
 import re
+import unicodedata
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -84,6 +85,39 @@ SELF_HARM_EMERGENCY_KEYWORDS = [
     "hại bản thân",
 ]
 
+# Deterministic out-of-scope guardrail for patient chat
+PATIENT_NON_MEDICAL_REQUEST_KEYWORDS = [
+    "bai tho",
+    "lam tho",
+    "viet tho",
+    "poem",
+    "poetry",
+    "lyrics",
+    "bai hat",
+    "viet rap",
+    "joke",
+    "funny",
+    "truyen",
+    "ke chuyen",
+    "story",
+    "essay",
+    "viet email",
+    "email",
+    "viet code",
+    "lap trinh",
+    "thoi tiet",
+    "weather",
+    "gia co phieu",
+    "stock",
+    "bong da",
+    "football",
+]
+
+PATIENT_MEDICAL_SCOPE_REFUSAL_VI = (
+    "Tôi chỉ hỗ trợ các câu hỏi về sức khỏe và y tế.\n\n"
+    "Vui lòng mô tả triệu chứng, thuốc đang dùng, hoặc câu hỏi liên quan đến tình trạng sức khỏe của bạn."
+)
+
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -95,6 +129,39 @@ def _contains_self_harm_emergency(text: str) -> bool:
         return False
     lower_text = text.lower()
     return any(keyword in lower_text for keyword in SELF_HARM_EMERGENCY_KEYWORDS)
+
+
+def _normalize_scope_text(text: str) -> str:
+    """Normalize text for robust keyword matching."""
+    normalized = unicodedata.normalize("NFD", (text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.replace("đ", "d")
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized
+
+
+def _scope_contains_keyword(normalized_query: str, keyword: str) -> bool:
+    """Boundary-safe keyword check."""
+    if not keyword:
+        return False
+    return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+
+
+def _is_out_of_scope_patient_query(query: str) -> Tuple[bool, str]:
+    """
+    Return whether a patient query is outside medical scope.
+
+    Blocks explicit non-medical intent deterministically (for example: poem requests).
+    """
+    normalized_query = _normalize_scope_text(query)
+    if not normalized_query:
+        return True, "empty_query"
+
+    if any(_scope_contains_keyword(normalized_query, kw) for kw in PATIENT_NON_MEDICAL_REQUEST_KEYWORDS):
+        return True, "non_medical_intent"
+
+    return False, "in_scope"
 
 def create_initial_patient_state(
     patient_id: str,
@@ -108,6 +175,8 @@ def create_initial_patient_state(
         query_vi=query_vi,
         query_en="",
         image_path=image_path,
+        scope_guard_blocked=False,
+        scope_guard_reason=None,
         
         # Context
         patient_profile={},
@@ -141,9 +210,23 @@ async def translate_patient_input_node(state: PatientChatState) -> dict:
     """Node: Normalize patient input."""
     logger.info(f"[PatientGraph] translate_input: {state['query_vi'][:50]}...")
     query_en = state["query_vi"]
-    
+
+    is_out_of_scope, scope_reason = _is_out_of_scope_patient_query(query_en)
+    if is_out_of_scope:
+        logger.info(f"[PatientGraph] translate_input: blocked by scope guard ({scope_reason})")
+        return {
+            "query_en": query_en,
+            "scope_guard_blocked": True,
+            "scope_guard_reason": scope_reason,
+            "reasoning_en": PATIENT_MEDICAL_SCOPE_REFUSAL_VI,
+            "current_stage": "scope_blocked",
+            "progress": 0.75,
+        }
+
     return {
         "query_en": query_en,
+        "scope_guard_blocked": False,
+        "scope_guard_reason": None,
         "current_stage": "translated_input",
         "progress": 0.15
     }
@@ -160,12 +243,29 @@ async def verify_patient_input_node(state: PatientChatState) -> dict:
     logger.info("[PatientGraph] verify_input: Checking clarity...")
     
     verification = await verify_input(state["query_en"])
-    
-    return {
+
+    result = {
         "verification_result": verification,
         "current_stage": "verified_input",
         "progress": 0.25
     }
+    # Defense in depth: re-check scope after verification stage.
+    final_query = state.get("query_en", "")
+    is_out_of_scope, scope_reason = _is_out_of_scope_patient_query(final_query)
+    if is_out_of_scope:
+        logger.info(f"[PatientGraph] verify_input: blocked by scope guard ({scope_reason})")
+        result.update({
+            "scope_guard_blocked": True,
+            "scope_guard_reason": scope_reason,
+            "reasoning_en": PATIENT_MEDICAL_SCOPE_REFUSAL_VI,
+            "current_stage": "scope_blocked",
+            "progress": 0.75,
+        })
+    else:
+        result["scope_guard_blocked"] = False
+        result["scope_guard_reason"] = None
+
+    return result
 
 
 async def get_patient_history_node(state: PatientChatState) -> dict:
@@ -372,6 +472,7 @@ CRITICAL GUIDELINES:
 - ALWAYS remind them to check with their doctor
 - Do NOT prescribe medication or dosages
 - Do NOT give definitive diagnoses
+- Refuse non-medical requests (poems, stories, entertainment, coding, weather, finance)
 - If you are uncertain or don't have enough information, say "Tôi không có đủ thông tin để trả lời chính xác" (I don't have enough information)
 - NEVER make up information - only use what's in the patient context
 
@@ -492,6 +593,20 @@ def route_triage(state: PatientChatState) -> Literal["escalation_handler", "pati
     return "patient_reasoning"
 
 
+def route_after_patient_translation(state: PatientChatState) -> Literal["verify_input", "format_output"]:
+    """Route after translation; short-circuit out-of-scope requests."""
+    if state.get("scope_guard_blocked"):
+        return "format_output"
+    return "verify_input"
+
+
+def route_after_patient_verification(state: PatientChatState) -> Literal["get_history", "format_output"]:
+    """Route after verification; short-circuit out-of-scope requests."""
+    if state.get("scope_guard_blocked"):
+        return "format_output"
+    return "get_history"
+
+
 # ============================================================================
 # GRAPH BUILDER
 # ============================================================================
@@ -521,8 +636,16 @@ def build_patient_graph():
 
     # Define edges
     builder.add_edge(START, "translate_input")
-    builder.add_edge("translate_input", "verify_input")
-    builder.add_edge("verify_input", "get_history")
+    builder.add_conditional_edges(
+        "translate_input",
+        route_after_patient_translation,
+        ["verify_input", "format_output"]
+    )
+    builder.add_conditional_edges(
+        "verify_input",
+        route_after_patient_verification,
+        ["get_history", "format_output"]
+    )
     builder.add_edge("get_history", "symptom_triage")
 
     # Conditional routing based on triage
@@ -603,6 +726,7 @@ async def process_patient_chat_graph(
 
                     # Yield progress update with Vietnamese messages
                     stage_messages = {
+                        "scope_blocked": "Chỉ hỗ trợ câu hỏi sức khỏe và y tế",
                         "translated_input": "Đã hiểu câu hỏi của bạn",
                         "verified_input": "Đang phân tích nội dung",
                         "retrieved_history": "Đã xem xét hồ sơ y tế",

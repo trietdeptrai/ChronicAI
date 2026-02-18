@@ -39,6 +39,7 @@ export interface ChatStreamUpdate {
         | "translated_input"
         | "verifying_input"
         | "verified_input"
+        | "scope_blocked"
         | "retrieving_context"
         | "retrieved_context"
         | "retrieved_history"

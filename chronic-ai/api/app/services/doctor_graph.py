@@ -290,6 +290,74 @@ _IMAGE_RELEVANCE_KEYWORDS: tuple[str, ...] = (
     "phim x quang",
 )
 
+_NON_MEDICAL_REQUEST_KEYWORDS: tuple[str, ...] = (
+    "bai tho",
+    "lam tho",
+    "viet tho",
+    "poem",
+    "poetry",
+    "lyrics",
+    "bai hat",
+    "viet rap",
+    "joke",
+    "funny",
+    "truyen",
+    "ke chuyen",
+    "story",
+    "essay",
+    "viet email",
+    "email",
+    "viet code",
+    "lap trinh",
+    "thoi tiet",
+    "weather",
+    "gia co phieu",
+    "stock",
+    "bong da",
+    "football",
+)
+
+_MEDICAL_SCOPE_KEYWORDS: tuple[str, ...] = (
+    "y khoa",
+    "y hoc",
+    "lam sang",
+    "bac si",
+    "benh nhan",
+    "benh an",
+    "ho so",
+    "tinh trang",
+    "trieu chung",
+    "chan doan",
+    "dieu tri",
+    "dieu duong",
+    "thuoc",
+    "lieu",
+    "xet nghiem",
+    "chi so",
+    "duong huyet",
+    "huyet ap",
+    "nhip tim",
+    "spo2",
+    "cap cuu",
+    "kham",
+    "tai kham",
+    "medical",
+    "clinical",
+    "patient",
+    "symptom",
+    "diagnosis",
+    "treatment",
+    "medication",
+    "dosage",
+    "lab",
+)
+
+_MEDICAL_SCOPE_REFUSAL_VI = (
+    "Tôi chỉ hỗ trợ câu hỏi y khoa liên quan đến bệnh nhân, chẩn đoán, điều trị, "
+    "hoặc phân tích hình ảnh y tế.\n\n"
+    "Vui lòng đặt lại câu hỏi theo ngữ cảnh lâm sàng."
+)
+
 
 def _normalize_query_text(text: str) -> str:
     """
@@ -311,9 +379,36 @@ def _query_contains_keyword(normalized_query: str, keyword: str) -> bool:
         return False
     if " " in keyword:
         return keyword in normalized_query
-    if len(keyword) <= 3:
-        return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
-    return keyword in normalized_query
+    return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+
+
+def _is_medical_scope_query(query: str, has_image: bool = False) -> Tuple[bool, str]:
+    """
+    Determine whether the doctor query is within medical scope.
+
+    Hard-blocks clearly non-medical/creative requests (for example poems)
+    and only allows queries with clinical intent.
+    """
+    normalized_query = _normalize_query_text(query)
+    if not normalized_query:
+        return False, "empty_query"
+
+    # Explicit non-medical intent always wins, even if the query mentions medicine.
+    if any(_query_contains_keyword(normalized_query, kw) for kw in _NON_MEDICAL_REQUEST_KEYWORDS):
+        return False, "non_medical_intent"
+
+    has_medical_keyword = any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in (_MEDICAL_SCOPE_KEYWORDS + _IMAGE_RELEVANCE_KEYWORDS)
+    )
+    if has_medical_keyword:
+        return True, "medical_keyword_match"
+
+    # If image is attached and the request asks for analysis/assessment, allow it.
+    if has_image and re.search(r"\b(phan tich|danh gia|nhan xet|analyze|assess|review)\b", normalized_query):
+        return True, "image_with_analysis_intent"
+
+    return False, "missing_medical_context"
 
 
 def _should_include_record_images(state: DoctorOrchestratorState) -> Tuple[bool, str]:
@@ -427,9 +522,33 @@ async def translate_input_node(state: DoctorOrchestratorState) -> dict:
                 with open(path, "rb") as f:
                     image_base64 = base64.b64encode(f.read()).decode("utf-8")
 
+        in_scope, scope_reason = _is_medical_scope_query(
+            query_en,
+            has_image=bool(image_base64),
+        )
+        if not in_scope:
+            logger.info(f"[Graph] translate_input: blocked by scope guard ({scope_reason})")
+            return {
+                "query_en": query_en,
+                "image_base64": image_base64,
+                "scope_guard_blocked": True,
+                "scope_guard_reason": scope_reason,
+                "reasoning_en": _MEDICAL_SCOPE_REFUSAL_VI,
+                "current_stage": "scope_blocked",
+                "progress": 0.70,
+                "stage_messages": [create_stage_message(
+                    "scope_guard",
+                    "Chỉ hỗ trợ câu hỏi y khoa liên quan lâm sàng",
+                    0.70,
+                    scope_reason=scope_reason,
+                )]
+            }
+
         return {
             "query_en": query_en,
             "image_base64": image_base64,
+            "scope_guard_blocked": False,
+            "scope_guard_reason": None,
             "current_stage": "translated_input",
             "progress": 0.15,
             "stage_messages": [create_stage_message(
@@ -491,6 +610,30 @@ async def verify_input_node(state: DoctorOrchestratorState, config: Optional[Run
                 result["human_approved_input"] = True
                 if result["query_vi"] != state["query_vi"]:
                     result["query_en"] = result["query_vi"]
+
+        final_query = result.get("query_en", state.get("query_en", ""))
+        in_scope, scope_reason = _is_medical_scope_query(
+            final_query,
+            has_image=bool(state.get("image_base64")),
+        )
+        if not in_scope:
+            logger.info(f"[Graph] verify_input: blocked by scope guard ({scope_reason})")
+            result.update({
+                "scope_guard_blocked": True,
+                "scope_guard_reason": scope_reason,
+                "reasoning_en": _MEDICAL_SCOPE_REFUSAL_VI,
+                "current_stage": "scope_blocked",
+                "progress": 0.70,
+                "stage_messages": [create_stage_message(
+                    "scope_guard",
+                    "Chỉ hỗ trợ câu hỏi y khoa liên quan lâm sàng",
+                    0.70,
+                    scope_reason=scope_reason,
+                )]
+            })
+        else:
+            result["scope_guard_blocked"] = False
+            result["scope_guard_reason"] = None
 
         return result
     finally:
@@ -1070,7 +1213,9 @@ def _build_system_prompt(query_type: QueryType) -> str:
 3. KHÔNG sử dụng placeholder như [Insert...], [TODO], [N/A]
 4. Nếu thiếu thông tin quan trọng, nói rõ "Không đủ dữ liệu"
 5. Nếu có hình ảnh y tế, phân tích kỹ và mô tả những gì quan sát được
-6. Trả lời hoàn toàn bằng tiếng Việt"""
+6. TỪ CHỐI mọi yêu cầu ngoài y khoa (ví dụ: làm thơ, kể chuyện, viết code, giải trí)
+7. Khi từ chối ngoài phạm vi, trả lời ngắn gọn và chuyển hướng về câu hỏi lâm sàng
+8. Trả lời hoàn toàn bằng tiếng Việt"""
 
     if query_type == QueryType.GENERAL:
         return f"""You are a medical AI assistant supporting doctors.
@@ -1437,22 +1582,30 @@ async def translate_output_node(state: DoctorOrchestratorState) -> dict:
 # ROUTING FUNCTIONS
 # ============================================================================
 
-def route_after_translation(state: DoctorOrchestratorState) -> Literal["verify_input", "extract_patients"]:
+def route_after_translation(
+    state: DoctorOrchestratorState
+) -> Literal["verify_input", "extract_patients", "format_output"]:
     """
     Route after translation.
 
     Fast-path optimization:
     - When LLM-HITL is disabled, skip expensive verification call.
     """
+    if state.get("scope_guard_blocked"):
+        return "format_output"
     if not _llm_hitl_enabled(state):
         return "extract_patients"
     return "verify_input"
 
 
-def route_after_verification(state: DoctorOrchestratorState) -> Literal["extract_patients", END]:
+def route_after_verification(
+    state: DoctorOrchestratorState
+) -> Literal["extract_patients", "format_output", END]:
     """Route after verification: continue or abort if invalid."""
     if state.get("errors"):
         return END
+    if state.get("scope_guard_blocked"):
+        return "format_output"
     return "extract_patients"
 
 
@@ -1508,12 +1661,12 @@ def build_doctor_graph():
     builder.add_conditional_edges(
         "translate_input",
         route_after_translation,
-        ["verify_input", "extract_patients"]
+        ["verify_input", "extract_patients", "format_output"]
     )
     builder.add_conditional_edges(
         "verify_input",
         route_after_verification,
-        ["extract_patients", END]
+        ["extract_patients", "format_output", END]
     )
     builder.add_edge("extract_patients", "resolve_patients")
     builder.add_edge("resolve_patients", "get_context")
