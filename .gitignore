@@ -33,3 +33,4 @@ build/
 # OS / Editor
 .idea/
 .vscode/
+.agent/
