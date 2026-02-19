@@ -165,10 +165,38 @@ export interface VitalImportPreviewResponse {
     message: string
 }
 
+export interface MedicalHistoryImportPreview {
+    chronic_conditions: unknown[]
+    past_surgeries: unknown[]
+    hospitalizations: unknown[]
+    medications_history: unknown[]
+    allergies: unknown[]
+    psychiatric_history: unknown[]
+    family_history_of_chronic_conditions: unknown[]
+    family_history_of_mental_health_conditions: unknown[]
+    family_history_of_genetic_conditions: unknown[]
+    vaccines_administered: unknown[]
+    vaccines_due: unknown[]
+    previous_treatments: unknown[]
+    physiotherapy: unknown[]
+    other_relevant_treatments: unknown[]
+}
+
+export interface MedicalHistoryImportPreviewResponse {
+    status: string
+    patient_id: string
+    prefill: MedicalHistoryImportPreview
+    warning?: string
+    message: string
+}
+
 export interface PatientMetadataImportPreview {
     full_name?: string
     date_of_birth?: string
     gender?: "male" | "female" | "other" | string
+    national_id?: string
+    insurance_number?: string
+    primary_diagnosis?: string
     phone_primary?: string
     email?: string
     address_ward?: string

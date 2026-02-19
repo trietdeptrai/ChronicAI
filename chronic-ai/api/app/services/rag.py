@@ -18,6 +18,35 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+TEST_RESULT_RECORD_TYPES = {"lab", "xray", "ecg", "ct", "mri"}
+
+
+def _is_test_result_record(record_type: object) -> bool:
+    return str(record_type or "").strip().lower() in TEST_RESULT_RECORD_TYPES
+
+
+def _parse_checkup_notes(notes: object) -> dict:
+    """
+    Parse structured vital-sign notes when available.
+
+    Notes can be plain text or a JSON object encoded as string.
+    """
+    if notes is None:
+        return {}
+    if isinstance(notes, dict):
+        return notes
+    raw = str(notes).strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {"note_text": raw}
+    if isinstance(parsed, dict):
+        return parsed
+    return {"note_text": raw}
+
+
 def chunk_text(
     text: str,
     chunk_size: int = 500,
@@ -203,7 +232,8 @@ async def get_patient_context(
     try:
         patient_result = supabase.table("patients").select(
             "full_name, date_of_birth, gender, chronic_conditions, "
-            "current_medications, allergies, primary_diagnosis"
+            "current_medications, allergies, primary_diagnosis, "
+            "surgical_history, family_medical_history"
         ).eq("id", str(patient_id)).maybe_single().execute()
     except Exception:
         patient_result = None
@@ -219,26 +249,56 @@ async def get_patient_context(
 - **Bệnh mãn tính**: {json.dumps(patient.get('chronic_conditions', []), ensure_ascii=False)}
 - **Thuốc đang dùng**: {json.dumps(patient.get('current_medications', []), ensure_ascii=False)}
 - **Dị ứng**: {', '.join(patient.get('allergies') or [])}
+- **Tiền sử phẫu thuật**: {json.dumps(patient.get('surgical_history', []), ensure_ascii=False)}
+- **Tiền sử gia đình**: {json.dumps(patient.get('family_medical_history', {}), ensure_ascii=False)}
 """)
     
     # 2. Get recent vital signs
     vitals_result = supabase.table("vital_signs").select(
         "recorded_at, blood_pressure_systolic, blood_pressure_diastolic, "
-        "heart_rate, blood_glucose, blood_glucose_timing, oxygen_saturation"
+        "heart_rate, blood_glucose, blood_glucose_timing, oxygen_saturation, "
+        "temperature, weight_kg, notes"
     ).eq("patient_id", str(patient_id)).order(
         "recorded_at", desc=True
     ).limit(5).execute()
     
     if vitals_result.data:
-        context_parts.append("\n## Sinh hiệu gần đây (Recent Vitals)")
+        context_parts.append("\n## Hồ sơ điều trị - Khám định kỳ (Treatment Records - Regular Checkups)")
         for vital in vitals_result.data:
             bp = f"{vital.get('blood_pressure_systolic', 'N/A')}/{vital.get('blood_pressure_diastolic', 'N/A')}"
-            context_parts.append(
+            checkup_notes = _parse_checkup_notes(vital.get("notes"))
+            parts: list[str] = [
                 f"- {vital.get('recorded_at', 'N/A')}: "
                 f"HA: {bp} mmHg, "
                 f"Nhịp tim: {vital.get('heart_rate', 'N/A')} bpm, "
                 f"SpO2: {vital.get('oxygen_saturation', 'N/A')}%"
-            )
+            ]
+            if vital.get("temperature") is not None:
+                parts.append(f", Nhiệt độ: {vital.get('temperature')} C")
+            if vital.get("weight_kg") is not None:
+                parts.append(f", Cân nặng: {vital.get('weight_kg')} kg")
+
+            reason = str(checkup_notes.get("reason_for_visit") or "").strip()
+            progress = str(checkup_notes.get("patient_progress") or "").strip()
+            plan = str(checkup_notes.get("treatment_plan") or "").strip()
+            doctor_comment = str(checkup_notes.get("doctor_test_result_comment") or "").strip()
+            doctor_notes = str(checkup_notes.get("doctor_notes") or "").strip()
+            free_text_note = str(checkup_notes.get("note_text") or "").strip()
+
+            if reason:
+                parts.append(f", Lý do khám: {reason}")
+            if doctor_comment:
+                parts.append(f", Nhận xét kết quả: {doctor_comment}")
+            if progress:
+                parts.append(f", Tiến triển: {progress}")
+            if plan:
+                parts.append(f", Kế hoạch điều trị: {plan}")
+            if doctor_notes:
+                parts.append(f", Ghi chú bác sĩ: {doctor_notes}")
+            elif free_text_note:
+                parts.append(f", Ghi chú: {free_text_note}")
+
+            context_parts.append("".join(parts))
     
     # 3. Get upcoming appointments and reminder-relevant scheduling context
     now_utc = datetime.now(timezone.utc)
@@ -311,7 +371,7 @@ async def get_patient_context(
             )
 
         if similar_records:
-            context_parts.append("\n## Hồ sơ y tế liên quan (Relevant Medical Records)")
+            context_parts.append("\n## Hồ sơ điều trị - Kết quả cận lâm sàng liên quan (Treatment Records - Relevant Test Results)")
             for record in similar_records:
                 context_parts.append(f"- {record.get('chunk_content', '')}")
         else:
@@ -323,8 +383,10 @@ async def get_patient_context(
             ).limit(5).execute()
 
             if records_result.data:
-                context_parts.append("\n## Hồ sơ y tế gần đây (Recent Medical Records)")
-                for record in records_result.data:
+                test_records = [record for record in records_result.data if _is_test_result_record(record.get("record_type"))]
+                if test_records:
+                    context_parts.append("\n## Hồ sơ điều trị - Kết quả cận lâm sàng gần đây (Treatment Records - Recent Test Results)")
+                for record in test_records:
                     context_parts.append(
                         f"- [{record.get('record_type', 'N/A')}] "
                         f"{record.get('title', 'N/A')}: "
@@ -339,8 +401,10 @@ async def get_patient_context(
         ).limit(5).execute()
         
         if records_result.data:
-            context_parts.append("\n## Hồ sơ y tế gần đây (Recent Medical Records)")
-            for record in records_result.data:
+            test_records = [record for record in records_result.data if _is_test_result_record(record.get("record_type"))]
+            if test_records:
+                context_parts.append("\n## Hồ sơ điều trị - Kết quả cận lâm sàng gần đây (Treatment Records - Recent Test Results)")
+            for record in test_records:
                 context_parts.append(
                     f"- [{record.get('record_type', 'N/A')}] "
                     f"{record.get('title', 'N/A')}: "

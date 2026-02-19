@@ -283,6 +283,9 @@ class PatientBase(BaseModel):
     allergies: list[str] = []
     surgical_history: list[SurgicalHistory] = []
     family_medical_history: Optional[dict] = None
+    medical_history: Optional[dict] = None
+    immunization_records: Optional[dict] = None
+    treatment_history: Optional[dict] = None
     smoking_status: Optional[SmokingStatus] = None
     alcohol_consumption: Optional[AlcoholConsumption] = None
     exercise_frequency: Optional[ExerciseFrequency] = None
@@ -323,6 +326,11 @@ class PatientUpdate(BaseModel):
     current_medications: Optional[list[Medication]] = None
     medication_adherence_score: Optional[int] = Field(None, ge=1, le=10)
     allergies: Optional[list[str]] = None
+    surgical_history: Optional[list[SurgicalHistory]] = None
+    family_medical_history: Optional[dict] = None
+    medical_history: Optional[dict] = None
+    immunization_records: Optional[dict] = None
+    treatment_history: Optional[dict] = None
     insurance_provider: Optional[str] = Field(None, max_length=100)
     insurance_number: Optional[str] = Field(None, max_length=50)
     insurance_expiry: Optional[date] = None

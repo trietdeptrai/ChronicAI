@@ -57,7 +57,24 @@ PATIENT_OPTIONAL_TEXT_FIELDS = {
     "phone_secondary",
     "address_street",
     "primary_diagnosis",
+    "insurance_number",
 }
+
+MEDICAL_HISTORY_FAMILY_FALLBACK_KEYS = {
+    "hospitalizations",
+    "medications_history",
+    "psychiatric_history",
+}
+IMMUNIZATION_FAMILY_FALLBACK_KEYS = {
+    "vaccines_administered",
+    "vaccines_due",
+}
+TREATMENT_HISTORY_FAMILY_FALLBACK_KEYS = {
+    "previous_treatments",
+    "physiotherapy",
+    "other_relevant_treatments",
+}
+_HISTORY_VALUE_MISSING = object()
 
 
 class PatientTextExportFormat(str, Enum):
@@ -85,6 +102,9 @@ PATIENT_IMPORT_JSON_FIELDS = {
     "allergies",
     "surgical_history",
     "family_medical_history",
+    "medical_history",
+    "immunization_records",
+    "treatment_history",
     "notification_preferences",
 }
 PATIENT_IMPORT_FLOAT_FIELDS = {"height_cm", "weight_kg"}
@@ -97,10 +117,102 @@ VITAL_IMPORT_INT_FIELDS = {
     "oxygen_saturation",
 }
 VITAL_IMPORT_FLOAT_FIELDS = {"blood_glucose", "temperature", "weight_kg"}
+MEDICAL_HISTORY_PREFILL_KEYS = [
+    "chronic_conditions",
+    "past_surgeries",
+    "hospitalizations",
+    "medications_history",
+    "allergies",
+    "psychiatric_history",
+    "family_history_of_chronic_conditions",
+    "family_history_of_mental_health_conditions",
+    "family_history_of_genetic_conditions",
+    "vaccines_administered",
+    "vaccines_due",
+    "previous_treatments",
+    "physiotherapy",
+    "other_relevant_treatments",
+]
+MEDICAL_HISTORY_PDF_GROUPS: list[tuple[str, list[str]]] = [
+    (
+        "Personal Medical History",
+        [
+            "chronic_conditions",
+            "past_surgeries",
+            "hospitalizations",
+            "medications_history",
+            "allergies",
+            "psychiatric_history",
+        ],
+    ),
+    (
+        "Family Medical History",
+        [
+            "family_history_of_chronic_conditions",
+            "family_history_of_mental_health_conditions",
+            "family_history_of_genetic_conditions",
+        ],
+    ),
+    (
+        "Immunization History",
+        [
+            "vaccines_administered",
+            "vaccines_due",
+        ],
+    ),
+    (
+        "Treatment History",
+        [
+            "previous_treatments",
+            "physiotherapy",
+            "other_relevant_treatments",
+        ],
+    ),
+]
+MEDICAL_HISTORY_ITEM_PREFERRED_KEYS = [
+    "name",
+    "title",
+    "condition",
+    "icd10_code",
+    "diagnosed_date",
+    "date",
+    "status",
+    "severity",
+    "stage",
+    "notes",
+]
+MEDICAL_HISTORY_SECTION_PATIENT_KEYS = {
+    "chronic_conditions",
+    "surgical_history",
+    "allergies",
+    "medical_history",
+    "family_medical_history",
+    "immunization_records",
+    "treatment_history",
+}
+PDF_MEDICAL_HISTORY_FIELD_LABELS: dict[str, str] = {
+    "chronic_conditions": "Chronic Conditions",
+    "past_surgeries": "Past Surgeries",
+    "hospitalizations": "Hospitalizations",
+    "medications_history": "Medications History",
+    "allergies": "Allergies",
+    "psychiatric_history": "Psychiatric History",
+    "family_history_of_chronic_conditions": "Family History of Chronic Conditions",
+    "family_history_of_mental_health_conditions": "Family History of Mental Health Conditions",
+    "family_history_of_genetic_conditions": "Family History of Genetic Conditions",
+    "vaccines_administered": "Vaccines Administered",
+    "vaccines_due": "Vaccines Due",
+    "previous_treatments": "Previous Treatments",
+    "physiotherapy": "Physiotherapy",
+    "other_relevant_treatments": "Other Relevant Treatments",
+}
 PATIENT_METADATA_IMPORT_FIELDS = {
     "full_name",
     "date_of_birth",
     "gender",
+    "national_id",
+    "insurance_number",
+    "primary_diagnosis",
     "phone_primary",
     "email",
     "address_ward",
@@ -121,6 +233,9 @@ PDF_METADATA_FIELD_LABELS: dict[str, str] = {
     "full_name": "Full Name",
     "date_of_birth": "Date of Birth",
     "gender": "Gender",
+    "national_id": "NRIC",
+    "insurance_number": "Health Insurance Number",
+    "primary_diagnosis": "Diagnosis",
     "phone_primary": "Primary Phone",
     "email": "Email",
     "address_ward": "Ward",
@@ -217,6 +332,9 @@ PDF_METADATA_FIELD_LABELS_VI: dict[str, str] = {
     "full_name": "Họ và tên",
     "date_of_birth": "Ngày sinh",
     "gender": "Giới tính",
+    "national_id": "Số CCCD",
+    "insurance_number": "Mã số BHYT",
+    "primary_diagnosis": "Chuẩn đoán",
     "phone_primary": "Số điện thoại chính",
     "email": "Email",
     "address_ward": "Phường/Xã",
@@ -320,6 +438,7 @@ PDF_TEXT_BY_LANGUAGE: dict[str, dict[str, str]] = {
         "summary": "Summary",
         "total_entries": "Total entries",
         "total_fields": "Total fields",
+        "treatment_records": "Treatment Records",
         "vital_signs": "Vital Signs",
         "consultations": "Consultations",
         "medical_records": "Medical Records",
@@ -354,6 +473,7 @@ PDF_TEXT_BY_LANGUAGE: dict[str, dict[str, str]] = {
         "summary": "Tóm tắt",
         "total_entries": "Tổng số bản ghi",
         "total_fields": "Tổng số trường",
+        "treatment_records": "Hồ sơ điều trị",
         "vital_signs": "Chỉ số sinh tồn",
         "consultations": "Hội chẩn",
         "medical_records": "Hồ sơ y khoa",
@@ -407,6 +527,7 @@ PDF_VITAL_PREFERRED_ORDER = [
     "blood_glucose_timing",
     "notes",
 ]
+TEST_RESULT_RECORD_TYPES = {"lab", "xray", "ecg", "ct", "mri"}
 IMPORT_JOB_TTL_SECONDS = 60 * 60
 IMPORT_JOB_MAX_ENTRIES = 200
 _patient_import_jobs: dict[str, dict[str, Any]] = {}
@@ -504,6 +625,10 @@ def _normalize_pdf_key(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_ ]+", "", deaccented)
     normalized = re.sub(r"\s+", "_", normalized).strip("_")
     return normalized
+
+
+def _strip_pdf_heading_prefix(value: str) -> str:
+    return re.sub(r"^\d+(?:\.\d+)*\s*[\)\.\-]?\s*", "", str(value or "").strip())
 
 
 def _coerce_nullable_text(value: Any) -> Optional[str]:
@@ -705,6 +830,27 @@ def _parse_patient_import_pdf_payload(ocr_text: str) -> dict[str, Any]:
         "consultations": "consultations",
         "records": "records",
     }
+    section_prefix = r"(?:\d+(?:\.\d+)*\s*[\)\.\-]?\s*)?"
+    patient_heading_keys: set[str] = set()
+    for language_map in PDF_TEXT_BY_LANGUAGE.values():
+        for heading_key in (
+            "summary",
+            "demographics",
+            "contact_information",
+            "emergency_contact",
+            "clinical_status",
+            "lifestyle_and_risk",
+            "insurance",
+            "medical_background",
+            "additional_profile_data",
+        ):
+            heading = language_map.get(heading_key)
+            if heading:
+                patient_heading_keys.add(_normalize_pdf_key(_strip_pdf_heading_prefix(heading)))
+    patient_heading_keys.update({
+        _normalize_pdf_key(section_title)
+        for section_title, _ in MEDICAL_HISTORY_PDF_GROUPS
+    })
 
     def flush_item() -> None:
         nonlocal current_item, current_item_key
@@ -718,13 +864,51 @@ def _parse_patient_import_pdf_payload(ocr_text: str) -> dict[str, Any]:
         if not line:
             continue
 
-        if line.lower() == "patient profile":
+        if re.match(r"^[-=]{3,}$", line):
+            current_patient_key = None
+            current_item_key = None
+            continue
+
+        stripped_line = _strip_pdf_heading_prefix(line)
+        normalized_section_key = _normalize_pdf_key(stripped_line)
+
+        if normalized_section_key == "patient_profile":
             flush_item()
             section = "patient"
             current_patient_key = None
             continue
 
-        vital_header = re.match(r"^vital\s*signs\s*\((\d+)\)$", line, flags=re.IGNORECASE)
+        if normalized_section_key.endswith("treatment_records"):
+            flush_item()
+            section = "treatment"
+            current_patient_key = None
+            continue
+        if (
+            normalized_section_key.endswith("regular_checkups")
+            or normalized_section_key.endswith("medical_test_results")
+            or normalized_section_key.endswith("medical_records_test_results")
+            or normalized_section_key.endswith("medical_history")
+        ):
+            # Informational subsection headers in newer export layouts.
+            flush_item()
+            section = "treatment"
+            current_patient_key = None
+            continue
+
+        if (
+            normalized_section_key in {"consultations", "medical_records", "medical_history", "vital_signs"}
+            and not re.search(r"\(\d+\)\s*$", line)
+            and ":" not in line
+        ):
+            current_patient_key = None
+            current_item_key = None
+            continue
+
+        if section == "patient" and normalized_section_key in patient_heading_keys and ":" not in line:
+            current_patient_key = None
+            continue
+
+        vital_header = re.match(rf"^{section_prefix}vital\s*signs\s*\((\d+)\)$", line, flags=re.IGNORECASE)
         if vital_header:
             flush_item()
             section = "vitals"
@@ -732,7 +916,7 @@ def _parse_patient_import_pdf_payload(ocr_text: str) -> dict[str, Any]:
             current_patient_key = None
             continue
 
-        consultation_header = re.match(r"^consultations\s*\((\d+)\)$", line, flags=re.IGNORECASE)
+        consultation_header = re.match(rf"^{section_prefix}consultations\s*\((\d+)\)$", line, flags=re.IGNORECASE)
         if consultation_header:
             flush_item()
             section = "consultations"
@@ -740,7 +924,7 @@ def _parse_patient_import_pdf_payload(ocr_text: str) -> dict[str, Any]:
             current_patient_key = None
             continue
 
-        record_header = re.match(r"^medical\s*records\s*\((\d+)\)$", line, flags=re.IGNORECASE)
+        record_header = re.match(rf"^{section_prefix}medical\s*records\s*\((\d+)\)$", line, flags=re.IGNORECASE)
         if record_header:
             flush_item()
             section = "records"
@@ -748,30 +932,30 @@ def _parse_patient_import_pdf_payload(ocr_text: str) -> dict[str, Any]:
             current_patient_key = None
             continue
 
-        if re.match(r"^vital\s*#\d+$", line, flags=re.IGNORECASE):
+        if re.match(rf"^{section_prefix}vital(?:\s*entry)?\s*#\d+$", line, flags=re.IGNORECASE):
             flush_item()
             section = "vitals"
             current_item = {}
             continue
 
-        if re.match(r"^consultation\s*#\d+$", line, flags=re.IGNORECASE):
+        if re.match(rf"^{section_prefix}consultation(?:\s*entry)?\s*#\d+$", line, flags=re.IGNORECASE):
             flush_item()
             section = "consultations"
             current_item = {}
             continue
 
-        if re.match(r"^record\s*#\d+$", line, flags=re.IGNORECASE):
+        if re.match(rf"^{section_prefix}record(?:\s*entry)?\s*#\d+$", line, flags=re.IGNORECASE):
             flush_item()
             section = "records"
             current_item = {}
             continue
 
-        if line.lower().startswith("no ") and line.lower().endswith(" data."):
+        if re.match(rf"^{section_prefix}no\s+.+\s+data\.$", line, flags=re.IGNORECASE):
             continue
 
         match = re.match(r"^([^:]+):\s*(.*)$", line)
         if match:
-            key = _normalize_pdf_key(match.group(1))
+            key = _normalize_pdf_key(_strip_pdf_heading_prefix(match.group(1)))
             value = match.group(2).strip()
             if not key:
                 continue
@@ -950,8 +1134,8 @@ def _normalize_record_import_row(raw_row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_patient_import_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    patient = payload.get("patient")
-    if not isinstance(patient, dict):
+    patient_raw = payload.get("patient")
+    if not isinstance(patient_raw, dict):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Import payload is missing patient profile data.",
@@ -960,6 +1144,24 @@ def _normalize_patient_import_payload(payload: dict[str, Any]) -> dict[str, Any]
     vitals_raw = payload.get("vitals") or []
     consultations_raw = payload.get("consultations") or []
     records_raw = payload.get("records") or []
+    treatment_records_raw = payload.get("treatment_records") if isinstance(payload.get("treatment_records"), dict) else {}
+    treatment_medical_history_raw = (
+        treatment_records_raw.get("medical_history")
+        if isinstance(treatment_records_raw.get("medical_history"), dict)
+        else {}
+    )
+    patient = _merge_treatment_medical_history_into_patient(
+        patient_raw,
+        treatment_medical_history_raw,
+    )
+
+    if not vitals_raw and isinstance(treatment_records_raw.get("regular_checkups"), list):
+        vitals_raw = treatment_records_raw.get("regular_checkups") or []
+    if not records_raw:
+        if isinstance(treatment_records_raw.get("medical_test_results"), list):
+            records_raw = treatment_records_raw.get("medical_test_results") or []
+        elif isinstance(treatment_records_raw.get("medical_records"), list):
+            records_raw = treatment_records_raw.get("medical_records") or []
 
     if not isinstance(vitals_raw, list) or not isinstance(consultations_raw, list) or not isinstance(records_raw, list):
         raise HTTPException(
@@ -989,6 +1191,7 @@ def _normalize_patient_import_payload(payload: dict[str, Any]) -> dict[str, Any]
         for row in records_raw
         if isinstance(row, dict)
     ]
+    normalized_medical_history_section = _build_medical_history_section_payload(normalized_patient)
 
     return {
         "schema_version": payload.get("schema_version"),
@@ -998,6 +1201,11 @@ def _normalize_patient_import_payload(payload: dict[str, Any]) -> dict[str, Any]
         "vitals": normalized_vitals,
         "consultations": normalized_consultations,
         "records": normalized_records,
+        "treatment_records": {
+            "regular_checkups": normalized_vitals,
+            "medical_test_results": normalized_records,
+            "medical_history": normalized_medical_history_section,
+        },
     }
 
 
@@ -1189,6 +1397,252 @@ def _patient_metadata_payload_to_pdf_lines(metadata: dict[str, Any], export_lang
             export_language=export_language,
         )
     return lines
+
+
+def _empty_medical_history_prefill() -> dict[str, list[Any]]:
+    return {
+        key: []
+        for key in MEDICAL_HISTORY_PREFILL_KEYS
+    }
+
+
+def _coerce_medical_history_prefill_map(value: Any) -> dict[str, list[Any]]:
+    if not isinstance(value, dict):
+        return _empty_medical_history_prefill()
+    return {
+        key: _coerce_history_list(value.get(key))
+        for key in MEDICAL_HISTORY_PREFILL_KEYS
+    }
+
+
+def _medical_history_export_payload_to_pdf_lines(
+    payload: dict[str, Any],
+    export_language: str = "en",
+) -> list[str]:
+    text_map = _pdf_text(export_language)
+    history_label_map = _pdf_label_map("medical_history", export_language)
+    section = (
+        payload.get("medical_history_section")
+        if isinstance(payload.get("medical_history_section"), dict)
+        else {}
+    )
+    prefill = _coerce_medical_history_prefill_map(section.get("prefill"))
+    if not any(_medical_history_prefill_has_value(prefill.get(key)) for key in MEDICAL_HISTORY_PREFILL_KEYS):
+        prefill = _build_medical_history_prefill(section)
+
+    populated_fields = sum(
+        1
+        for key in MEDICAL_HISTORY_PREFILL_KEYS
+        if _medical_history_prefill_has_value(prefill.get(key))
+    )
+    report_title = text_map.get("medical_history_export", "ChronicAI Medical History Report")
+    lines: list[str] = [
+        report_title,
+        "=" * max(32, min(72, len(report_title))),
+        f"{text_map['patient_id']}: {payload.get('patient_id', '')}",
+        f"{text_map['exported_at']}: {payload.get('exported_at', '')}",
+        f"{text_map['data_type']}: medical_history",
+        "",
+        text_map["summary"],
+        f"{text_map['total_fields']}: {populated_fields}",
+        "",
+    ]
+
+    if populated_fields == 0:
+        lines.append(text_map.get("no_medical_history_data", "No medical history data."))
+        return lines
+
+    section_index = 1
+    for section_title, keys in MEDICAL_HISTORY_PDF_GROUPS:
+        populated_keys = [
+            key for key in keys
+            if _medical_history_prefill_has_value(prefill.get(key))
+        ]
+        if not populated_keys:
+            continue
+        lines.append(f"{section_index}. {section_title}")
+        for key in populated_keys:
+            _append_pdf_field_line(
+                lines,
+                key=key,
+                value=_medical_history_values_to_pdf_text(prefill.get(key), export_language),
+                label_map=history_label_map,
+                indent=2,
+            )
+        lines.append("")
+        section_index += 1
+
+    if lines and not lines[-1]:
+        lines.pop()
+
+    return lines
+
+
+def _parse_medical_history_import_json_payload(raw_bytes: bytes) -> dict[str, list[Any]]:
+    payload = _parse_patient_import_json_payload(raw_bytes)
+
+    explicit_prefill = payload.get("prefill")
+    prefill = _coerce_medical_history_prefill_map(explicit_prefill)
+    if any(_medical_history_prefill_has_value(prefill.get(key)) for key in MEDICAL_HISTORY_PREFILL_KEYS):
+        return prefill
+
+    source: dict[str, Any]
+    if isinstance(payload.get("medical_history_section"), dict):
+        source = payload.get("medical_history_section")  # type: ignore[assignment]
+    elif isinstance(payload.get("patient"), dict):
+        source = payload.get("patient")  # type: ignore[assignment]
+    else:
+        source = payload
+
+    nested_prefill = _coerce_medical_history_prefill_map(source.get("prefill"))
+    if any(_medical_history_prefill_has_value(nested_prefill.get(key)) for key in MEDICAL_HISTORY_PREFILL_KEYS):
+        return nested_prefill
+
+    prefill = _build_medical_history_prefill(source)
+    if not any(_medical_history_prefill_has_value(prefill.get(key)) for key in MEDICAL_HISTORY_PREFILL_KEYS):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No valid medical-history fields found in import file.",
+        )
+    return prefill
+
+
+def _parse_medical_history_pdf_field_value(value: Any) -> list[Any]:
+    parsed = _parse_json_like_text(value)
+    if parsed is None:
+        return []
+    if isinstance(parsed, list):
+        return _coerce_history_list(parsed)
+    if isinstance(parsed, dict):
+        return [parsed]
+
+    text = str(parsed).strip()
+    if not text or _is_null_import_text(text):
+        return []
+
+    candidates: list[str] = []
+    for raw_line in re.split(r"[\r\n]+", text):
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[\-\u2022*]+\s*", "", line)
+        line = re.sub(r"^\d+[)\.]\s*", "", line)
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split(";") if part.strip()]
+        if parts:
+            candidates.extend(parts)
+        else:
+            candidates.append(line)
+
+    if candidates:
+        return candidates
+    return _coerce_history_list(parsed)
+
+
+def _parse_medical_history_import_pdf_payload(ocr_text: str) -> dict[str, list[Any]]:
+    cleaned_lines = [
+        re.sub(r"\s+", " ", line).strip()
+        for line in ocr_text.splitlines()
+        if str(line or "").strip()
+    ]
+    if not cleaned_lines:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="OCR returned no readable content from medical-history PDF import file.",
+        )
+
+    field_aliases: dict[str, str] = {
+        _normalize_pdf_key(key): key
+        for key in MEDICAL_HISTORY_PREFILL_KEYS
+    }
+    for field, label in PDF_MEDICAL_HISTORY_FIELD_LABELS.items():
+        field_aliases[_normalize_pdf_key(label)] = field
+        field_aliases[_normalize_pdf_key(_humanize_export_key(field))] = field
+    for label_map in (PDF_PATIENT_FIELD_LABELS, PDF_PATIENT_FIELD_LABELS_VI):
+        for field in MEDICAL_HISTORY_PREFILL_KEYS:
+            label = label_map.get(field)
+            if label:
+                field_aliases[_normalize_pdf_key(label)] = field
+
+    ignored_headings = {
+        _normalize_pdf_key(_strip_pdf_heading_prefix(_pdf_text("en").get("summary", "Summary"))),
+        _normalize_pdf_key(_strip_pdf_heading_prefix(_pdf_text("vi").get("summary", "Summary"))),
+        _normalize_pdf_key(_strip_pdf_heading_prefix(_pdf_text("en").get("medical_history", "Medical History"))),
+        _normalize_pdf_key(_strip_pdf_heading_prefix(_pdf_text("vi").get("medical_history", "Medical History"))),
+        _normalize_pdf_key(_strip_pdf_heading_prefix(_pdf_text("en").get("medical_history_export", "ChronicAI Medical History Report"))),
+        _normalize_pdf_key(_strip_pdf_heading_prefix(_pdf_text("vi").get("medical_history_export", "Medical History Report"))),
+    }
+    for section_title, _ in MEDICAL_HISTORY_PDF_GROUPS:
+        ignored_headings.add(_normalize_pdf_key(_strip_pdf_heading_prefix(section_title)))
+
+    raw_values: dict[str, str] = {}
+    current_key: Optional[str] = None
+
+    for line in cleaned_lines:
+        stripped_line = _strip_pdf_heading_prefix(line)
+        normalized_line = _normalize_pdf_key(stripped_line)
+
+        if re.match(r"^[-=]{3,}$", line):
+            current_key = None
+            continue
+        if re.match(r"^-{2,}\s*(trang|page)\s*\d+\s*-{2,}$", stripped_line, flags=re.IGNORECASE):
+            current_key = None
+            continue
+        if normalized_line in {"summary", "tom_tat"}:
+            current_key = None
+            continue
+        if (
+            normalized_line.startswith("chronic") and "medical_history_export" in normalized_line
+        ) or normalized_line.startswith("bao_cao_tien_su_y_khoa"):
+            current_key = None
+            continue
+        if normalized_line.startswith("total_fields") or normalized_line.startswith("tong_so_truong"):
+            current_key = None
+            continue
+        if normalized_line in {
+            "exported_at",
+            "thoi_diem_xuat",
+            "patient_id",
+            "ma_benh_nhan",
+            "medical_history",
+            "tien_su_y_khoa",
+        }:
+            current_key = None
+            continue
+        if normalized_line in ignored_headings:
+            current_key = None
+            continue
+
+        match = re.match(r"^([^:]+):\s*(.*)$", line)
+        if match:
+            raw_key = _normalize_pdf_key(_strip_pdf_heading_prefix(match.group(1)))
+            resolved = _resolve_alias_key(raw_key, field_aliases)
+            value = match.group(2).strip()
+            if resolved:
+                raw_values[resolved] = value
+                current_key = resolved
+            else:
+                current_key = None
+            continue
+
+        if current_key:
+            if re.match(r"^-{2,}.*-{2,}$", line):
+                current_key = None
+                continue
+            previous = raw_values.get(current_key, "")
+            raw_values[current_key] = f"{previous}\n{line}".strip()
+
+    prefill: dict[str, list[Any]] = _empty_medical_history_prefill()
+    for key in MEDICAL_HISTORY_PREFILL_KEYS:
+        prefill[key] = _parse_medical_history_pdf_field_value(raw_values.get(key))
+
+    if not any(_medical_history_prefill_has_value(prefill.get(key)) for key in MEDICAL_HISTORY_PREFILL_KEYS):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Could not parse medical-history fields from PDF import file. Please retry with JSON import.",
+        )
+    return prefill
 
 
 def _parse_vital_import_json_payload(raw_bytes: bytes) -> list[dict[str, Any]]:
@@ -1565,10 +2019,23 @@ def _apply_patient_text_import(
     for key, value in incoming_patient.items():
         if key in IMMUTABLE_PATIENT_IMPORT_FIELDS:
             continue
-        if key not in existing_patient:
+        if key not in existing_patient and key not in {
+            "medical_history",
+            "immunization_records",
+            "treatment_history",
+        }:
             continue
         patient_update_payload[key] = value
 
+    patient_update_payload = _apply_medical_history_aliases(
+        patient_update_payload,
+        existing_patient=existing_patient,
+    )
+    patient_update_payload = {
+        key: value
+        for key, value in patient_update_payload.items()
+        if key in existing_patient
+    }
     patient_update_payload = _prepare_patient_payload(patient_update_payload, partial=True)
     if patient_update_payload:
         try:
@@ -1833,6 +2300,484 @@ def _serialize_for_supabase(value: Any) -> Any:
     return value
 
 
+def _coerce_history_dict(value: Any, *, field_name: str) -> Optional[dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return dict(value)
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=f"{field_name} must be an object when provided.",
+    )
+
+
+def _extract_history_list(source: Optional[dict[str, Any]], key: str) -> Any:
+    if not isinstance(source, dict) or key not in source:
+        return _HISTORY_VALUE_MISSING
+    value = source.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _normalize_history_text_list(values: list[Any]) -> list[str]:
+    normalized: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str):
+            text = value.strip()
+        elif isinstance(value, (dict, list)):
+            text = json.dumps(value, ensure_ascii=False)
+        else:
+            text = str(value).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _first_list_value(*values: Any) -> list[Any]:
+    for value in values:
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _history_list_candidate(value: Any) -> Optional[list[Any]]:
+    if value is None:
+        return None
+    parsed = _parse_json_like_text(value) if isinstance(value, str) else value
+    if parsed is None:
+        return None
+    if isinstance(parsed, list):
+        return parsed
+    return [parsed]
+
+
+def _first_history_list(*values: Any) -> list[Any]:
+    for value in values:
+        candidate = _history_list_candidate(value)
+        if candidate is not None:
+            return candidate
+    return []
+
+
+def _coerce_history_list(value: Any) -> list[Any]:
+    candidate = _history_list_candidate(value)
+    return candidate if candidate is not None else []
+
+
+def _nested_history_value(source: Any, key: str) -> Any:
+    if not isinstance(source, dict):
+        return None
+    return source.get(key)
+
+
+def _medical_history_prefill_has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, dict):
+        return len(value) > 0
+    if isinstance(value, str):
+        text = value.strip()
+        return bool(text) and not _is_null_import_text(text)
+    return True
+
+
+def _build_medical_history_prefill(source: dict[str, Any]) -> dict[str, list[Any]]:
+    medical_history = source.get("medical_history") if isinstance(source.get("medical_history"), dict) else {}
+    family_history = source.get("family_medical_history") if isinstance(source.get("family_medical_history"), dict) else {}
+    immunization = source.get("immunization_records") if isinstance(source.get("immunization_records"), dict) else {}
+    treatment_history = source.get("treatment_history") if isinstance(source.get("treatment_history"), dict) else {}
+
+    fallback_medical = family_history.get("medical_history") if isinstance(family_history.get("medical_history"), dict) else {}
+    fallback_immunization = (
+        family_history.get("immunization_records")
+        if isinstance(family_history.get("immunization_records"), dict)
+        else {}
+    )
+    fallback_treatment = family_history.get("treatment_history") if isinstance(family_history.get("treatment_history"), dict) else {}
+
+    return {
+        "chronic_conditions": _first_history_list(
+            _nested_history_value(medical_history, "chronic_conditions"),
+            source.get("chronic_conditions"),
+        ),
+        "past_surgeries": _first_history_list(
+            _nested_history_value(medical_history, "past_surgeries"),
+            source.get("past_surgeries"),
+            source.get("surgical_history"),
+        ),
+        "hospitalizations": _first_history_list(
+            _nested_history_value(medical_history, "hospitalizations"),
+            _nested_history_value(fallback_medical, "hospitalizations"),
+            _nested_history_value(family_history, "hospitalizations"),
+            source.get("hospitalizations"),
+        ),
+        "medications_history": _first_history_list(
+            _nested_history_value(medical_history, "medications_history"),
+            _nested_history_value(fallback_medical, "medications_history"),
+            _nested_history_value(family_history, "medications_history"),
+            source.get("medications_history"),
+        ),
+        "allergies": _first_history_list(
+            _nested_history_value(medical_history, "allergies"),
+            source.get("allergies"),
+        ),
+        "psychiatric_history": _first_history_list(
+            _nested_history_value(medical_history, "psychiatric_history"),
+            _nested_history_value(fallback_medical, "psychiatric_history"),
+            _nested_history_value(family_history, "psychiatric_history"),
+            source.get("psychiatric_history"),
+        ),
+        "family_history_of_chronic_conditions": _first_history_list(
+            _nested_history_value(family_history, "family_history_of_chronic_conditions"),
+            _nested_history_value(family_history, "chronic_conditions"),
+            source.get("family_history_of_chronic_conditions"),
+        ),
+        "family_history_of_mental_health_conditions": _first_history_list(
+            _nested_history_value(family_history, "family_history_of_mental_health_conditions"),
+            source.get("family_history_of_mental_health_conditions"),
+        ),
+        "family_history_of_genetic_conditions": _first_history_list(
+            _nested_history_value(family_history, "family_history_of_genetic_conditions"),
+            source.get("family_history_of_genetic_conditions"),
+        ),
+        "vaccines_administered": _first_history_list(
+            _nested_history_value(immunization, "vaccines_administered"),
+            _nested_history_value(fallback_immunization, "vaccines_administered"),
+            _nested_history_value(family_history, "vaccines_administered"),
+            source.get("vaccines_administered"),
+        ),
+        "vaccines_due": _first_history_list(
+            _nested_history_value(immunization, "vaccines_due"),
+            _nested_history_value(fallback_immunization, "vaccines_due"),
+            _nested_history_value(family_history, "vaccines_due"),
+            source.get("vaccines_due"),
+        ),
+        "previous_treatments": _first_history_list(
+            _nested_history_value(treatment_history, "previous_treatments"),
+            _nested_history_value(fallback_treatment, "previous_treatments"),
+            _nested_history_value(family_history, "previous_treatments"),
+            source.get("previous_treatments"),
+        ),
+        "physiotherapy": _first_history_list(
+            _nested_history_value(treatment_history, "physiotherapy"),
+            _nested_history_value(fallback_treatment, "physiotherapy"),
+            _nested_history_value(family_history, "physiotherapy"),
+            source.get("physiotherapy"),
+        ),
+        "other_relevant_treatments": _first_history_list(
+            _nested_history_value(treatment_history, "other_relevant_treatments"),
+            _nested_history_value(fallback_treatment, "other_relevant_treatments"),
+            _nested_history_value(family_history, "other_relevant_treatments"),
+            source.get("other_relevant_treatments"),
+        ),
+    }
+
+
+def _build_medical_history_section_payload(patient: dict[str, Any]) -> dict[str, Any]:
+    hydrated = dict(patient)
+
+    for key in ("medical_history", "family_medical_history", "immunization_records", "treatment_history"):
+        if isinstance(hydrated.get(key), dict):
+            hydrated[key] = dict(hydrated.get(key))
+
+    _hydrate_patient_medical_history_fields(hydrated)
+
+    medical_history = hydrated.get("medical_history") if isinstance(hydrated.get("medical_history"), dict) else {}
+    family_history = (
+        hydrated.get("family_medical_history")
+        if isinstance(hydrated.get("family_medical_history"), dict)
+        else {}
+    )
+    immunization = hydrated.get("immunization_records") if isinstance(hydrated.get("immunization_records"), dict) else {}
+    treatment_history = hydrated.get("treatment_history") if isinstance(hydrated.get("treatment_history"), dict) else {}
+
+    prefill = _build_medical_history_prefill(hydrated)
+    return {
+        "chronic_conditions": _coerce_history_list(hydrated.get("chronic_conditions")),
+        "surgical_history": _coerce_history_list(hydrated.get("surgical_history")),
+        "allergies": _coerce_history_list(hydrated.get("allergies")),
+        "medical_history": dict(medical_history),
+        "family_medical_history": dict(family_history),
+        "immunization_records": dict(immunization),
+        "treatment_history": dict(treatment_history),
+        "prefill": prefill,
+    }
+
+
+def _merge_treatment_medical_history_into_patient(
+    patient_payload: dict[str, Any],
+    treatment_medical_history: Any,
+) -> dict[str, Any]:
+    if not isinstance(treatment_medical_history, dict):
+        return patient_payload
+
+    merged = dict(patient_payload)
+    for key in MEDICAL_HISTORY_SECTION_PATIENT_KEYS:
+        if key not in merged and key in treatment_medical_history:
+            merged[key] = treatment_medical_history.get(key)
+
+    if "chronic_conditions" not in merged and "chronic_conditions" in treatment_medical_history:
+        merged["chronic_conditions"] = treatment_medical_history.get("chronic_conditions")
+    if "surgical_history" not in merged:
+        if "surgical_history" in treatment_medical_history:
+            merged["surgical_history"] = treatment_medical_history.get("surgical_history")
+        elif "past_surgeries" in treatment_medical_history:
+            merged["surgical_history"] = treatment_medical_history.get("past_surgeries")
+    if "allergies" not in merged and "allergies" in treatment_medical_history:
+        merged["allergies"] = treatment_medical_history.get("allergies")
+
+    medical_history = dict(merged.get("medical_history")) if isinstance(merged.get("medical_history"), dict) else {}
+    if "chronic_conditions" not in medical_history and "chronic_conditions" in treatment_medical_history:
+        medical_history["chronic_conditions"] = treatment_medical_history.get("chronic_conditions")
+    if "past_surgeries" not in medical_history and "past_surgeries" in treatment_medical_history:
+        medical_history["past_surgeries"] = treatment_medical_history.get("past_surgeries")
+    if "allergies" not in medical_history and "allergies" in treatment_medical_history:
+        medical_history["allergies"] = treatment_medical_history.get("allergies")
+    for key in MEDICAL_HISTORY_FAMILY_FALLBACK_KEYS:
+        if key not in medical_history and key in treatment_medical_history:
+            medical_history[key] = treatment_medical_history.get(key)
+    if medical_history:
+        merged["medical_history"] = medical_history
+
+    family_history = (
+        dict(merged.get("family_medical_history"))
+        if isinstance(merged.get("family_medical_history"), dict)
+        else {}
+    )
+    for key in (
+        "family_history_of_chronic_conditions",
+        "family_history_of_mental_health_conditions",
+        "family_history_of_genetic_conditions",
+        "hospitalizations",
+        "medications_history",
+        "psychiatric_history",
+    ):
+        if key not in family_history and key in treatment_medical_history:
+            family_history[key] = treatment_medical_history.get(key)
+    if family_history:
+        merged["family_medical_history"] = family_history
+
+    immunization = dict(merged.get("immunization_records")) if isinstance(merged.get("immunization_records"), dict) else {}
+    for key in ("vaccines_administered", "vaccines_due"):
+        if key not in immunization and key in treatment_medical_history:
+            immunization[key] = treatment_medical_history.get(key)
+    if immunization:
+        merged["immunization_records"] = immunization
+
+    treatment_history = dict(merged.get("treatment_history")) if isinstance(merged.get("treatment_history"), dict) else {}
+    for key in ("previous_treatments", "physiotherapy", "other_relevant_treatments"):
+        if key not in treatment_history and key in treatment_medical_history:
+            treatment_history[key] = treatment_medical_history.get(key)
+    if treatment_history:
+        merged["treatment_history"] = treatment_history
+
+    return merged
+
+
+def _apply_medical_history_aliases(
+    update_fields: dict[str, Any],
+    *,
+    existing_patient: dict[str, Any],
+) -> dict[str, Any]:
+    if not update_fields:
+        return update_fields
+
+    has_medical_history_column = "medical_history" in existing_patient
+    has_immunization_records_column = "immunization_records" in existing_patient
+    has_treatment_history_column = "treatment_history" in existing_patient
+
+    medical_history_present = "medical_history" in update_fields
+    immunization_present = "immunization_records" in update_fields
+    treatment_history_present = "treatment_history" in update_fields
+    family_history_present = "family_medical_history" in update_fields
+
+    medical_history = _coerce_history_dict(
+        update_fields.get("medical_history"),
+        field_name="medical_history",
+    ) if medical_history_present else None
+    immunization_records = _coerce_history_dict(
+        update_fields.get("immunization_records"),
+        field_name="immunization_records",
+    ) if immunization_present else None
+    treatment_history = _coerce_history_dict(
+        update_fields.get("treatment_history"),
+        field_name="treatment_history",
+    ) if treatment_history_present else None
+
+    if medical_history_present and not has_medical_history_column:
+        update_fields.pop("medical_history", None)
+    if immunization_present and not has_immunization_records_column:
+        update_fields.pop("immunization_records", None)
+    if treatment_history_present and not has_treatment_history_column:
+        update_fields.pop("treatment_history", None)
+
+    if family_history_present:
+        family_medical_history = _coerce_history_dict(
+            update_fields.get("family_medical_history"),
+            field_name="family_medical_history",
+        )
+        family_payload = dict(family_medical_history or {})
+    else:
+        family_payload = dict(
+            existing_patient.get("family_medical_history")
+            if isinstance(existing_patient.get("family_medical_history"), dict)
+            else {}
+        )
+
+    should_update_family_payload = family_history_present
+
+    if medical_history_present:
+        should_update_family_payload = True
+        if medical_history is None:
+            update_fields["chronic_conditions"] = []
+            update_fields["surgical_history"] = []
+            update_fields["allergies"] = []
+            for key in MEDICAL_HISTORY_FAMILY_FALLBACK_KEYS:
+                family_payload[key] = []
+        else:
+            chronic_conditions = _extract_history_list(medical_history, "chronic_conditions")
+            if chronic_conditions is not _HISTORY_VALUE_MISSING:
+                update_fields["chronic_conditions"] = chronic_conditions
+
+            past_surgeries = _extract_history_list(medical_history, "past_surgeries")
+            if past_surgeries is not _HISTORY_VALUE_MISSING:
+                update_fields["surgical_history"] = past_surgeries
+
+            allergies = _extract_history_list(medical_history, "allergies")
+            if allergies is not _HISTORY_VALUE_MISSING:
+                update_fields["allergies"] = _normalize_history_text_list(allergies)
+
+            for key in MEDICAL_HISTORY_FAMILY_FALLBACK_KEYS:
+                values = _extract_history_list(medical_history, key)
+                if values is not _HISTORY_VALUE_MISSING:
+                    family_payload[key] = values
+
+    if immunization_present:
+        should_update_family_payload = True
+        if immunization_records is None:
+            for key in IMMUNIZATION_FAMILY_FALLBACK_KEYS:
+                family_payload[key] = []
+        else:
+            for key in IMMUNIZATION_FAMILY_FALLBACK_KEYS:
+                values = _extract_history_list(immunization_records, key)
+                if values is not _HISTORY_VALUE_MISSING:
+                    family_payload[key] = values
+
+    if treatment_history_present:
+        should_update_family_payload = True
+        if treatment_history is None:
+            for key in TREATMENT_HISTORY_FAMILY_FALLBACK_KEYS:
+                family_payload[key] = []
+        else:
+            for key in TREATMENT_HISTORY_FAMILY_FALLBACK_KEYS:
+                values = _extract_history_list(treatment_history, key)
+                if values is not _HISTORY_VALUE_MISSING:
+                    family_payload[key] = values
+
+    if should_update_family_payload:
+        update_fields["family_medical_history"] = family_payload
+
+    return update_fields
+
+
+def _hydrate_patient_medical_history_fields(patient: dict[str, Any]) -> None:
+    if not isinstance(patient, dict):
+        return
+
+    family_history = patient.get("family_medical_history")
+    family_data = dict(family_history) if isinstance(family_history, dict) else {}
+
+    legacy_medical = family_data.get("medical_history")
+    legacy_medical_data = dict(legacy_medical) if isinstance(legacy_medical, dict) else {}
+    legacy_immunization = family_data.get("immunization_records")
+    legacy_immunization_data = dict(legacy_immunization) if isinstance(legacy_immunization, dict) else {}
+    legacy_treatment = family_data.get("treatment_history")
+    legacy_treatment_data = dict(legacy_treatment) if isinstance(legacy_treatment, dict) else {}
+
+    medical_history = patient.get("medical_history")
+    medical_data = dict(medical_history) if isinstance(medical_history, dict) else {}
+    medical_data["chronic_conditions"] = _first_list_value(
+        medical_data.get("chronic_conditions"),
+        patient.get("chronic_conditions"),
+    )
+    medical_data["past_surgeries"] = _first_list_value(
+        medical_data.get("past_surgeries"),
+        patient.get("surgical_history"),
+    )
+    medical_data["allergies"] = _first_list_value(
+        medical_data.get("allergies"),
+        patient.get("allergies"),
+    )
+    medical_data["hospitalizations"] = _first_list_value(
+        medical_data.get("hospitalizations"),
+        legacy_medical_data.get("hospitalizations"),
+        family_data.get("hospitalizations"),
+    )
+    medical_data["medications_history"] = _first_list_value(
+        medical_data.get("medications_history"),
+        legacy_medical_data.get("medications_history"),
+        family_data.get("medications_history"),
+    )
+    medical_data["psychiatric_history"] = _first_list_value(
+        medical_data.get("psychiatric_history"),
+        legacy_medical_data.get("psychiatric_history"),
+        family_data.get("psychiatric_history"),
+    )
+    patient["medical_history"] = medical_data
+
+    family_data["family_history_of_chronic_conditions"] = _first_list_value(
+        family_data.get("family_history_of_chronic_conditions"),
+        family_data.get("chronic_conditions"),
+    )
+    family_data["family_history_of_mental_health_conditions"] = _first_list_value(
+        family_data.get("family_history_of_mental_health_conditions"),
+    )
+    family_data["family_history_of_genetic_conditions"] = _first_list_value(
+        family_data.get("family_history_of_genetic_conditions"),
+    )
+    patient["family_medical_history"] = family_data
+
+    immunization_records = patient.get("immunization_records")
+    immunization_data = dict(immunization_records) if isinstance(immunization_records, dict) else {}
+    immunization_data["vaccines_administered"] = _first_list_value(
+        immunization_data.get("vaccines_administered"),
+        legacy_immunization_data.get("vaccines_administered"),
+        family_data.get("vaccines_administered"),
+    )
+    immunization_data["vaccines_due"] = _first_list_value(
+        immunization_data.get("vaccines_due"),
+        legacy_immunization_data.get("vaccines_due"),
+        family_data.get("vaccines_due"),
+    )
+    patient["immunization_records"] = immunization_data
+
+    treatment_history = patient.get("treatment_history")
+    treatment_data = dict(treatment_history) if isinstance(treatment_history, dict) else {}
+    treatment_data["previous_treatments"] = _first_list_value(
+        treatment_data.get("previous_treatments"),
+        legacy_treatment_data.get("previous_treatments"),
+        family_data.get("previous_treatments"),
+    )
+    treatment_data["physiotherapy"] = _first_list_value(
+        treatment_data.get("physiotherapy"),
+        legacy_treatment_data.get("physiotherapy"),
+        family_data.get("physiotherapy"),
+    )
+    treatment_data["other_relevant_treatments"] = _first_list_value(
+        treatment_data.get("other_relevant_treatments"),
+        legacy_treatment_data.get("other_relevant_treatments"),
+        family_data.get("other_relevant_treatments"),
+    )
+    patient["treatment_history"] = treatment_data
+
+
 def _prepare_patient_payload(payload: dict, partial: bool) -> dict:
     cleaned: dict[str, Any] = {}
     for key, value in payload.items():
@@ -1858,6 +2803,31 @@ def _prepare_patient_payload(payload: dict, partial: bool) -> dict:
         cleaned[key] = value
 
     return {key: _serialize_for_supabase(value) for key, value in cleaned.items()}
+
+
+def _resolve_recorded_by_user_id(supabase: object, value: Any) -> Optional[str]:
+    recorded_by = _coerce_nullable_text(value)
+    if not recorded_by:
+        return None
+
+    try:
+        UUID(recorded_by)
+    except ValueError:
+        logger.warning("Ignoring non-UUID recorded_by value=%s", recorded_by)
+        return None
+
+    try:
+        user_result = supabase.table("users").select("id").eq("id", recorded_by).maybe_single().execute()
+    except Exception:
+        logger.exception("Failed to validate recorded_by user_id=%s", recorded_by)
+        return None
+
+    user_data = user_result.data if user_result else None
+    if isinstance(user_data, dict):
+        return recorded_by
+
+    logger.warning("Ignoring unknown recorded_by user_id=%s", recorded_by)
+    return None
 
 
 def _is_unique_violation(exc: Exception) -> bool:
@@ -1978,6 +2948,8 @@ def _pdf_label_map(label_type: str, export_language: Any) -> dict[str, str]:
         return PDF_METADATA_FIELD_LABELS_VI if language_key == "vi" else PDF_METADATA_FIELD_LABELS
     if label_type == "vital":
         return PDF_VITAL_FIELD_LABELS_VI if language_key == "vi" else PDF_VITAL_FIELD_LABELS
+    if label_type == "medical_history":
+        return PDF_MEDICAL_HISTORY_FIELD_LABELS
     if label_type == "patient":
         return PDF_PATIENT_FIELD_LABELS_VI if language_key == "vi" else PDF_PATIENT_FIELD_LABELS
     if label_type == "consultation":
@@ -2025,6 +2997,52 @@ def _format_scalar_for_pdf(value: Any, export_language: str = "en") -> str:
         return text_map["yes"] if value else text_map["no"]
     text = _as_export_text(value).strip()
     return text or "-"
+
+
+def _medical_history_item_to_pdf_text(item: Any, export_language: str = "en") -> Optional[str]:
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        heading = (
+            _coerce_nullable_text(item.get("name"))
+            or _coerce_nullable_text(item.get("title"))
+            or _coerce_nullable_text(item.get("condition"))
+            or _coerce_nullable_text(item.get("icd10_code"))
+        )
+        details: list[str] = []
+        for key in _ordered_keys(item, MEDICAL_HISTORY_ITEM_PREFERRED_KEYS):
+            if key in {"name", "title", "condition"}:
+                continue
+            value_text = _format_scalar_for_pdf(item.get(key), export_language)
+            if value_text == "-":
+                continue
+            details.append(f"{_humanize_export_key(key)}: {value_text}")
+
+        if heading and details:
+            return f"{heading} ({', '.join(details)})"
+        if heading:
+            return heading
+
+        fallback = _as_export_text(item).strip()
+        return fallback or None
+
+    text = _format_scalar_for_pdf(item, export_language).strip()
+    return text if text and text != "-" else None
+
+
+def _medical_history_values_to_pdf_text(value: Any, export_language: str = "en") -> str:
+    text_map = _pdf_text(export_language)
+    values = _coerce_history_list(value)
+    if not values:
+        return text_map["none"]
+
+    formatted: list[str] = []
+    for item in values:
+        item_text = _medical_history_item_to_pdf_text(item, export_language)
+        if item_text:
+            formatted.append(item_text)
+
+    return "; ".join(formatted) if formatted else text_map["none"]
 
 
 def _append_pdf_structured_field(
@@ -2140,6 +3158,14 @@ def _ensure_file_extension(filename: str, extension: str) -> str:
     return filename if filename.lower().endswith(ext.lower()) else f"{filename}{ext}"
 
 
+def _is_test_result_record_type(record_type: Any) -> bool:
+    return str(record_type or "").strip().lower() in TEST_RESULT_RECORD_TYPES
+
+
+def _filter_test_result_records(records: list[dict]) -> list[dict]:
+    return [record for record in records if _is_test_result_record_type(record.get("record_type"))]
+
+
 def _fetch_patient_records_for_export(supabase: object, patient_uuid: UUID) -> list[dict]:
     def _run_query(include_doctor_comment: bool):
         select_cols = (
@@ -2176,6 +3202,7 @@ def _build_patient_export_payload(supabase: object, patient_uuid: UUID) -> dict[
     patient_data = patient_result.data if patient_result else None
     if not isinstance(patient_data, dict):
         raise HTTPException(status_code=404, detail="Patient not found")
+    _hydrate_patient_medical_history_fields(patient_data)
 
     vitals_result = supabase.table("vital_signs").select("*").eq(
         "patient_id", str(patient_uuid)
@@ -2195,14 +3222,22 @@ def _build_patient_export_payload(supabase: object, patient_uuid: UUID) -> dict[
         else:
             record["file_extension"] = None
 
+    test_result_records = _filter_test_result_records(records)
+    medical_history_section = _build_medical_history_section_payload(patient_data)
+
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "patient_id": str(patient_uuid),
         "patient": patient_data,
         "vitals": vitals_result.data or [],
         "consultations": consultations_result.data or [],
         "records": records,
+        "treatment_records": {
+            "regular_checkups": vitals_result.data or [],
+            "medical_test_results": test_result_records,
+            "medical_history": medical_history_section,
+        },
     }
 
 
@@ -2478,29 +3513,63 @@ def _patient_payload_to_pdf_lines(payload: dict[str, Any], export_language: str 
     vital_label_map = _pdf_label_map("vital", export_language)
     consultation_label_map = _pdf_label_map("consultation", export_language)
     record_label_map = _pdf_label_map("record", export_language)
+    report_title = text_map["patient_record_export"]
     lines: list[str] = [
-        text_map["patient_record_export"],
-        f"{text_map['exported_at']}: {payload.get('exported_at', '')}",
+        report_title,
+        "=" * max(36, min(72, len(report_title))),
         f"{text_map['patient_id']}: {payload.get('patient_id', '')}",
+        f"{text_map['exported_at']}: {payload.get('exported_at', '')}",
         "",
     ]
 
     vitals = payload.get("vitals") if isinstance(payload.get("vitals"), list) else []
     consultations = payload.get("consultations") if isinstance(payload.get("consultations"), list) else []
     records = payload.get("records") if isinstance(payload.get("records"), list) else []
+    patient = payload.get("patient") if isinstance(payload.get("patient"), dict) else {}
+    treatment_records = payload.get("treatment_records") if isinstance(payload.get("treatment_records"), dict) else {}
+    medical_history_label_map = _pdf_label_map("medical_history", export_language)
+    regular_checkups = (
+        treatment_records.get("regular_checkups")
+        if isinstance(treatment_records.get("regular_checkups"), list)
+        else vitals
+    )
+    medical_test_results = (
+        treatment_records.get("medical_test_results")
+        if isinstance(treatment_records.get("medical_test_results"), list)
+        else _filter_test_result_records(records)
+    )
+    medical_history_section = (
+        treatment_records.get("medical_history")
+        if isinstance(treatment_records.get("medical_history"), dict)
+        else _build_medical_history_section_payload(patient)
+    )
+    medical_history_prefill = _coerce_medical_history_prefill_map(medical_history_section.get("prefill"))
+    if not any(_medical_history_prefill_has_value(medical_history_prefill.get(key)) for key in MEDICAL_HISTORY_PREFILL_KEYS):
+        medical_history_prefill = _build_medical_history_prefill(medical_history_section)
+    medical_history_populated_fields = sum(
+        1
+        for key in MEDICAL_HISTORY_PREFILL_KEYS
+        if _medical_history_prefill_has_value(medical_history_prefill.get(key))
+    )
+    treatment_record_count = (
+        len(regular_checkups)
+        + len(medical_test_results)
+        + (1 if medical_history_populated_fields > 0 else 0)
+    )
 
     lines.extend(
         [
             text_map["summary"],
-            f"{text_map['vital_signs']}: {len(vitals)}",
+            f"{text_map.get('treatment_records', 'Treatment Records')}: {treatment_record_count}",
+            f"{text_map['vital_signs']}: {len(regular_checkups)}",
             f"{text_map['consultations']}: {len(consultations)}",
-            f"{text_map['medical_records']}: {len(records)}",
+            f"{text_map['medical_records']}: {len(medical_test_results)}",
+            f"{text_map.get('medical_history', 'Medical History')}: {medical_history_populated_fields}",
             "",
             f"1. {text_map['patient_profile']}",
         ]
     )
 
-    patient = payload.get("patient") if isinstance(payload.get("patient"), dict) else {}
     if patient:
         group_definitions: list[tuple[str, list[str]]] = [
             (
@@ -2565,6 +3634,9 @@ def _patient_payload_to_pdf_lines(payload: dict[str, Any], export_language: str 
                     "allergies",
                     "surgical_history",
                     "family_medical_history",
+                    "medical_history",
+                    "immunization_records",
+                    "treatment_history",
                 ],
             ),
         ]
@@ -2609,10 +3681,12 @@ def _patient_payload_to_pdf_lines(payload: dict[str, Any], export_language: str 
         lines.append(text_map["no_patient_profile_data"])
 
     lines.append("")
-    lines.append(f"2. {text_map['vital_signs']} ({len(vitals)})")
-    if not vitals:
+    lines.append(f"2. {text_map.get('treatment_records', 'Treatment Records')}")
+    lines.append("2.1 Regular Checkups")
+    lines.append(f"{text_map['vital_signs']} ({len(regular_checkups)})")
+    if not regular_checkups:
         lines.append(text_map["no_vital_signs_data"])
-    for index, vital in enumerate(vitals, start=1):
+    for index, vital in enumerate(regular_checkups, start=1):
         lines.append(f"{text_map['vital_entry']} #{index}")
         if isinstance(vital, dict):
             for key in _ordered_keys(vital, PDF_VITAL_PREFERRED_ORDER):
@@ -2628,29 +3702,11 @@ def _patient_payload_to_pdf_lines(payload: dict[str, Any], export_language: str 
         lines.append("")
 
     lines.append("")
-    lines.append(f"3. {text_map['consultations']} ({len(consultations)})")
-    if not consultations:
-        lines.append(text_map["no_consultations_data"])
-    for index, consultation in enumerate(consultations, start=1):
-        lines.append(f"{text_map['consultation_entry']} #{index}")
-        if isinstance(consultation, dict):
-            for key in _ordered_keys(consultation, ["started_at", "status", "priority", "chief_complaint", "summary"]):
-                _append_pdf_structured_field(
-                    lines,
-                    label=consultation_label_map.get(key) or _humanize_export_key(key),
-                    value=consultation.get(key),
-                    indent=4,
-                    export_language=export_language,
-                )
-        else:
-            lines.append(f"  {_as_export_text(consultation)}")
-        lines.append("")
-
-    lines.append("")
-    lines.append(f"4. {text_map['medical_records']} ({len(records)})")
-    if not records:
+    lines.append("2.2 Medical Test Results")
+    lines.append(f"{text_map['medical_records']} ({len(medical_test_results)})")
+    if not medical_test_results:
         lines.append(text_map["no_medical_records_data"])
-    for index, record in enumerate(records, start=1):
+    for index, record in enumerate(medical_test_results, start=1):
         lines.append(f"{text_map['record_entry']} #{index}")
         if isinstance(record, dict):
             for key in _ordered_keys(record, ["record_type", "title", "created_at", "doctor_comment", "content_text", "analysis_result", "image_path", "file_extension"]):
@@ -2678,6 +3734,50 @@ def _patient_payload_to_pdf_lines(payload: dict[str, Any], export_language: str 
                 )
         else:
             lines.append(f"  {_as_export_text(record)}")
+        lines.append("")
+
+    lines.append("")
+    lines.append("2.3 Medical History")
+    lines.append(f"{text_map.get('medical_history', 'Medical History')} ({medical_history_populated_fields})")
+    if medical_history_populated_fields == 0:
+        lines.append(text_map.get("no_medical_history_data", "No medical history data."))
+    else:
+        for section_title, keys in MEDICAL_HISTORY_PDF_GROUPS:
+            populated_keys = [
+                key for key in keys
+                if _medical_history_prefill_has_value(medical_history_prefill.get(key))
+            ]
+            if not populated_keys:
+                continue
+            lines.append(f"    {section_title}")
+            for key in populated_keys:
+                _append_pdf_field_line(
+                    lines,
+                    key=key,
+                    value=_medical_history_values_to_pdf_text(medical_history_prefill.get(key), export_language),
+                    label_map=medical_history_label_map,
+                    indent=6,
+                )
+        lines.append("")
+
+    lines.append("")
+    lines.append(f"3. {text_map['consultations']}")
+    lines.append(f"{text_map['consultations']} ({len(consultations)})")
+    if not consultations:
+        lines.append(text_map["no_consultations_data"])
+    for index, consultation in enumerate(consultations, start=1):
+        lines.append(f"{text_map['consultation_entry']} #{index}")
+        if isinstance(consultation, dict):
+            for key in _ordered_keys(consultation, ["started_at", "status", "priority", "chief_complaint", "summary"]):
+                _append_pdf_structured_field(
+                    lines,
+                    label=consultation_label_map.get(key) or _humanize_export_key(key),
+                    value=consultation.get(key),
+                    indent=4,
+                    export_language=export_language,
+                )
+        else:
+            lines.append(f"  {_as_export_text(consultation)}")
         lines.append("")
 
     return lines
@@ -2992,6 +4092,7 @@ class PatientCreateRequest(BaseModel):
     date_of_birth: date
     gender: GenderType
     national_id: Optional[str] = Field(None, max_length=20)
+    insurance_number: Optional[str] = Field(None, max_length=50)
     phone_primary: str = Field(..., min_length=3, max_length=20)
     phone_secondary: Optional[str] = Field(None, max_length=20)
     email: Optional[EmailStr] = None
@@ -3017,6 +4118,7 @@ class PatientUpdateRequest(BaseModel):
     date_of_birth: Optional[date] = None
     gender: Optional[GenderType] = None
     national_id: Optional[str] = Field(None, max_length=20)
+    insurance_number: Optional[str] = Field(None, max_length=50)
     phone_primary: Optional[str] = Field(None, min_length=3, max_length=20)
     phone_secondary: Optional[str] = Field(None, max_length=20)
     email: Optional[EmailStr] = None
@@ -3033,6 +4135,13 @@ class PatientUpdateRequest(BaseModel):
     profile_status: Optional[ProfileStatus] = None
     preferred_language: Optional[LanguagePref] = None
     assigned_doctor_id: Optional[UUID] = None
+    chronic_conditions: Optional[list[Any]] = None
+    surgical_history: Optional[list[Any]] = None
+    allergies: Optional[list[Any]] = None
+    family_medical_history: Optional[dict[str, Any]] = None
+    medical_history: Optional[dict[str, Any]] = None
+    immunization_records: Optional[dict[str, Any]] = None
+    treatment_history: Optional[dict[str, Any]] = None
 
 
 class PatientMetadataExportRequest(BaseModel):
@@ -3093,7 +4202,7 @@ async def list_patients(
 
     # Build query
     query = supabase.table("patients").select(
-        "id, full_name, date_of_birth, gender, phone_primary, email, "
+        "id, full_name, date_of_birth, gender, national_id, insurance_number, phone_primary, email, "
         "address_ward, address_district, address_province, "
         "emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, "
         "chronic_conditions, primary_diagnosis, triage_priority, "
@@ -3209,6 +4318,7 @@ async def create_patient(request: PatientCreateRequest):
 
     patient_data = patient_result.data[0]
     _attach_signed_patient_photo_url(supabase, patient_data)
+    _hydrate_patient_medical_history_fields(patient_data)
 
     return {
         "status": "success",
@@ -3259,6 +4369,7 @@ async def get_patient_detail(patient_id: str):
     patient_data = patient.data
     if patient_data:
         _attach_signed_patient_photo_url(supabase, patient_data)
+        _hydrate_patient_medical_history_fields(patient_data)
 
     return {
         "patient": patient_data,
@@ -3294,6 +4405,10 @@ async def update_patient(patient_id: str, request: PatientUpdateRequest):
     if not isinstance(existing_patient, dict):
         raise HTTPException(status_code=404, detail="Patient not found")
 
+    update_fields = _apply_medical_history_aliases(
+        update_fields,
+        existing_patient=existing_patient,
+    )
     patient_update_payload = _prepare_patient_payload(update_fields, partial=True)
 
     if not patient_update_payload:
@@ -3370,6 +4485,7 @@ async def update_patient(patient_id: str, request: PatientUpdateRequest):
 
     patient_data = update_result.data[0]
     _attach_signed_patient_photo_url(supabase, patient_data)
+    _hydrate_patient_medical_history_fields(patient_data)
 
     return {
         "status": "success",
@@ -3584,6 +4700,174 @@ async def import_patient_metadata_preview(file: UploadFile = File(...)):
         raise
 
 
+@router.get("/patients/{patient_id}/medical-history/export")
+async def export_patient_medical_history(
+    patient_id: str,
+    export_format: PatientTextExportFormat = Query(
+        default=PatientTextExportFormat.json,
+        alias="format",
+        description="Export format for medical-history section (json or pdf).",
+    ),
+    export_language: ExportLanguage = Query(
+        default=ExportLanguage.en,
+        alias="lang",
+        description="Export language for PDF rendering (vi or en).",
+    ),
+):
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    supabase = get_supabase()
+    patient_result = supabase.table("patients").select("*").eq(
+        "id", str(patient_uuid)
+    ).maybe_single().execute()
+    patient_data = patient_result.data if patient_result else None
+    if not isinstance(patient_data, dict):
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    _hydrate_patient_medical_history_fields(patient_data)
+    medical_history_section = _build_medical_history_section_payload(patient_data)
+    payload = {
+        "schema_version": 1,
+        "data_type": "medical_history",
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "patient_id": str(patient_uuid),
+        "medical_history_section": medical_history_section,
+    }
+
+    patient_slug = _safe_slug(patient_data.get("full_name"), "patient")
+    base_name = f"{patient_slug}-{patient_uuid}-medical-history"
+
+    if export_format == PatientTextExportFormat.json:
+        json_bytes = json.dumps(
+            payload,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            default=_json_default,
+        ).encode("utf-8")
+        return Response(
+            content=json_bytes,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{base_name}.json"'},
+        )
+
+    pdf_bytes = _render_text_pdf(_medical_history_export_payload_to_pdf_lines(payload, export_language.value))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{base_name}.pdf"'},
+    )
+
+
+@router.post("/patients/{patient_id}/medical-history/import/preview")
+async def import_patient_medical_history_preview(
+    patient_id: str,
+    file: UploadFile = File(...),
+):
+    file_name = file.filename or "import"
+    logger.warning(
+        "[medical-history-import-preview] start patient_id=%s file=%s content_type=%s",
+        patient_id,
+        file_name,
+        file.content_type,
+    )
+
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    supabase = get_supabase()
+    patient_result = supabase.table("patients").select("id").eq(
+        "id", str(patient_uuid)
+    ).maybe_single().execute()
+    if not patient_result or not patient_result.data:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    try:
+        extension = Path(file_name).suffix.lower()
+        if extension not in SUBDATA_IMPORT_ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported import file type. Allowed: .json, .pdf",
+            )
+
+        content = await file.read()
+        logger.warning(
+            "[medical-history-import-preview] patient_id=%s file_bytes=%s extension=%s",
+            patient_id,
+            len(content),
+            extension,
+        )
+        if not content:
+            raise HTTPException(status_code=400, detail="Import file is empty")
+
+        if extension == ".json":
+            prefill = _parse_medical_history_import_json_payload(content)
+        else:
+            temp_path = ""
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp.write(content)
+                    temp_path = tmp.name
+                logger.warning("[medical-history-import-preview] running OCR path=%s", temp_path)
+                raw_text = await extract_text(
+                    temp_path,
+                    file_type="pdf",
+                    pdf_dpi=max(72, settings.import_pdf_ocr_dpi),
+                    pdf_max_pages=settings.import_pdf_ocr_max_pages,
+                    pdf_preprocess=settings.import_pdf_ocr_preprocess,
+                    pdf_render_threads=max(1, int(settings.import_pdf_render_threads)),
+                )
+                _log_ocr_debug_dump("medical-history-import-preview", raw_text)
+            finally:
+                if temp_path:
+                    try:
+                        Path(temp_path).unlink(missing_ok=True)
+                    except Exception:
+                        logger.warning(
+                            "Failed to remove temporary medical-history import file path=%s",
+                            temp_path,
+                        )
+
+            prefill = _parse_medical_history_import_pdf_payload(raw_text or "")
+    except OCRDependencyError as exc:
+        detail = str(exc)
+        logger.warning(
+            "[medical-history-import-preview] ocr dependency error patient_id=%s detail=%s",
+            patient_id,
+            detail,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
+    except HTTPException as exc:
+        logger.warning(
+            "[medical-history-import-preview] failed patient_id=%s detail=%s",
+            patient_id,
+            exc.detail,
+            exc_info=True,
+        )
+        raise
+    except Exception:
+        logger.exception("[medical-history-import-preview] unexpected error patient_id=%s", patient_id)
+        raise
+
+    logger.warning(
+        "[medical-history-import-preview] success patient_id=%s populated_fields=%s",
+        patient_id,
+        sum(1 for key in MEDICAL_HISTORY_PREFILL_KEYS if _medical_history_prefill_has_value(prefill.get(key))),
+    )
+    return {
+        "status": "success",
+        "patient_id": str(patient_uuid),
+        "prefill": prefill,
+        "message": "Medical-history import preview generated.",
+    }
+
+
 @router.get("/patients/{patient_id}/vitals")
 async def get_patient_vitals(
     patient_id: str,
@@ -3658,6 +4942,12 @@ async def create_patient_vital(
     if isinstance(data.get("recorded_at"), datetime):
         data["recorded_at"] = data["recorded_at"].isoformat()
 
+    recorded_by = _resolve_recorded_by_user_id(supabase, data.get("recorded_by"))
+    if recorded_by:
+        data["recorded_by"] = recorded_by
+    else:
+        data.pop("recorded_by", None)
+
     result = supabase.table("vital_signs").insert(data).execute()
 
     if not result.data:
@@ -3669,6 +4959,117 @@ async def create_patient_vital(
     return {
         "status": "success",
         "vital": result.data[0],
+    }
+
+
+@router.put("/patients/{patient_id}/vitals/{vital_id}")
+async def update_patient_vital(
+    patient_id: str,
+    vital_id: str,
+    request: VitalSignCreateRequest,
+):
+    """
+    Update an existing vital sign entry for a patient.
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    try:
+        vital_uuid = UUID(vital_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid vital_id format")
+
+    supabase = get_supabase()
+
+    existing = (
+        supabase.table("vital_signs")
+        .select("id, patient_id")
+        .eq("id", str(vital_uuid))
+        .eq("patient_id", str(patient_uuid))
+        .maybe_single()
+        .execute()
+    )
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Vital sign entry not found")
+
+    data = request.model_dump(exclude_none=True)
+    if not data:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided for update",
+        )
+
+    if isinstance(data.get("source"), VitalSource):
+        data["source"] = data["source"].value
+    if isinstance(data.get("blood_glucose_timing"), GlucoseTiming):
+        data["blood_glucose_timing"] = data["blood_glucose_timing"].value
+    if isinstance(data.get("recorded_at"), datetime):
+        data["recorded_at"] = data["recorded_at"].isoformat()
+
+    if "recorded_by" in data:
+        recorded_by = _resolve_recorded_by_user_id(supabase, data.get("recorded_by"))
+        if recorded_by:
+            data["recorded_by"] = recorded_by
+        else:
+            data.pop("recorded_by", None)
+
+    result = (
+        supabase.table("vital_signs")
+        .update(data)
+        .eq("id", str(vital_uuid))
+        .eq("patient_id", str(patient_uuid))
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update vital sign entry",
+        )
+
+    return {
+        "status": "success",
+        "vital": result.data[0],
+    }
+
+
+@router.delete("/patients/{patient_id}/vitals/{vital_id}")
+async def delete_patient_vital(
+    patient_id: str,
+    vital_id: str,
+):
+    """
+    Delete a vital sign entry for a patient.
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    try:
+        vital_uuid = UUID(vital_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid vital_id format")
+
+    supabase = get_supabase()
+    result = (
+        supabase.table("vital_signs")
+        .delete()
+        .eq("id", str(vital_uuid))
+        .eq("patient_id", str(patient_uuid))
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Vital sign entry not found")
+
+    return {
+        "status": "success",
+        "patient_id": str(patient_uuid),
+        "vital_id": str(vital_uuid),
+        "message": "Vital sign entry deleted.",
     }
 
 

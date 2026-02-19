@@ -797,7 +797,7 @@ async def generate_clinical_summary(
         for m in messages
     ])
     
-    summary_prompt = f"""Based on the following consultation, generate a clinical summary for the doctor.
+    summary_prompt = f"""Based on the following consultation, generate a structured clinical summary for medical records.
 
 ## Patient Context
 {patient_context}
@@ -808,14 +808,53 @@ async def generate_clinical_summary(
 ## Consultation Messages
 {messages_text}
 
-Generate a clinical summary including:
-1. Presenting symptoms
-2. Relevant medical history
-3. Assessment
-4. Recommendations made
-5. Follow-up plan
+Return the summary in markdown using these top-level sections:
 
-Format the summary professionally for medical records."""
+1. Medical History
+- Chronic Conditions: include only if mentioned in consultation/context; add timeline/date when available.
+- Past Surgeries: include only if mentioned; list each surgery with date and outcomes when available.
+- Hospitalizations: include only if mentioned; include reason and timing.
+- Medications History: include only if mentioned; include past meds and discontinuation reasons when available.
+- Allergies: include only if explicitly mentioned; include trigger and reaction details.
+- Psychiatric History: include only if explicitly mentioned; include diagnosis/treatment details when available.
+
+2. Family Medical History
+- Family History of Chronic Conditions: include only if explicitly mentioned.
+- Family History of Mental Health Conditions: include only if explicitly mentioned.
+- Family History of Genetic Conditions: include only if explicitly mentioned.
+
+3. Immunization Records
+- Vaccines Administered: include only if explicitly mentioned, with date if available.
+- Vaccines Due: include only if explicitly mentioned.
+
+4. Treatment History
+- Previous Treatments: include only if mentioned; include outcomes when available.
+- Physiotherapy: include only if applicable and mentioned.
+- Other Relevant Treatments: include only if relevant and mentioned.
+
+5. Treatment Records
+- Regular Checkup Entries (vital signs as part of treatment records):
+  - Date of examination
+  - Reason for visit
+  - Doctor comments on test results
+  - Patient progress
+  - Treatment plan
+  - Doctor notes
+- Medical Records (test results only): include only lab/xray/ecg/ct/mri.
+  - Medical Images format:
+    0) Medical file attached (if available)
+    1) Doctor's test result description
+    2) Doctor's final conclusion
+    3) AI analysis
+  - Lab Results format:
+    Include a markdown table with columns: Sample Information | Test Name | Numerical Result | Unit | Flag/Status | Doctor's Notes (optional)
+
+Rules:
+- Do not use placeholders like [Enter ...].
+- Do not fabricate details; include only information present in context/messages.
+- Omit bullets/subsections that are not mentioned instead of writing "N/A".
+- Keep wording concise and clinically clear.
+"""
 
     # Generate summary with MedGemma
     summary_en = await llm_client.generate(

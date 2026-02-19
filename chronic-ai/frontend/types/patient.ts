@@ -43,6 +43,11 @@ export interface Patient {
 
   // Medical History
   allergies?: string[]
+  surgical_history?: Array<Record<string, unknown> | string>
+  medical_history?: MedicalHistory
+  family_medical_history?: FamilyMedicalHistory | Record<string, unknown>
+  immunization_records?: ImmunizationRecords
+  treatment_history?: TreatmentHistory
   smoking_status?: "never" | "former" | "current"
   alcohol_consumption?: "none" | "occasional" | "moderate" | "heavy"
 
@@ -67,6 +72,7 @@ export interface PatientCreateInput {
   date_of_birth: string
   gender: "male" | "female" | "other"
   national_id?: string
+  insurance_number?: string
   phone_primary: string
   phone_secondary?: string
   email?: string
@@ -90,6 +96,7 @@ export interface PatientUpdateInput {
   date_of_birth?: string
   gender?: "male" | "female" | "other"
   national_id?: string | null
+  insurance_number?: string | null
   phone_primary?: string
   phone_secondary?: string | null
   email?: string | null
@@ -106,6 +113,13 @@ export interface PatientUpdateInput {
   profile_status?: "active" | "inactive" | "deceased" | "suspended"
   preferred_language?: "vi" | "en"
   assigned_doctor_id?: string | null
+  chronic_conditions?: Array<Record<string, unknown> | string>
+  surgical_history?: Array<Record<string, unknown> | string>
+  allergies?: string[]
+  family_medical_history?: FamilyMedicalHistory | Record<string, unknown> | null
+  medical_history?: MedicalHistory | Record<string, unknown> | null
+  immunization_records?: ImmunizationRecords | Record<string, unknown> | null
+  treatment_history?: TreatmentHistory | Record<string, unknown> | null
 }
 
 export interface PatientMutationResponse {
@@ -137,6 +151,36 @@ export interface Medication {
   timing?: string
   prescriber?: string
   start_date?: string
+}
+
+export interface MedicalHistory {
+  chronic_conditions?: Array<Record<string, unknown> | string>
+  past_surgeries?: Array<Record<string, unknown> | string>
+  hospitalizations?: Array<Record<string, unknown> | string>
+  medications_history?: Array<Record<string, unknown> | string>
+  allergies?: Array<Record<string, unknown> | string>
+  psychiatric_history?: Array<Record<string, unknown> | string>
+  [key: string]: unknown
+}
+
+export interface FamilyMedicalHistory {
+  family_history_of_chronic_conditions?: Array<Record<string, unknown> | string>
+  family_history_of_mental_health_conditions?: Array<Record<string, unknown> | string>
+  family_history_of_genetic_conditions?: Array<Record<string, unknown> | string>
+  [key: string]: unknown
+}
+
+export interface ImmunizationRecords {
+  vaccines_administered?: Array<Record<string, unknown> | string>
+  vaccines_due?: Array<Record<string, unknown> | string>
+  [key: string]: unknown
+}
+
+export interface TreatmentHistory {
+  previous_treatments?: Array<Record<string, unknown> | string>
+  physiotherapy?: Array<Record<string, unknown> | string>
+  other_relevant_treatments?: Array<Record<string, unknown> | string>
+  [key: string]: unknown
 }
 
 /**

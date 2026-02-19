@@ -89,6 +89,9 @@ type Translation = {
         fullName: string
         dateOfBirth: string
         gender: string
+        nric: string
+        insuranceNumber: string
+        diagnosis: string
         primaryPhone: string
         email: string
         ward: string
@@ -163,6 +166,9 @@ const translations: Record<DashboardLanguage, Translation> = {
             fullName: "Họ và tên *",
             dateOfBirth: "Ngày sinh *",
             gender: "Giới tính *",
+            nric: "Số CCCD",
+            insuranceNumber: "Mã số BHYT",
+            diagnosis: "Chuẩn đoán",
             primaryPhone: "Số điện thoại *",
             email: "Email",
             ward: "Phường/Xã *",
@@ -235,6 +241,9 @@ const translations: Record<DashboardLanguage, Translation> = {
             fullName: "Full Name *",
             dateOfBirth: "Date of Birth *",
             gender: "Gender *",
+            nric: "NRIC",
+            insuranceNumber: "Health Insurance Number",
+            diagnosis: "Diagnosis",
             primaryPhone: "Primary Phone *",
             email: "Email",
             ward: "Ward *",
@@ -253,6 +262,9 @@ type PatientFormState = {
     full_name: string
     date_of_birth: string
     gender: "male" | "female" | "other"
+    national_id: string
+    insurance_number: string
+    primary_diagnosis: string
     phone_primary: string
     email: string
     address_ward: string
@@ -269,6 +281,9 @@ const EMPTY_FORM: PatientFormState = {
     full_name: "",
     date_of_birth: "",
     gender: "female",
+    national_id: "",
+    insurance_number: "",
+    primary_diagnosis: "",
     phone_primary: "",
     email: "",
     address_ward: "",
@@ -365,6 +380,9 @@ export default function PatientsPage() {
             full_name: patient.full_name ?? "",
             date_of_birth: patient.date_of_birth ?? "",
             gender: patient.gender ?? "female",
+            national_id: patient.national_id ?? "",
+            insurance_number: patient.insurance_number ?? "",
+            primary_diagnosis: patient.primary_diagnosis ?? "",
             phone_primary: patient.phone_primary ?? "",
             email: patient.email ?? "",
             address_ward: patient.address_ward ?? "",
@@ -399,6 +417,9 @@ export default function PatientsPage() {
         full_name: form.full_name.trim(),
         date_of_birth: form.date_of_birth,
         gender: form.gender,
+        national_id: normalizeOptional(form.national_id) || undefined,
+        insurance_number: normalizeOptional(form.insurance_number) || undefined,
+        primary_diagnosis: normalizeOptional(form.primary_diagnosis) || undefined,
         phone_primary: form.phone_primary.trim(),
         email: normalizeOptional(form.email) || undefined,
         address_ward: form.address_ward.trim(),
@@ -415,6 +436,9 @@ export default function PatientsPage() {
         full_name: form.full_name.trim(),
         date_of_birth: form.date_of_birth,
         gender: form.gender,
+        national_id: normalizeOptional(form.national_id),
+        insurance_number: normalizeOptional(form.insurance_number),
+        primary_diagnosis: normalizeOptional(form.primary_diagnosis),
         phone_primary: form.phone_primary.trim(),
         email: normalizeOptional(form.email),
         address_ward: form.address_ward.trim(),
@@ -484,6 +508,9 @@ export default function PatientsPage() {
             full_name: form.full_name.trim() || undefined,
             date_of_birth: form.date_of_birth || undefined,
             gender: form.gender || undefined,
+            national_id: form.national_id.trim() || undefined,
+            insurance_number: form.insurance_number.trim() || undefined,
+            primary_diagnosis: form.primary_diagnosis.trim() || undefined,
             phone_primary: form.phone_primary.trim() || undefined,
             email: form.email.trim() || undefined,
             address_ward: form.address_ward.trim() || undefined,
@@ -506,6 +533,9 @@ export default function PatientsPage() {
             gender: metadata.gender === "male" || metadata.gender === "female" || metadata.gender === "other"
                 ? metadata.gender
                 : prev.gender,
+            national_id: typeof metadata.national_id === "string" ? metadata.national_id : prev.national_id,
+            insurance_number: typeof metadata.insurance_number === "string" ? metadata.insurance_number : prev.insurance_number,
+            primary_diagnosis: typeof metadata.primary_diagnosis === "string" ? metadata.primary_diagnosis : prev.primary_diagnosis,
             phone_primary: typeof metadata.phone_primary === "string" ? metadata.phone_primary : prev.phone_primary,
             email: typeof metadata.email === "string" ? metadata.email : prev.email,
             address_ward: typeof metadata.address_ward === "string" ? metadata.address_ward : prev.address_ward,
@@ -804,6 +834,9 @@ function PatientForm({
                     {genderOptions.map((v) => <option key={v} value={v}>{t.genderLabels[v]}</option>)}
                 </select>
             </Field>
+            <Field label={t.fieldLabels.nric}><Input value={form.national_id} onChange={(e) => setValue("national_id", e.target.value)} /></Field>
+            <Field label={t.fieldLabels.insuranceNumber}><Input value={form.insurance_number} onChange={(e) => setValue("insurance_number", e.target.value)} /></Field>
+            <Field label={t.fieldLabels.diagnosis}><Input value={form.primary_diagnosis} onChange={(e) => setValue("primary_diagnosis", e.target.value)} /></Field>
             <Field label={t.fieldLabels.primaryPhone}><Input value={form.phone_primary} onChange={(e) => setValue("phone_primary", e.target.value)} /></Field>
             <Field label={t.fieldLabels.email}><Input type="email" value={form.email} onChange={(e) => setValue("email", e.target.value)} /></Field>
             <Field label={t.fieldLabels.ward}><Input value={form.address_ward} onChange={(e) => setValue("address_ward", e.target.value)} /></Field>

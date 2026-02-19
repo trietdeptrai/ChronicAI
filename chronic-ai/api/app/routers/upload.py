@@ -29,6 +29,7 @@ CHAT_IMAGES_DIR = Path(tempfile.gettempdir()) / "chronic_ai_chat_images"
 CHAT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 IMAGING_RECORD_TYPES = {
+    "lab",
     "xray",
     "ecg",
     "ct",
@@ -671,7 +672,8 @@ async def upload_patient_record_image(
     doctor_comment: Optional[str] = Form(None)
 ):
     """
-    Upload a patient imaging study (e.g., X-ray, ECG, CT, MRI) and create a medical record entry.
+    Upload a patient test-result image (e.g., lab, X-ray, ECG, CT, MRI)
+    and create a medical record entry.
     
     Process:
     1. Validate patient UUID and record type
