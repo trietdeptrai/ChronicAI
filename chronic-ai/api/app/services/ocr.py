@@ -18,19 +18,45 @@ import time
 if TYPE_CHECKING:
     from PIL import Image as PILImage
 
+_OCR_DEPENDENCY_INSTALL_HINT = (
+    "Install OCR dependencies in the API virtualenv: "
+    "pip install paddlepaddle paddleocr pdf2image pillow"
+)
+
+
+class OCRDependencyError(RuntimeError):
+    """Raised when OCR runtime dependencies are missing."""
+
+
+def _build_ocr_dependency_error(exc: Optional[BaseException] = None) -> OCRDependencyError:
+    if isinstance(exc, ModuleNotFoundError) and exc.name == "paddle":
+        return OCRDependencyError(
+            "OCR runtime dependency is missing: module 'paddle' (package 'paddlepaddle'). "
+            f"{_OCR_DEPENDENCY_INSTALL_HINT}"
+        )
+    if exc is not None:
+        return OCRDependencyError(f"OCR dependencies are unavailable: {exc}. {_OCR_DEPENDENCY_INSTALL_HINT}")
+    return OCRDependencyError(f"OCR dependencies are unavailable. {_OCR_DEPENDENCY_INSTALL_HINT}")
+
+
 try:
+    import paddle  # type: ignore  # noqa: F401
     from paddleocr import PaddleOCR
     from pdf2image import convert_from_path
     from PIL import Image, ImageEnhance, ImageFilter
     import numpy as np
     PADDLEOCR_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     PADDLEOCR_AVAILABLE = False
+    _PADDLEOCR_IMPORT_ERROR: Optional[BaseException] = exc
     PaddleOCR = None
+    convert_from_path = None
     Image = None
     ImageEnhance = None
     ImageFilter = None
     np = None
+else:
+    _PADDLEOCR_IMPORT_ERROR = None
 
 
 def _safe_unlink(path: str, retries: int = 8, delay_seconds: float = 0.2) -> None:
@@ -55,10 +81,7 @@ class OCRService:
     def __init__(self):
         """Initialize PaddleOCR with Vietnamese language support."""
         if not PADDLEOCR_AVAILABLE:
-            raise ImportError(
-                "PaddleOCR not available. Install with: "
-                "pip install paddleocr pdf2image pillow"
-            )
+            raise _build_ocr_dependency_error(_PADDLEOCR_IMPORT_ERROR)
 
         # Initialize PaddleOCR for Vietnamese.
         # PaddleOCR keyword support differs across versions, so degrade gracefully.
@@ -97,6 +120,8 @@ class OCRService:
                 if removed:
                     continue
                 raise
+            except ModuleNotFoundError as exc:
+                raise _build_ocr_dependency_error(exc) from exc
 
     def preprocess_image(self, image: Any) -> Any:
         """
