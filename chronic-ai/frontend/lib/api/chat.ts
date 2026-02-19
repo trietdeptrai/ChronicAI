@@ -12,6 +12,9 @@ import type {
     ClinicalSummaryResponse,
     UploadResponse,
     DoctorChatStreamUpdate,
+    ConversationListResponse,
+    ConversationMessagesResponse,
+    ChatConversation,
 } from "@/types"
 
 /**
@@ -28,13 +31,15 @@ export async function sendChatMessage(request: ChatRequest): Promise<ChatRespons
  * Send a chat message with streaming response
  */
 export async function* sendChatMessageStreaming(
-    request: ChatRequest
+    request: ChatRequest,
+    conversationId?: string,
 ): AsyncGenerator<ChatStreamUpdate> {
     yield* streamingFetch<ChatStreamUpdate>("/chat/patient/v2/stream", {
         patient_id: request.patient_id,
         message: request.message,
         image_path: request.image_path,
         output_format: "structured",
+        conversation_id: conversationId,
     })
 }
 
@@ -114,7 +119,9 @@ export async function uploadChatImage(file: File): Promise<{ file_path: string }
  */
 export async function* sendDoctorChatStreaming(
     message: string,
-    imagePath?: string
+    imagePath?: string,
+    conversationId?: string,
+    doctorId?: string,
 ): AsyncGenerator<DoctorChatStreamUpdate> {
     yield* streamingFetch<DoctorChatStreamUpdate>("/chat/doctor/v2/stream", {
         message,
@@ -123,6 +130,8 @@ export async function* sendDoctorChatStreaming(
         enable_llm_hitl: false,
         enable_patient_confirmation_hitl: true,
         output_format: "structured",
+        conversation_id: conversationId,
+        doctor_id: doctorId,
     })
 }
 
@@ -137,4 +146,64 @@ export async function* resumeDoctorChatStreaming(
         thread_id: threadId,
         response,
     })
+}
+
+
+// ============================================================================
+// Conversation Management
+// ============================================================================
+
+/**
+ * List conversations for a user.
+ */
+export async function getConversations(
+    type: "doctor" | "patient",
+    userId: string,
+    limit = 50
+): Promise<ConversationListResponse> {
+    return apiClient<ConversationListResponse>(
+        `/chat/conversations/${type}?user_id=${userId}&limit=${limit}`
+    )
+}
+
+/**
+ * Get messages for a specific conversation.
+ */
+export async function getConversationMessages(
+    conversationId: string,
+    limit = 100
+): Promise<ConversationMessagesResponse> {
+    return apiClient<ConversationMessagesResponse>(
+        `/chat/conversations/${conversationId}/messages?limit=${limit}`
+    )
+}
+
+/**
+ * Create a new conversation.
+ */
+export async function createConversation(
+    type: "doctor" | "patient",
+    userId: string,
+    title?: string
+): Promise<ChatConversation> {
+    return apiClient<ChatConversation>("/chat/conversations", {
+        method: "POST",
+        body: JSON.stringify({
+            conversation_type: type,
+            user_id: userId,
+            title,
+        }),
+    })
+}
+
+/**
+ * Delete a conversation and all its messages.
+ */
+export async function deleteConversation(
+    conversationId: string
+): Promise<{ status: string; conversation_id: string }> {
+    return apiClient<{ status: string; conversation_id: string }>(
+        `/chat/conversations/${conversationId}`,
+        { method: "DELETE" }
+    )
 }

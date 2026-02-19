@@ -25,8 +25,8 @@ protobuf==6.33.5
 accelerate==1.10.1
 
 # OCR - Optional, install separately if needed:
-# pip install paddleocr pdf2image
-# PaddleOCR requires native dependencies that may fail on some systems
+# pip install paddlepaddle paddleocr pdf2image pillow
+# PaddleOCR depends on paddle runtime and may require platform-specific wheels.
 pdf2image==1.17.0
 pillow==10.2.0
 

@@ -47,7 +47,6 @@ const dashboardCopy = {
         noProfile: "Chưa tìm thấy dữ liệu bệnh nhân cho tài khoản này.",
         statVitals: "Sinh hiệu",
         statNewestRecord: "Hồ sơ mới nhất",
-        viewAllRecords: "Xem toàn bộ hồ sơ",
         loadingHistory: "Đang tải lịch sử hồ sơ...",
         gender: {
             male: "Nam",
@@ -101,7 +100,6 @@ const dashboardCopy = {
         noProfile: "No patient data found for this account.",
         statVitals: "Vitals",
         statNewestRecord: "Latest Record",
-        viewAllRecords: "View all records",
         loadingHistory: "Loading record history...",
         gender: {
             male: "Male",
@@ -389,13 +387,6 @@ function PatientDashboard({ userId, language }: { userId: string; language: Dash
                                     label={t.statNewestRecord}
                                     value={latestRecord ? formatDateTime(latestRecord.created_at, language) : t.noRecordYet}
                                 />
-                            </div>
-                            <div className="flex justify-end">
-                                <Button asChild>
-                                    <Link href="/dashboard/records">
-                                        {t.viewAllRecords} <ArrowRight className="h-4 w-4" />
-                                    </Link>
-                                </Button>
                             </div>
                         </>
                     )}

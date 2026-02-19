@@ -34,25 +34,25 @@ export interface ChatResponse {
 
 export interface ChatStreamUpdate {
     stage:
-        | "starting"
-        | "translating_input"
-        | "translated_input"
-        | "verifying_input"
-        | "verified_input"
-        | "scope_blocked"
-        | "retrieving_context"
-        | "retrieved_context"
-        | "retrieved_history"
-        | "triaged"
-        | "escalated"
-        | "medical_reasoning"
-        | "reasoned"
-        | "translating_output"
-        | "formatting_output"
-        | "formatted"
-        | "complete"
-        | "hitl_required"
-        | "error"
+    | "starting"
+    | "translating_input"
+    | "translated_input"
+    | "verifying_input"
+    | "verified_input"
+    | "scope_blocked"
+    | "retrieving_context"
+    | "retrieved_context"
+    | "retrieved_history"
+    | "triaged"
+    | "escalated"
+    | "medical_reasoning"
+    | "reasoned"
+    | "translating_output"
+    | "formatting_output"
+    | "formatted"
+    | "complete"
+    | "hitl_required"
+    | "error"
     message: string
     progress: number
     response?: string
@@ -161,4 +161,31 @@ export interface DoctorChatStreamUpdate {
         options?: string[]
     }
     thread_id?: string
+}
+
+// Chat History / Conversation types
+
+export interface ChatConversation {
+    id: string
+    conversation_type: "doctor" | "patient"
+    user_id: string
+    title: string | null
+    created_at: string
+    updated_at: string
+}
+
+export interface ConversationListResponse {
+    conversations: ChatConversation[]
+}
+
+export interface ConversationMessagesResponse {
+    conversation_id: string
+    messages: Array<{
+        id: string
+        conversation_id: string
+        role: "user" | "assistant"
+        content: string
+        metadata: Record<string, unknown>
+        created_at: string
+    }>
 }

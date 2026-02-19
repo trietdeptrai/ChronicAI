@@ -16,7 +16,7 @@ import uuid
 from app.config import settings
 from app.db.database import get_supabase
 from app.models.schemas import RecordType
-from app.services.ocr import extract_text
+from app.services.ocr import OCRDependencyError, extract_text
 from app.services.llm import analyze_uploaded_record
 from app.services.rag import ingest_document, delete_record_embeddings
 
@@ -537,6 +537,13 @@ async def upload_document(
             }
         )
         
+    except OCRDependencyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -724,6 +731,13 @@ async def upload_patient_record_image(
         if settings.image_upload_run_ocr:
             try:
                 extracted_text = await extract_text(tmp_path)
+            except OCRDependencyError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=str(exc),
+                ) from exc
+            except HTTPException:
+                raise
             except Exception as exc:
                 logger.exception("[upload-record-image] OCR failed")
                 raise HTTPException(
@@ -1150,6 +1164,13 @@ async def update_patient_record(
                 "message": "Medical record updated successfully",
             }
         )
+    except OCRDependencyError as exc:
+        if new_storage_path:
+            _remove_storage_path(supabase, new_storage_path, "[record-update]")
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        ) from exc
     except HTTPException:
         # Roll back newly uploaded file on failure before DB save.
         if new_storage_path:

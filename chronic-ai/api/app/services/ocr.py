@@ -11,6 +11,7 @@ from pathlib import Path
 from functools import partial
 import tempfile
 import os
+import shutil
 import logging
 import re
 import time
@@ -18,19 +19,103 @@ import time
 if TYPE_CHECKING:
     from PIL import Image as PILImage
 
+_OCR_DEPENDENCY_INSTALL_HINT = (
+    "Install OCR dependencies in the API virtualenv: "
+    "pip install paddlepaddle paddleocr pdf2image pillow"
+)
+
+
+class OCRDependencyError(RuntimeError):
+    """Raised when OCR runtime dependencies are missing."""
+
+
+def _build_ocr_dependency_error(exc: Optional[BaseException] = None) -> OCRDependencyError:
+    if isinstance(exc, ModuleNotFoundError) and exc.name == "paddle":
+        return OCRDependencyError(
+            "OCR runtime dependency is missing: module 'paddle' (package 'paddlepaddle'). "
+            f"{_OCR_DEPENDENCY_INSTALL_HINT}"
+        )
+    if exc is not None:
+        return OCRDependencyError(f"OCR dependencies are unavailable: {exc}. {_OCR_DEPENDENCY_INSTALL_HINT}")
+    return OCRDependencyError(f"OCR dependencies are unavailable. {_OCR_DEPENDENCY_INSTALL_HINT}")
+
+
+def _resolve_poppler_path() -> Optional[str]:
+    """
+    Locate Poppler binaries directory for pdf2image when PATH is incomplete.
+
+    Priority:
+    1) explicit env vars (directory or full pdfinfo path)
+    2) current PATH
+    3) common local install paths
+    """
+    env_candidates = [
+        os.getenv("OCR_POPPLER_PATH", "").strip(),
+        os.getenv("POPPLER_PATH", "").strip(),
+        os.getenv("PDF2IMAGE_POPPLER_PATH", "").strip(),
+    ]
+
+    def normalize(candidate: str) -> Optional[str]:
+        if not candidate:
+            return None
+        path = Path(candidate).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.exists() or not path.is_dir():
+            return None
+        if (path / "pdfinfo").exists():
+            return str(path)
+        return None
+
+    for candidate in env_candidates:
+        normalized = normalize(candidate)
+        if normalized:
+            return normalized
+
+    # If available in PATH, no explicit poppler_path is required.
+    if shutil.which("pdfinfo"):
+        return None
+
+    for candidate in ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"):
+        normalized = normalize(candidate)
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _is_missing_poppler_error(exc: BaseException) -> bool:
+    name = exc.__class__.__name__
+    message = str(exc).lower()
+    if name == "PDFInfoNotInstalledError":
+        return True
+    if isinstance(exc, FileNotFoundError) and "pdfinfo" in message:
+        return True
+    if "unable to get page count" in message and "poppler" in message:
+        return True
+    if "no such file or directory" in message and "pdfinfo" in message:
+        return True
+    return False
+
+
 try:
+    import paddle  # type: ignore  # noqa: F401
     from paddleocr import PaddleOCR
     from pdf2image import convert_from_path
     from PIL import Image, ImageEnhance, ImageFilter
     import numpy as np
     PADDLEOCR_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     PADDLEOCR_AVAILABLE = False
+    _PADDLEOCR_IMPORT_ERROR: Optional[BaseException] = exc
     PaddleOCR = None
+    convert_from_path = None
     Image = None
     ImageEnhance = None
     ImageFilter = None
     np = None
+else:
+    _PADDLEOCR_IMPORT_ERROR = None
 
 
 def _safe_unlink(path: str, retries: int = 8, delay_seconds: float = 0.2) -> None:
@@ -55,10 +140,7 @@ class OCRService:
     def __init__(self):
         """Initialize PaddleOCR with Vietnamese language support."""
         if not PADDLEOCR_AVAILABLE:
-            raise ImportError(
-                "PaddleOCR not available. Install with: "
-                "pip install paddleocr pdf2image pillow"
-            )
+            raise _build_ocr_dependency_error(_PADDLEOCR_IMPORT_ERROR)
 
         # Initialize PaddleOCR for Vietnamese.
         # PaddleOCR keyword support differs across versions, so degrade gracefully.
@@ -97,6 +179,8 @@ class OCRService:
                 if removed:
                     continue
                 raise
+            except ModuleNotFoundError as exc:
+                raise _build_ocr_dependency_error(exc) from exc
 
     def preprocess_image(self, image: Any) -> Any:
         """
@@ -201,20 +285,38 @@ class OCRService:
         if isinstance(max_pages, int) and max_pages > 0:
             convert_kwargs["first_page"] = 1
             convert_kwargs["last_page"] = max_pages
+        poppler_path = _resolve_poppler_path()
+        if poppler_path:
+            convert_kwargs["poppler_path"] = poppler_path
 
         logger.info(
-            "[ocr] converting pdf path=%s dpi=%s max_pages=%s",
+            "[ocr] converting pdf path=%s dpi=%s max_pages=%s poppler_path=%s",
             pdf_path,
             dpi,
             max_pages if isinstance(max_pages, int) and max_pages > 0 else "all",
+            poppler_path or "<PATH>",
         )
         # Convert PDF pages to images
-        images = convert_from_path(pdf_path, **convert_kwargs)
+        try:
+            images = convert_from_path(pdf_path, **convert_kwargs)
+        except Exception as exc:
+            if _is_missing_poppler_error(exc):
+                raise OCRDependencyError(
+                    "PDF OCR requires Poppler ('pdfinfo'). Install Poppler and ensure it is discoverable. "
+                    "On macOS: `brew install poppler`. "
+                    "If already installed but not in runtime PATH, set `POPPLER_PATH` "
+                    "(or `OCR_POPPLER_PATH`) to the directory containing `pdfinfo` "
+                    "(common Homebrew path: `/opt/homebrew/bin`)."
+                ) from exc
+            raise
         logger.info("[ocr] pdf converted pages=%s", len(images))
-        
+
+        dump_ocr_text = logger.isEnabledFor(logging.DEBUG)
+        started_at = time.perf_counter()
         all_text = []
-        
+
         for page_num, image in enumerate(images, 1):
+            page_started_at = time.perf_counter()
             logger.info("[ocr] processing page=%s/%s", page_num, len(images))
             if progress_callback:
                 try:
@@ -232,24 +334,41 @@ class OCRService:
                     image.close()
                 except Exception:
                     pass
-            
+
             page_text = self._format_ocr_result(result)
-            logger.warning(
-                "[ocr] page=%s/%s text_begin\n%s\n[ocr] page=%s/%s text_end",
+            elapsed_ms = (time.perf_counter() - page_started_at) * 1000.0
+            logger.info(
+                "[ocr] page=%s/%s done chars=%s elapsed_ms=%.1f",
                 page_num,
                 len(images),
-                page_text or "<empty>",
-                page_num,
-                len(images),
+                len(page_text or ""),
+                elapsed_ms,
             )
+            if dump_ocr_text:
+                logger.debug(
+                    "[ocr] page=%s/%s text_begin\n%s\n[ocr] page=%s/%s text_end",
+                    page_num,
+                    len(images),
+                    page_text or "<empty>",
+                    page_num,
+                    len(images),
+                )
             if page_text:
                 all_text.append(f"--- Trang {page_num} ---\n{page_text}")
 
         full_text = "\n\n".join(all_text)
-        logger.warning(
-            "[ocr] full_text_begin\n%s\n[ocr] full_text_end",
-            full_text or "<empty>",
+        total_elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        logger.info(
+            "[ocr] completed pages=%s extracted_chars=%s elapsed_ms=%.1f",
+            len(images),
+            len(full_text or ""),
+            total_elapsed_ms,
         )
+        if dump_ocr_text:
+            logger.debug(
+                "[ocr] full_text_begin\n%s\n[ocr] full_text_end",
+                full_text or "<empty>",
+            )
         return full_text
     
     def _format_ocr_result(self, result: List) -> str:

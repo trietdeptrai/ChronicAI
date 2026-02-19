@@ -11,11 +11,9 @@ import {
     LayoutDashboard,
     Users,
     MessageSquare,
-    FileText,
     Settings,
     LogOut,
     Calendar,
-    BarChart3,
 } from "lucide-react"
 
 const styles = {
@@ -57,9 +55,7 @@ const navItems: NavItem[] = [
     { id: "dashboard", label: { vi: "Bảng điều khiển", en: "Dashboard" }, href: "/dashboard", icon: LayoutDashboard },
     { id: "patients", label: { vi: "Bệnh nhân", en: "Patients" }, href: "/dashboard/patients", icon: Users, doctorOnly: true },
     { id: "calendar", label: { vi: "Lịch", en: "Calendar" }, href: "/dashboard/calendar", icon: Calendar },
-    { id: "analytics", label: { vi: "Phân tích", en: "Analytics" }, href: "/dashboard/analytics", icon: BarChart3, doctorOnly: true },
     { id: "chat", label: { vi: "AI Chat", en: "AI Chat" }, href: "/dashboard/chat", icon: MessageSquare },
-    { id: "records", label: { vi: "Hồ sơ", en: "Records" }, href: "/dashboard/records", icon: FileText },
     { id: "settings", label: { vi: "Cài đặt", en: "Settings" }, href: "/dashboard/settings", icon: Settings },
 ]
 

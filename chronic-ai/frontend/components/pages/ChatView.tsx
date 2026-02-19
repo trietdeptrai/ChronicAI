@@ -20,6 +20,7 @@ export function ChatView({ onOpenPatientEHR, patientContext }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const handledPatientContextRef = useRef<string | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -31,9 +32,10 @@ export function ChatView({ onOpenPatientEHR, patientContext }: ChatViewProps) {
 
   // Handle patient context - auto-ask about patient when context is provided
   useEffect(() => {
-    if (patientContext && messages.length === 0) {
+    if (patientContext && patientContext !== handledPatientContextRef.current) {
       const patient = mockPatients.find(p => p.id === patientContext);
       if (patient) {
+        handledPatientContextRef.current = patientContext;
         const contextQuestion = `Cho tôi biết tình trạng chi tiết của bệnh nhân ${patient.name}`;
         
         const userMessage: Message = {
@@ -46,7 +48,7 @@ export function ChatView({ onOpenPatientEHR, patientContext }: ChatViewProps) {
         setMessages([userMessage]);
         setIsTyping(true);
 
-        setTimeout(() => {
+        const timeoutId = window.setTimeout(() => {
           const aiResponse: Message = {
             id: (Date.now() + 1).toString(),
             role: 'assistant',
@@ -56,6 +58,10 @@ export function ChatView({ onOpenPatientEHR, patientContext }: ChatViewProps) {
           setMessages(prev => [...prev, aiResponse]);
           setIsTyping(false);
         }, 1000);
+
+        return () => {
+          window.clearTimeout(timeoutId);
+        };
       }
     }
   }, [patientContext]);

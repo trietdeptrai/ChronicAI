@@ -35,7 +35,7 @@ from app.models.schemas import (
     TriagePriority,
     VitalSource,
 )
-from app.services.ocr import extract_text
+from app.services.ocr import OCRDependencyError, extract_text
 from app.services.llm import generate_clinical_summary
 
 router = APIRouter(prefix="/doctor", tags=["Doctor"])
@@ -1424,12 +1424,15 @@ def _guess_content_type(extension: str) -> str:
 
 
 def _log_ocr_debug_dump(context: str, raw_text: str) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
     text = str(raw_text or "")
     numbered_lines = []
     for index, line in enumerate(text.splitlines(), start=1):
         numbered_lines.append(f"{index:04d}: {line}")
     line_dump = "\n".join(numbered_lines) if numbered_lines else "<empty OCR output>"
-    logger.warning(
+    logger.debug(
         "[ocr-debug] %s extracted_text_begin\n%s\n[ocr-debug] %s extracted_text_end",
         context,
         line_dump,
@@ -3534,11 +3537,18 @@ async def import_patient_metadata_preview(file: UploadFile = File(...)):
                     tmp.write(content)
                     temp_path = tmp.name
                 logger.warning("[metadata-import-preview] running OCR path=%s", temp_path)
+                metadata_pdf_max_pages = max(
+                    1,
+                    min(
+                        settings.import_pdf_ocr_max_pages,
+                        settings.import_metadata_pdf_ocr_max_pages,
+                    ),
+                )
                 raw_text = await extract_text(
                     temp_path,
                     file_type="pdf",
                     pdf_dpi=max(72, settings.import_pdf_ocr_dpi),
-                    pdf_max_pages=settings.import_pdf_ocr_max_pages,
+                    pdf_max_pages=metadata_pdf_max_pages,
                     pdf_preprocess=settings.import_pdf_ocr_preprocess,
                     pdf_render_threads=max(1, int(settings.import_pdf_render_threads)),
                 )
@@ -3562,6 +3572,10 @@ async def import_patient_metadata_preview(file: UploadFile = File(...)):
             "metadata": metadata,
             "message": "Patient metadata import preview generated.",
         }
+    except OCRDependencyError as exc:
+        detail = str(exc)
+        logger.warning("[metadata-import-preview] ocr dependency error detail=%s", detail, exc_info=True)
+        raise HTTPException(status_code=503, detail=detail) from exc
     except HTTPException as exc:
         logger.warning("[metadata-import-preview] failed detail=%s", exc.detail, exc_info=True)
         raise
@@ -3790,6 +3804,15 @@ async def import_patient_vitals_preview(
                     except Exception:
                         logger.warning("Failed to remove temporary vital import file path=%s", temp_path)
             rows = _parse_vital_import_pdf_payload(raw_text or "")
+    except OCRDependencyError as exc:
+        detail = str(exc)
+        logger.warning(
+            "[vital-import-preview] ocr dependency error patient_id=%s detail=%s",
+            patient_id,
+            detail,
+            exc_info=True,
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
     except HTTPException as exc:
         logger.warning(
             "[vital-import-preview] failed patient_id=%s detail=%s",
