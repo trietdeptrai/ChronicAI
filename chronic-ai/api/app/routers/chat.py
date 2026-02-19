@@ -355,6 +355,7 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
     
     async def event_generator():
         """Generate SSE events from LangGraph."""
+        assistant_saved = False
         try:
             async for update in process_doctor_query_graph(
                 query_vi=request.message,
@@ -376,9 +377,17 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
                         update["response_formatted"] = format_as_plain_text(formatted)
 
                 # Save assistant response to history
-                if update.get("stage") == "complete" and conversation_id:
+                if (
+                    update.get("stage") == "complete"
+                    and conversation_id
+                    and not assistant_saved
+                ):
                     try:
-                        response_text = update.get("response", "")
+                        response_text = str(update.get("response", "")).strip()
+                        if not response_text:
+                            # Some workflows may emit intermediate/empty complete events.
+                            # Persist only meaningful final assistant content.
+                            continue
                         metadata = {}
                         if update.get("mentioned_patients"):
                             metadata["mentioned_patients"] = update["mentioned_patients"]
@@ -392,6 +401,7 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
                             content=response_text,
                             metadata=metadata or None,
                         )
+                        assistant_saved = True
                     except Exception as e:
                         logger.warning("Failed to save assistant message: %s", e)
                 
@@ -544,6 +554,7 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
 
     async def event_generator():
         """Generate SSE events from LangGraph."""
+        assistant_saved = False
         try:
             async for update in process_patient_chat_graph(
                 patient_id=request.patient_id,
@@ -561,9 +572,17 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
                         update["response_formatted"] = format_as_plain_text(formatted)
 
                 # Save assistant response to history
-                if update.get("stage") == "complete" and conversation_id:
+                if (
+                    update.get("stage") == "complete"
+                    and conversation_id
+                    and not assistant_saved
+                ):
                     try:
-                        response_text = update.get("response", "")
+                        response_text = str(update.get("response", "")).strip()
+                        if not response_text:
+                            # Some workflows may emit intermediate/empty complete events.
+                            # Persist only meaningful final assistant content.
+                            continue
                         metadata = {}
                         if update.get("attachments"):
                             metadata["attachments"] = update["attachments"]
@@ -573,6 +592,7 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
                             content=response_text,
                             metadata=metadata or None,
                         )
+                        assistant_saved = True
                     except Exception as e:
                         logger.warning("Failed to save assistant message: %s", e)
                 

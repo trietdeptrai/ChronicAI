@@ -29,10 +29,12 @@ export default function ChatPage() {
     // For doctors, show the orchestrator chat (no patient pre-selection needed)
     return (
         <div className="h-[calc(100vh-theme(spacing.16))]">
-            <PageHeader
-                title="Trợ lý Bác sĩ AI"
-                description="Hỏi về bất kỳ bệnh nhân nào - không cần chọn trước"
-            />
+            <div className="mb-4">
+                <PageHeader
+                    title="Trợ lý Bác sĩ AI"
+                    description="Hỏi về bất kỳ bệnh nhân nào - không cần chọn trước"
+                />
+            </div>
 
             <Card className="h-[calc(100%-80px)]">
                 <DoctorChatInterface doctorId={user?.id} />
