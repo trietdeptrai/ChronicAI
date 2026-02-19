@@ -11,6 +11,7 @@ from pathlib import Path
 from functools import partial
 import tempfile
 import os
+import shutil
 import logging
 import re
 import time
@@ -37,6 +38,64 @@ def _build_ocr_dependency_error(exc: Optional[BaseException] = None) -> OCRDepen
     if exc is not None:
         return OCRDependencyError(f"OCR dependencies are unavailable: {exc}. {_OCR_DEPENDENCY_INSTALL_HINT}")
     return OCRDependencyError(f"OCR dependencies are unavailable. {_OCR_DEPENDENCY_INSTALL_HINT}")
+
+
+def _resolve_poppler_path() -> Optional[str]:
+    """
+    Locate Poppler binaries directory for pdf2image when PATH is incomplete.
+
+    Priority:
+    1) explicit env vars (directory or full pdfinfo path)
+    2) current PATH
+    3) common local install paths
+    """
+    env_candidates = [
+        os.getenv("OCR_POPPLER_PATH", "").strip(),
+        os.getenv("POPPLER_PATH", "").strip(),
+        os.getenv("PDF2IMAGE_POPPLER_PATH", "").strip(),
+    ]
+
+    def normalize(candidate: str) -> Optional[str]:
+        if not candidate:
+            return None
+        path = Path(candidate).expanduser()
+        if path.is_file():
+            path = path.parent
+        if not path.exists() or not path.is_dir():
+            return None
+        if (path / "pdfinfo").exists():
+            return str(path)
+        return None
+
+    for candidate in env_candidates:
+        normalized = normalize(candidate)
+        if normalized:
+            return normalized
+
+    # If available in PATH, no explicit poppler_path is required.
+    if shutil.which("pdfinfo"):
+        return None
+
+    for candidate in ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"):
+        normalized = normalize(candidate)
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _is_missing_poppler_error(exc: BaseException) -> bool:
+    name = exc.__class__.__name__
+    message = str(exc).lower()
+    if name == "PDFInfoNotInstalledError":
+        return True
+    if isinstance(exc, FileNotFoundError) and "pdfinfo" in message:
+        return True
+    if "unable to get page count" in message and "poppler" in message:
+        return True
+    if "no such file or directory" in message and "pdfinfo" in message:
+        return True
+    return False
 
 
 try:
@@ -226,15 +285,30 @@ class OCRService:
         if isinstance(max_pages, int) and max_pages > 0:
             convert_kwargs["first_page"] = 1
             convert_kwargs["last_page"] = max_pages
+        poppler_path = _resolve_poppler_path()
+        if poppler_path:
+            convert_kwargs["poppler_path"] = poppler_path
 
         logger.info(
-            "[ocr] converting pdf path=%s dpi=%s max_pages=%s",
+            "[ocr] converting pdf path=%s dpi=%s max_pages=%s poppler_path=%s",
             pdf_path,
             dpi,
             max_pages if isinstance(max_pages, int) and max_pages > 0 else "all",
+            poppler_path or "<PATH>",
         )
         # Convert PDF pages to images
-        images = convert_from_path(pdf_path, **convert_kwargs)
+        try:
+            images = convert_from_path(pdf_path, **convert_kwargs)
+        except Exception as exc:
+            if _is_missing_poppler_error(exc):
+                raise OCRDependencyError(
+                    "PDF OCR requires Poppler ('pdfinfo'). Install Poppler and ensure it is discoverable. "
+                    "On macOS: `brew install poppler`. "
+                    "If already installed but not in runtime PATH, set `POPPLER_PATH` "
+                    "(or `OCR_POPPLER_PATH`) to the directory containing `pdfinfo` "
+                    "(common Homebrew path: `/opt/homebrew/bin`)."
+                ) from exc
+            raise
         logger.info("[ocr] pdf converted pages=%s", len(images))
         
         all_text = []

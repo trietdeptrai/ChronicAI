@@ -9,12 +9,17 @@ import { useDoctorChat } from "@/lib/hooks"
 import { MessageBubble } from "./message-bubble"
 import { ChatInput } from "./chat-input"
 import { StreamingProgress } from "./streaming-progress"
+import { ConversationSidebar } from "./conversation-sidebar"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { X, Users, Sparkles } from "lucide-react"
 
-export function DoctorChatInterface() {
+interface DoctorChatInterfaceProps {
+    doctorId?: string
+}
+
+export function DoctorChatInterface({ doctorId }: DoctorChatInterfaceProps) {
     const [isResolvingHITL, setIsResolvingHITL] = useState(false)
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -31,7 +36,14 @@ export function DoctorChatInterface() {
         resumeHITL,
         dismissHITL,
         clearMessages,
-    } = useDoctorChat()
+        // Conversation history
+        conversations,
+        activeConversationId,
+        isLoadingConversations,
+        loadConversation,
+        newConversation,
+        deleteConversation,
+    } = useDoctorChat({ doctorId })
 
     const patientConfirmationDetails = pendingHITL?.type === "patient_confirmation"
         ? (pendingHITL.details as {
@@ -77,110 +89,141 @@ export function DoctorChatInterface() {
     }
 
     return (
-        <div className="flex flex-col h-full">
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
-                        <Sparkles className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                        <h3 className="font-medium text-sm">Trợ lý Bác sĩ AI</h3>
-                        <p className="text-xs text-muted-foreground">
-                            Hỏi về bất kỳ bệnh nhân nào
-                        </p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    {/* Show mentioned patients */}
-                    {mentionedPatients.length > 0 && (
-                        <div className="flex items-center gap-1">
-                            <Users className="w-3 h-3 text-muted-foreground" />
-                            {mentionedPatients.slice(0, 3).map((patient) => (
-                                <Badge
-                                    key={patient.id}
-                                    variant="secondary"
-                                    className="text-xs"
-                                >
-                                    {patient.name}
-                                </Badge>
-                            ))}
-                            {mentionedPatients.length > 3 && (
-                                <Badge variant="outline" className="text-xs">
-                                    +{mentionedPatients.length - 3}
-                                </Badge>
-                            )}
+        <div className="flex h-full">
+            {/* Conversation Sidebar */}
+            <ConversationSidebar
+                conversations={conversations}
+                activeConversationId={activeConversationId}
+                isLoading={isLoadingConversations}
+                onSelect={loadConversation}
+                onNewConversation={newConversation}
+                onDelete={deleteConversation}
+            />
+
+            {/* Main Chat Area */}
+            <div className="flex flex-col flex-1 min-w-0">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                    <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 text-white" />
                         </div>
-                    )}
-                    {messages.length > 0 && (
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={clearMessages}
-                            className="text-muted-foreground hover:text-destructive"
-                        >
-                            <X className="w-4 h-4" />
-                        </Button>
-                    )}
-                </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4">
-                {messages.length === 0 && !isStreaming ? (
-                    <DoctorEmptyState onSuggestionClick={handleSend} />
-                ) : (
-                    <div className="space-y-4">
-                        {messages.map((message) => (
-                            <MessageBubble
-                                key={message.id}
-                                message={message}
-                            />
-                        ))}
-
-                        {/* Streaming Progress */}
-                        {isStreaming && (
-                            <StreamingProgress
-                                stage={currentStage}
-                                progress={currentProgress}
-                                mode="doctor"
-                            />
-                        )}
-
-                        {pendingHITL && (
-                            <Card className="p-4 border-amber-400/40 bg-amber-50/40">
-                                <p className="text-sm font-medium text-amber-700">Cần xác nhận</p>
-                                <p className="text-sm text-muted-foreground mt-1">{pendingHITL.message}</p>
-                                {selectionReason && (
-                                    <p className="text-xs text-amber-700 mt-2">{selectionReason}</p>
+                        <div>
+                            <h3 className="font-medium text-sm">Trợ lý Bác sĩ AI</h3>
+                            <p className="text-xs text-muted-foreground">
+                                Hỏi về bất kỳ bệnh nhân nào
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        {/* Show mentioned patients */}
+                        {mentionedPatients.length > 0 && (
+                            <div className="flex items-center gap-1">
+                                <Users className="w-3 h-3 text-muted-foreground" />
+                                {mentionedPatients.slice(0, 3).map((patient) => (
+                                    <Badge
+                                        key={patient.id}
+                                        variant="secondary"
+                                        className="text-xs"
+                                    >
+                                        {patient.name}
+                                    </Badge>
+                                ))}
+                                {mentionedPatients.length > 3 && (
+                                    <Badge variant="outline" className="text-xs">
+                                        +{mentionedPatients.length - 3}
+                                    </Badge>
                                 )}
+                            </div>
+                        )}
+                        {messages.length > 0 && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={clearMessages}
+                                className="text-muted-foreground hover:text-destructive"
+                            >
+                                <X className="w-4 h-4" />
+                            </Button>
+                        )}
+                    </div>
+                </div>
 
-                                {pendingPatientMatches.length > 0 ? (
-                                    <div className="mt-3 space-y-2">
-                                        {pendingPatientMatches.map((match) => (
-                                            <Button
-                                                key={match.id}
-                                                variant="outline"
-                                                size="sm"
-                                                className="w-full justify-start"
-                                                disabled={isResolvingHITL}
-                                                onClick={() => handleResumeHITL({ patient_ids: [match.id] })}
-                                            >
-                                                Chọn: {match.name}
-                                            </Button>
-                                        ))}
-                                        <div className="flex gap-2 pt-1">
-                                            {!requireSingleSelection && (
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto p-4">
+                    {messages.length === 0 && !isStreaming ? (
+                        <DoctorEmptyState onSuggestionClick={handleSend} />
+                    ) : (
+                        <div className="space-y-4">
+                            {messages.map((message) => (
+                                <MessageBubble
+                                    key={message.id}
+                                    message={message}
+                                />
+                            ))}
+
+                            {/* Streaming Progress */}
+                            {isStreaming && (
+                                <StreamingProgress
+                                    stage={currentStage}
+                                    progress={currentProgress}
+                                    mode="doctor"
+                                />
+                            )}
+
+                            {pendingHITL && (
+                                <Card className="p-4 border-amber-400/40 bg-amber-50/40">
+                                    <p className="text-sm font-medium text-amber-700">Cần xác nhận</p>
+                                    <p className="text-sm text-muted-foreground mt-1">{pendingHITL.message}</p>
+                                    {selectionReason && (
+                                        <p className="text-xs text-amber-700 mt-2">{selectionReason}</p>
+                                    )}
+
+                                    {pendingPatientMatches.length > 0 ? (
+                                        <div className="mt-3 space-y-2">
+                                            {pendingPatientMatches.map((match) => (
                                                 <Button
+                                                    key={match.id}
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="w-full justify-start"
+                                                    disabled={isResolvingHITL}
+                                                    onClick={() => handleResumeHITL({ patient_ids: [match.id] })}
+                                                >
+                                                    Chọn: {match.name}
+                                                </Button>
+                                            ))}
+                                            <div className="flex gap-2 pt-1">
+                                                {!requireSingleSelection && (
+                                                    <Button
+                                                        size="sm"
+                                                        disabled={isResolvingHITL}
+                                                        onClick={() => handleResumeHITL({
+                                                            patient_ids: pendingPatientMatches.map((m) => m.id),
+                                                        })}
+                                                    >
+                                                        Giữ tất cả
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    variant="ghost"
                                                     size="sm"
                                                     disabled={isResolvingHITL}
-                                                    onClick={() => handleResumeHITL({
-                                                        patient_ids: pendingPatientMatches.map((m) => m.id),
-                                                    })}
+                                                    onClick={dismissHITL}
                                                 >
-                                                    Giữ tất cả
+                                                    Hủy
                                                 </Button>
-                                            )}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="mt-3 flex gap-2">
+                                            <Button
+                                                size="sm"
+                                                disabled={isResolvingHITL}
+                                                onClick={() => handleResumeHITL({ action: "approve" })}
+                                            >
+                                                Tiếp tục
+                                            </Button>
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
@@ -190,47 +233,29 @@ export function DoctorChatInterface() {
                                                 Hủy
                                             </Button>
                                         </div>
-                                    </div>
-                                ) : (
-                                    <div className="mt-3 flex gap-2">
-                                        <Button
-                                            size="sm"
-                                            disabled={isResolvingHITL}
-                                            onClick={() => handleResumeHITL({ action: "approve" })}
-                                        >
-                                            Tiếp tục
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            disabled={isResolvingHITL}
-                                            onClick={dismissHITL}
-                                        >
-                                            Hủy
-                                        </Button>
-                                    </div>
-                                )}
-                            </Card>
-                        )}
+                                    )}
+                                </Card>
+                            )}
 
-                        {/* Error Message */}
-                        {error && (
-                            <Card className="p-4 border-destructive/30 bg-destructive/5">
-                                <p className="text-sm text-destructive font-medium">Lỗi</p>
-                                <p className="text-sm text-muted-foreground mt-1">{error}</p>
-                            </Card>
-                        )}
-                    </div>
-                )}
-                <div ref={messagesEndRef} />
+                            {/* Error Message */}
+                            {error && (
+                                <Card className="p-4 border-destructive/30 bg-destructive/5">
+                                    <p className="text-sm text-destructive font-medium">Lỗi</p>
+                                    <p className="text-sm text-muted-foreground mt-1">{error}</p>
+                                </Card>
+                            )}
+                        </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                </div>
+
+                {/* Input */}
+                <ChatInput
+                    onSend={handleSend}
+                    isLoading={isLoading}
+                    placeholder="Hỏi về bệnh nhân, ví dụ: 'Tình trạng của bệnh nhân Trần Thị Bình?'"
+                />
             </div>
-
-            {/* Input */}
-            <ChatInput
-                onSend={handleSend}
-                isLoading={isLoading}
-                placeholder="Hỏi về bệnh nhân, ví dụ: 'Tình trạng của bệnh nhân Trần Thị Bình?'"
-            />
         </div>
     )
 }

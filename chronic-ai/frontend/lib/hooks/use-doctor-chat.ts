@@ -7,16 +7,24 @@
  * - Better error handling with user-friendly Vietnamese messages
  * - Safety level indicators
  * - Retry capability for failed requests
+ * - Conversation history persistence
  */
 "use client"
 
-import { useState, useCallback } from "react"
-import { sendDoctorChatStreaming, resumeDoctorChatStreaming } from "@/lib/api"
+import { useState, useCallback, useEffect } from "react"
+import {
+    sendDoctorChatStreaming,
+    resumeDoctorChatStreaming,
+    getConversations,
+    getConversationMessages,
+    deleteConversation as apiDeleteConversation,
+} from "@/lib/api"
 import type {
     ChatMessage,
     DoctorChatStreamUpdate,
     PatientMention,
     PatientConfirmationDetails,
+    ChatConversation,
 } from "@/types"
 
 // HITL Request type (matches backend HITLRequest)
@@ -28,6 +36,7 @@ interface HITLRequest {
 }
 
 interface UseDoctorChatOptions {
+    doctorId?: string
     onStreamUpdate?: (update: DoctorChatStreamUpdate) => void
     onComplete?: (response: string) => void
     onError?: (error: Error) => void
@@ -49,6 +58,10 @@ interface DoctorChatState {
     // Safety indicators
     safetyScore?: number
     safetyLevel?: "safe" | "caution" | "warning" | "critical"
+    // Conversation history
+    conversations: ChatConversation[]
+    activeConversationId?: string
+    isLoadingConversations: boolean
 }
 
 // User-friendly Vietnamese stage messages for better UX
@@ -85,14 +98,117 @@ const STAGE_MESSAGES: Record<string, string> = {
  * - Safety indicators for medical responses
  * - User-friendly Vietnamese error messages
  */
-export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLRequest }: UseDoctorChatOptions = {}) {
+export function useDoctorChat({ doctorId, onStreamUpdate, onComplete, onError, onHITLRequest }: UseDoctorChatOptions = {}) {
     const [state, setState] = useState<DoctorChatState>({
         messages: [],
         isLoading: false,
         isStreaming: false,
         currentProgress: 0,
         mentionedPatients: [],
+        conversations: [],
+        isLoadingConversations: false,
     })
+
+    /**
+     * Load conversation list on mount / doctorId change
+     */
+    useEffect(() => {
+        if (!doctorId) return
+
+        let cancelled = false
+        setState(prev => ({ ...prev, isLoadingConversations: true }))
+
+        getConversations("doctor", doctorId)
+            .then(res => {
+                if (!cancelled) {
+                    setState(prev => ({
+                        ...prev,
+                        conversations: res.conversations,
+                        isLoadingConversations: false,
+                    }))
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setState(prev => ({ ...prev, isLoadingConversations: false }))
+                }
+            })
+
+        return () => { cancelled = true }
+    }, [doctorId])
+
+    /**
+     * Refresh conversations list
+     */
+    const refreshConversations = useCallback(async () => {
+        if (!doctorId) return
+        try {
+            const res = await getConversations("doctor", doctorId)
+            setState(prev => ({ ...prev, conversations: res.conversations }))
+        } catch {
+            // silent fail
+        }
+    }, [doctorId])
+
+    /**
+     * Load a specific conversation's messages
+     */
+    const loadConversation = useCallback(async (conversationId: string) => {
+        try {
+            const res = await getConversationMessages(conversationId)
+            const msgs: ChatMessage[] = res.messages.map(m => ({
+                id: m.id,
+                role: m.role,
+                content: m.content,
+                timestamp: m.created_at,
+                attachments: (m.metadata as Record<string, unknown>)?.attachments as ChatMessage["attachments"],
+            }))
+            setState(prev => ({
+                ...prev,
+                messages: msgs,
+                activeConversationId: conversationId,
+                error: undefined,
+                pendingHITL: undefined,
+            }))
+        } catch (error) {
+            console.error("Failed to load conversation:", error)
+        }
+    }, [])
+
+    /**
+     * Start a new conversation (clears messages)
+     */
+    const newConversation = useCallback(() => {
+        setState(prev => ({
+            ...prev,
+            messages: [],
+            activeConversationId: undefined,
+            error: undefined,
+            currentProgress: 0,
+            mentionedPatients: [],
+            pendingHITL: undefined,
+            safetyScore: undefined,
+            safetyLevel: undefined,
+        }))
+    }, [])
+
+    /**
+     * Delete a conversation
+     */
+    const deleteConversationAction = useCallback(async (conversationId: string) => {
+        try {
+            await apiDeleteConversation(conversationId)
+            setState(prev => ({
+                ...prev,
+                conversations: prev.conversations.filter(c => c.id !== conversationId),
+                ...(prev.activeConversationId === conversationId
+                    ? { messages: [], activeConversationId: undefined }
+                    : {}),
+            }))
+        } catch (error) {
+            console.error("Failed to delete conversation:", error)
+        }
+    }, [])
 
     /**
      * Get user-friendly stage message in Vietnamese
@@ -133,7 +249,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
             let mentionedPatients: PatientMention[] = []
             let didComplete = false
 
-            for await (const update of sendDoctorChatStreaming(message, imagePath)) {
+            for await (const update of sendDoctorChatStreaming(message, imagePath, state.activeConversationId, doctorId)) {
                 onStreamUpdate?.(update)
 
                 // Update state with progress and stage message
@@ -163,8 +279,8 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                 if (extendedUpdate.safety_score !== undefined) {
                     const score = extendedUpdate.safety_score
                     const safetyLevel = score >= 0.9 ? "safe" :
-                                       score >= 0.7 ? "caution" :
-                                       score >= 0.5 ? "warning" : "critical"
+                        score >= 0.7 ? "caution" :
+                            score >= 0.5 ? "warning" : "critical"
                     setState(prev => ({
                         ...prev,
                         safetyScore: score,
@@ -190,6 +306,15 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                     onHITLRequest?.(hitlRequest)
                     // Don't continue processing - wait for human response
                     return
+                }
+
+                // Capture conversation_id from backend
+                const conversationUpdate = update as DoctorChatStreamUpdate & { conversation_id?: string }
+                if (conversationUpdate.conversation_id && !state.activeConversationId) {
+                    setState(prev => ({
+                        ...prev,
+                        activeConversationId: conversationUpdate.conversation_id,
+                    }))
                 }
 
                 if (update.stage === "complete" && update.response) {
@@ -226,6 +351,9 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                 }
             }
 
+            // Refresh conversation list
+            refreshConversations()
+
             return finalResponse
         } catch (error) {
             // User-friendly Vietnamese error messages
@@ -255,7 +383,7 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
             onError?.(error instanceof Error ? error : new Error(errorMessage))
             throw error
         }
-    }, [onStreamUpdate, onComplete, onError, onHITLRequest])
+    }, [state.activeConversationId, doctorId, onStreamUpdate, onComplete, onError, onHITLRequest, refreshConversations])
 
     /**
      * Resume a paused HITL conversation.
@@ -305,8 +433,8 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
                 if (extendedUpdate.safety_score !== undefined) {
                     const score = extendedUpdate.safety_score
                     const safetyLevel = score >= 0.9 ? "safe" :
-                                       score >= 0.7 ? "caution" :
-                                       score >= 0.5 ? "warning" : "critical"
+                        score >= 0.7 ? "caution" :
+                            score >= 0.5 ? "warning" : "critical"
                     setState(prev => ({
                         ...prev,
                         safetyScore: score,
@@ -391,7 +519,8 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
      * Clear chat history
      */
     const clearMessages = useCallback(() => {
-        setState({
+        setState(prev => ({
+            ...prev,
             messages: [],
             isLoading: false,
             isStreaming: false,
@@ -401,7 +530,8 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
             pendingHITL: undefined,
             safetyScore: undefined,
             safetyLevel: undefined,
-        })
+            activeConversationId: undefined,
+        }))
     }, [])
 
     /**
@@ -441,5 +571,10 @@ export function useDoctorChat({ onStreamUpdate, onComplete, onError, onHITLReque
         clearMessages,
         clearError,
         dismissHITL,
+        // Conversation history actions
+        loadConversation,
+        newConversation,
+        deleteConversation: deleteConversationAction,
+        refreshConversations,
     }
 }

@@ -1,6 +1,7 @@
 """
 Chat Router - AI-powered medical chat endpoints.
 """
+import logging
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -14,7 +15,9 @@ from app.services.orchestrator import process_doctor_query
 from app.services.doctor_graph import process_doctor_query_graph
 from app.services.patient_graph import process_patient_chat_graph
 from app.services.output_formatter import format_as_plain_text
+from app.services import chat_history_service
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -53,6 +56,14 @@ class DoctorChatRequestV2(BaseModel):
         default=None,
         description="Thread ID for conversation state persistence"
     )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation ID for chat history persistence"
+    )
+    doctor_id: Optional[str] = Field(
+        default=None,
+        description="Doctor UUID for creating new conversations"
+    )
 
 
 class HITLResumeRequest(BaseModel):
@@ -82,6 +93,17 @@ class ChatRequestV2(BaseModel):
         default="structured",
         description="Output format: plain text, structured JSON, or markdown"
     )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation ID for chat history persistence"
+    )
+
+
+class CreateConversationRequest(BaseModel):
+    """Request to create a new chat conversation."""
+    conversation_type: Literal["doctor", "patient"]
+    user_id: str
+    title: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -274,6 +296,7 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
     - **Safety Checks**: Reviews responses for medical safety
     - **Structured Output**: Returns formatted sections (assessment, 
       recommendations, warnings)
+    - **Chat History**: Persists messages when conversation_id is provided
     
     When HITL is triggered, the stream will emit:
     ```json
@@ -298,11 +321,37 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
         enable_patient_confirmation_hitl: Enable non-LLM patient confirmation HITL
         output_format: "plain", "structured", or "markdown"
         thread_id: Optional ID for conversation state persistence
+        conversation_id: Optional ID for chat history persistence
+        doctor_id: Doctor UUID for creating new conversations
     """
     import uuid as uuid_lib
     
     # Generate thread ID if not provided
     thread_id = request.thread_id or str(uuid_lib.uuid4())
+
+    # --- Chat history: resolve or create conversation ---
+    conversation_id = request.conversation_id
+    if not conversation_id and request.doctor_id:
+        try:
+            conv = chat_history_service.create_conversation(
+                conversation_type="doctor",
+                user_id=request.doctor_id,
+            )
+            conversation_id = conv["id"]
+        except Exception as e:
+            logger.warning("Failed to create conversation: %s", e)
+
+    # Save user message
+    if conversation_id:
+        try:
+            chat_history_service.save_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=request.message,
+                metadata={"image_path": request.image_path} if request.image_path else None,
+            )
+        except Exception as e:
+            logger.warning("Failed to save user message: %s", e)
     
     async def event_generator():
         """Generate SSE events from LangGraph."""
@@ -315,14 +364,36 @@ async def doctor_chat_stream_v2(request: DoctorChatRequestV2):
                 enable_llm_hitl=request.enable_llm_hitl,
                 enable_patient_confirmation_hitl=request.enable_patient_confirmation_hitl,
             ):
-                # Add thread_id to updates for HITL resume
+                # Add thread_id and conversation_id to updates
                 update["thread_id"] = thread_id
+                if conversation_id:
+                    update["conversation_id"] = conversation_id
                 
                 # Transform output based on requested format
                 if update.get("stage") == "complete" and request.output_format == "plain":
                     formatted = update.get("formatted_response")
                     if formatted:
                         update["response_formatted"] = format_as_plain_text(formatted)
+
+                # Save assistant response to history
+                if update.get("stage") == "complete" and conversation_id:
+                    try:
+                        response_text = update.get("response", "")
+                        metadata = {}
+                        if update.get("mentioned_patients"):
+                            metadata["mentioned_patients"] = update["mentioned_patients"]
+                        if update.get("safety_score") is not None:
+                            metadata["safety_score"] = update["safety_score"]
+                        if update.get("attachments"):
+                            metadata["attachments"] = update["attachments"]
+                        chat_history_service.save_message(
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=response_text,
+                            metadata=metadata or None,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to save assistant message: %s", e)
                 
                 # Format as SSE
                 data = json.dumps(update, ensure_ascii=False)
@@ -433,17 +504,43 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
     - **Safety Escalation**: Redirects high-risk cases to hospital
     - **Context Awareness**: Retains patient history
     - **Structured Output**: Clear formatting
+    - **Chat History**: Persists messages when conversation_id is provided
     
     Args:
         patient_id: Patient UUID
         message: Patient's query in Vietnamese
         image_path: Optional path to medical image
         output_format: "plain", "structured", or "markdown"
+        conversation_id: Optional ID for chat history persistence
     """
     try:
         patient_uuid = UUID(request.patient_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    # --- Chat history: resolve or create conversation ---
+    conversation_id = request.conversation_id
+    if not conversation_id:
+        try:
+            conv = chat_history_service.create_conversation(
+                conversation_type="patient",
+                user_id=request.patient_id,
+            )
+            conversation_id = conv["id"]
+        except Exception as e:
+            logger.warning("Failed to create conversation: %s", e)
+
+    # Save user message
+    if conversation_id:
+        try:
+            chat_history_service.save_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=request.message,
+                metadata={"image_path": request.image_path} if request.image_path else None,
+            )
+        except Exception as e:
+            logger.warning("Failed to save user message: %s", e)
 
     async def event_generator():
         """Generate SSE events from LangGraph."""
@@ -453,11 +550,31 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
                 query_vi=request.message,
                 image_path=request.image_path
             ):
+                # Add conversation_id to updates
+                if conversation_id:
+                    update["conversation_id"] = conversation_id
+
                 # Transform output based on requested format
                 if update.get("stage") == "complete" and request.output_format == "plain":
                     formatted = update.get("formatted_response")
                     if formatted:
                         update["response_formatted"] = format_as_plain_text(formatted)
+
+                # Save assistant response to history
+                if update.get("stage") == "complete" and conversation_id:
+                    try:
+                        response_text = update.get("response", "")
+                        metadata = {}
+                        if update.get("attachments"):
+                            metadata["attachments"] = update["attachments"]
+                        chat_history_service.save_message(
+                            conversation_id=conversation_id,
+                            role="assistant",
+                            content=response_text,
+                            metadata=metadata or None,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to save assistant message: %s", e)
                 
                 # Format as SSE
                 data = json.dumps(update, ensure_ascii=False)
@@ -480,3 +597,92 @@ async def patient_chat_stream_v2(request: ChatRequestV2):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+# ============================================================================
+# CONVERSATION MANAGEMENT ENDPOINTS
+# ============================================================================
+
+
+@router.get("/conversations/{conversation_type}")
+async def list_conversations(
+    conversation_type: str,
+    user_id: str = Query(..., description="Doctor or patient UUID"),
+    limit: int = Query(default=50, le=100),
+):
+    """
+    List chat conversations for a user.
+    
+    Args:
+        conversation_type: 'doctor' or 'patient'
+        user_id: The doctor or patient UUID
+        limit: Max conversations to return
+    """
+    if conversation_type not in ("doctor", "patient"):
+        raise HTTPException(status_code=400, detail="conversation_type must be 'doctor' or 'patient'")
+
+    try:
+        UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    conversations = chat_history_service.get_conversations(
+        conversation_type=conversation_type,
+        user_id=user_id,
+        limit=limit,
+    )
+    return {"conversations": conversations}
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    limit: int = Query(default=100, le=500),
+):
+    """
+    Get messages for a specific conversation.
+    """
+    try:
+        UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation_id format")
+
+    messages = chat_history_service.get_messages(
+        conversation_id=conversation_id,
+        limit=limit,
+    )
+    return {"conversation_id": conversation_id, "messages": messages}
+
+
+@router.post("/conversations")
+async def create_conversation(request: CreateConversationRequest):
+    """
+    Create a new chat conversation.
+    """
+    try:
+        UUID(request.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user_id format")
+
+    conversation = chat_history_service.create_conversation(
+        conversation_type=request.conversation_type,
+        user_id=request.user_id,
+        title=request.title,
+    )
+    return conversation
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """
+    Delete a conversation and all its messages.
+    """
+    try:
+        UUID(conversation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid conversation_id format")
+
+    deleted = chat_history_service.delete_conversation(conversation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "deleted", "conversation_id": conversation_id}

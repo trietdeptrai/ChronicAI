@@ -35,7 +35,7 @@ export default function ChatPage() {
             />
 
             <Card className="h-[calc(100%-80px)]">
-                <DoctorChatInterface />
+                <DoctorChatInterface doctorId={user?.id} />
             </Card>
         </div>
     )
