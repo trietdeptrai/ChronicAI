@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # Import OCR controls (PDF patient import)
     import_pdf_ocr_dpi: int = 140
     import_pdf_ocr_max_pages: int = 25
+    # Metadata preview only needs early profile pages in the export PDF.
+    import_metadata_pdf_ocr_max_pages: int = 3
     import_pdf_ocr_preprocess: bool = False
     import_pdf_render_threads: int = 2
 

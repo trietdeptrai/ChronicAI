@@ -310,10 +310,13 @@ class OCRService:
                 ) from exc
             raise
         logger.info("[ocr] pdf converted pages=%s", len(images))
-        
+
+        dump_ocr_text = logger.isEnabledFor(logging.DEBUG)
+        started_at = time.perf_counter()
         all_text = []
-        
+
         for page_num, image in enumerate(images, 1):
+            page_started_at = time.perf_counter()
             logger.info("[ocr] processing page=%s/%s", page_num, len(images))
             if progress_callback:
                 try:
@@ -331,24 +334,41 @@ class OCRService:
                     image.close()
                 except Exception:
                     pass
-            
+
             page_text = self._format_ocr_result(result)
-            logger.warning(
-                "[ocr] page=%s/%s text_begin\n%s\n[ocr] page=%s/%s text_end",
+            elapsed_ms = (time.perf_counter() - page_started_at) * 1000.0
+            logger.info(
+                "[ocr] page=%s/%s done chars=%s elapsed_ms=%.1f",
                 page_num,
                 len(images),
-                page_text or "<empty>",
-                page_num,
-                len(images),
+                len(page_text or ""),
+                elapsed_ms,
             )
+            if dump_ocr_text:
+                logger.debug(
+                    "[ocr] page=%s/%s text_begin\n%s\n[ocr] page=%s/%s text_end",
+                    page_num,
+                    len(images),
+                    page_text or "<empty>",
+                    page_num,
+                    len(images),
+                )
             if page_text:
                 all_text.append(f"--- Trang {page_num} ---\n{page_text}")
 
         full_text = "\n\n".join(all_text)
-        logger.warning(
-            "[ocr] full_text_begin\n%s\n[ocr] full_text_end",
-            full_text or "<empty>",
+        total_elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        logger.info(
+            "[ocr] completed pages=%s extracted_chars=%s elapsed_ms=%.1f",
+            len(images),
+            len(full_text or ""),
+            total_elapsed_ms,
         )
+        if dump_ocr_text:
+            logger.debug(
+                "[ocr] full_text_begin\n%s\n[ocr] full_text_end",
+                full_text or "<empty>",
+            )
         return full_text
     
     def _format_ocr_result(self, result: List) -> str:

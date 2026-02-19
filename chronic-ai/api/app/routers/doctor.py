@@ -1424,12 +1424,15 @@ def _guess_content_type(extension: str) -> str:
 
 
 def _log_ocr_debug_dump(context: str, raw_text: str) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
     text = str(raw_text or "")
     numbered_lines = []
     for index, line in enumerate(text.splitlines(), start=1):
         numbered_lines.append(f"{index:04d}: {line}")
     line_dump = "\n".join(numbered_lines) if numbered_lines else "<empty OCR output>"
-    logger.warning(
+    logger.debug(
         "[ocr-debug] %s extracted_text_begin\n%s\n[ocr-debug] %s extracted_text_end",
         context,
         line_dump,
@@ -3534,11 +3537,18 @@ async def import_patient_metadata_preview(file: UploadFile = File(...)):
                     tmp.write(content)
                     temp_path = tmp.name
                 logger.warning("[metadata-import-preview] running OCR path=%s", temp_path)
+                metadata_pdf_max_pages = max(
+                    1,
+                    min(
+                        settings.import_pdf_ocr_max_pages,
+                        settings.import_metadata_pdf_ocr_max_pages,
+                    ),
+                )
                 raw_text = await extract_text(
                     temp_path,
                     file_type="pdf",
                     pdf_dpi=max(72, settings.import_pdf_ocr_dpi),
-                    pdf_max_pages=settings.import_pdf_ocr_max_pages,
+                    pdf_max_pages=metadata_pdf_max_pages,
                     pdf_preprocess=settings.import_pdf_ocr_preprocess,
                     pdf_render_threads=max(1, int(settings.import_pdf_render_threads)),
                 )
