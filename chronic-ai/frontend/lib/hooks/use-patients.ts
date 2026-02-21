@@ -25,6 +25,7 @@ import {
     deletePatientRecord,
     getPatientVitals,
     createPatientVital,
+    getPatientSummary,
 } from "@/lib/api"
 import type {
     DeletePatientResponse,
@@ -201,10 +202,10 @@ export function useUploadPatientRecordImage() {
         }: {
             patientId: string
             recordType:
-                | "xray"
-                | "ecg"
-                | "ct"
-                | "mri"
+            | "xray"
+            | "ecg"
+            | "ct"
+            | "mri"
             file: File
             title?: string
             doctorComment?: string
@@ -351,5 +352,15 @@ export function useCreateVitalSign() {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
         },
+    })
+}
+
+/**
+ * Hook for generating AI clinical summary for a patient profile (on-demand)
+ */
+export function useGeneratePatientSummary() {
+    return useMutation({
+        mutationFn: ({ patientId }: { patientId: string }) =>
+            getPatientSummary(patientId),
     })
 }

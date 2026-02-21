@@ -234,6 +234,20 @@ class OCRService:
         finally:
             if tmp_name:
                 _safe_unlink(tmp_name)
+
+    @staticmethod
+    def _normalize_ocr_text(text: str) -> str:
+        """
+        Fix common OCR spacing artifacts without changing semantic content.
+
+        Example: "202 6" -> "2026" (split year).
+        """
+        if not text:
+            return text
+        normalized = text
+        # Join 4-digit years split as 3+1 digits, e.g. "202 6" -> "2026".
+        normalized = re.sub(r"\b((?:19|20)\d)\s+(\d)\b", r"\1\2", normalized)
+        return normalized
     
     def extract_text_from_image(
         self,
@@ -389,6 +403,7 @@ class OCRService:
 
         def add_entry(text_val: Any, score_val: Any = 1.0) -> None:
             text = str(text_val or "").strip()
+            text = self._normalize_ocr_text(text)
             if not text:
                 return
             try:

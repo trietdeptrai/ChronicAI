@@ -16,7 +16,7 @@ A local-first telemedicine application for chronic patients and grassroots/distr
 - **Frontend**: Next.js 14 + Shadcn/UI
 - **Database**: Supabase (PostgreSQL + pgvector)
 - **AI Models**: 
-  - Medical Reasoning: MedGemma 4B (Ollama)
+  - Medical Reasoning: MedGemma (Ollama)
   - Translation: VietAI EnviT5 (HuggingFace Transformers)
   - Embeddings: nomic-embed-text (Ollama)
 - **OCR**: PaddleOCR
@@ -107,4 +107,3 @@ chronic-ai/
 ## License
 
 MIT
-

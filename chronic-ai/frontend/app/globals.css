@@ -206,3 +206,44 @@ body {
   margin: 0.5rem 0;
   color: var(--muted-foreground);
 }
+
+/* Clinical summary card – refined header styling */
+.clinical-summary-content h2 {
+  font-size: 0.875rem;
+  font-weight: 700;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.clinical-summary-content h2::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(to right, #14b8a6, #10b981);
+  flex-shrink: 0;
+}
+
+.clinical-summary-content h2:first-child {
+  margin-top: 0;
+}
+
+.clinical-summary-content p {
+  color: rgba(0, 0, 0, 0.72);
+  line-height: 1.65;
+}
+
+.clinical-summary-content ol {
+  padding-left: 1rem;
+}
+
+.clinical-summary-content ol li {
+  color: rgba(0, 0, 0, 0.72);
+  padding: 0.125rem 0;
+}
