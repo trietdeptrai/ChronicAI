@@ -32,7 +32,7 @@ This creates the demo patient (UUID: `11111111-1111-4111-a111-111111111111`) wit
 ollama serve
 
 # In another terminal, pull the required models:
-ollama pull alibayram/medgemma:4b      # Medical reasoning (~3GB)
+ollama pull alibayram/medgemma         # Medical reasoning
 ollama pull nomic-embed-text           # Embeddings (~280MB)
 ```
 

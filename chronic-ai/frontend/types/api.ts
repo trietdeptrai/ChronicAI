@@ -75,14 +75,14 @@ export interface PatientPhotoUploadResponse {
 export interface MedicalRecord {
     id: string
     record_type:
-        | "prescription"
-        | "lab"
-        | "xray"
-        | "ecg"
-        | "ct"
-        | "mri"
-        | "notes"
-        | "referral"
+    | "prescription"
+    | "lab"
+    | "xray"
+    | "ecg"
+    | "ct"
+    | "mri"
+    | "notes"
+    | "referral"
     title: string
     content_text?: string
     analysis_result?: MedicalRecordAIAnalysis | string | null
@@ -185,4 +185,11 @@ export interface PatientMetadataImportPreviewResponse {
     status: string
     metadata: PatientMetadataImportPreview
     message: string
+}
+
+export interface PatientSummaryResponse {
+    summary: string
+    generated_at: string
+    model: string
+    error?: string
 }

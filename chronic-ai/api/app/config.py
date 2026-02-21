@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     cors_origins: List[str] = ["http://localhost:3000"]
 
     # Model Configuration
-    medical_model: str = "alibayram/medgemma:4b"
+    medical_model: str = "alibayram/medgemma"
     ecg_medsiglip_model_id: str = "google/medsiglip-448"
     ecg_classifier_checkpoint_path: str = str(
         Path(__file__).resolve().parents[2]
@@ -66,8 +66,8 @@ class Settings(BaseSettings):
 
     # Verification model for input validation + safety checks.
     # In Vertex endpoint mode this typically points to the same deployed endpoint model.
-    verification_model: str = "alibayram/medgemma:4b"
-    doctor_reasoning_max_tokens: int = 900
+    verification_model: str = "alibayram/medgemma"
+    doctor_reasoning_max_tokens: int = 1400
     verification_max_tokens: int = 256
 
     # Human-in-the-Loop Configuration

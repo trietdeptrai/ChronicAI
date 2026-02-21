@@ -5,6 +5,7 @@ import asyncio
 from typing import Any, AsyncGenerator, Optional
 from uuid import UUID
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -14,6 +15,7 @@ from pathlib import Path
 import uuid
 
 from app.services.ecg_classifier_service import ecg_classifier_service
+from app.services.cache import cache_response, get_cached_response, response_cache
 from app.services.llm_client import llm_client
 from app.services.rag import get_patient_context
 from app.config import settings
@@ -46,6 +48,8 @@ Remember: You are a support tool, not a replacement for professional medical adv
 UPLOAD_ANALYSIS_SYSTEM = """You are a clinical decision-support assistant for doctors.
 Analyze uploaded medical records and produce concise, practical insights.
 You must return valid JSON only (no markdown or extra commentary)."""
+
+UPLOAD_ANALYSIS_CACHE_TYPE = "upload_analysis:v1"
 
 
 def _extract_json_object(raw_text: str) -> Optional[dict[str, Any]]:
@@ -123,6 +127,163 @@ def _sanitize_list(values: list[str], max_items: int = 5, max_item_len: int = 40
     return out
 
 
+_PATIENT_SUMMARY_SECTION_HEADERS: list[tuple[str, str]] = [
+    (r"(?:Danh sách vấn đề(?:\s*\(Problem List\))?|Problem List)", "Danh sách vấn đề (Problem List)"),
+    (
+        r"(?:Thuốc đang dùng(?:\s*\(Current Medications\))?|Current Medications)",
+        "Thuốc đang dùng (Current Medications)",
+    ),
+    (r"(?:Dị ứng(?:\s*\(Allergies\))?|Allergies)", "Dị ứng (Allergies)"),
+    (
+        r"(?:Diễn tiến bệnh(?:\s*\(Disease Progress\))?|Disease Progress)",
+        "Diễn tiến bệnh (Disease Progress)",
+    ),
+    (
+        r"(?:Tóm tắt sinh hiệu gần nhất(?:\s*\(Recent Vitals\))?|Recent Vitals)",
+        "Tóm tắt sinh hiệu gần nhất (Recent Vitals)",
+    ),
+    (
+        r"(?:Đánh giá lâm sàng(?:\s*\(Clinical Assessment\))?|Clinical Assessment)",
+        "Đánh giá lâm sàng (Clinical Assessment)",
+    ),
+]
+
+
+def _strip_unbalanced_double_asterisks(text: str) -> str:
+    """Remove broken bold markers on lines with odd '**' pairs."""
+    normalized_lines: list[str] = []
+    for line in text.split("\n"):
+        if line.count("**") % 2 != 0:
+            normalized_lines.append(line.replace("**", ""))
+        else:
+            normalized_lines.append(line)
+    return "\n".join(normalized_lines)
+
+
+def _break_dense_lines(text: str) -> str:
+    """Split long dense lines into short paragraphs for markdown rendering."""
+    lines = text.split("\n")
+    output: list[str] = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            output.append("")
+            continue
+
+        if (
+            len(line) < 170
+            or line.startswith("## ")
+            or re.match(r"^[-*]\s", line)
+            or re.match(r"^\d+[.)]\s", line)
+        ):
+            output.append(line)
+            continue
+
+        sentences = re.split(r"(?<=[.!?])\s+", line)
+        paragraph: list[str] = []
+        paragraph_len = 0
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+
+            starts_new = (
+                re.match(r"^\d+[.)]\s", sentence)
+                or re.match(r"^[-*]\s", sentence)
+                or sentence.startswith("## ")
+                or paragraph_len > 250
+            )
+
+            if starts_new and paragraph:
+                output.append(" ".join(paragraph))
+                output.append("")
+                paragraph = []
+                paragraph_len = 0
+
+            paragraph.append(sentence)
+            paragraph_len += len(sentence) + 1
+
+        if paragraph:
+            output.append(" ".join(paragraph))
+
+    cleaned: list[str] = []
+    prev_blank = False
+    for line in output:
+        is_blank = line.strip() == ""
+        if is_blank and prev_blank:
+            continue
+        cleaned.append(line)
+        prev_blank = is_blank
+
+    while cleaned and cleaned[-1].strip() == "":
+        cleaned.pop()
+    return "\n".join(cleaned)
+
+
+def _normalize_patient_summary_markdown(text: str) -> str:
+    """
+    Normalize patient profile summary markdown to avoid inline wall-of-text output.
+
+    Handles malformed section headers, run-on numbered lists, and broken bold markers.
+    """
+    summary = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not summary:
+        return ""
+
+    summary = summary.replace("\u00a0", " ")
+    summary = re.sub(r"[ \t]+", " ", summary)
+    summary = _strip_unbalanced_double_asterisks(summary)
+
+    # Fix missing space after sentence-ending punctuation.
+    summary = re.sub(r"([.!?])(?=[A-ZÀ-Ỵa-zà-ỵ#*\\[])", r"\1 ", summary)
+
+    # Promote known sections to consistent markdown headers.
+    for pattern, canonical_header in _PATIENT_SUMMARY_SECTION_HEADERS:
+        summary = re.sub(
+            rf"(?:(?<=^)|(?<=[\n.!?]))\s*(?:#{1,4}\s*)?(?:\*\*)?\s*(?:{pattern})\s*(?:\*\*)?\s*:?\s*",
+            f"\n\n## {canonical_header}\n",
+            summary,
+            flags=re.IGNORECASE,
+        )
+
+    # Ensure headers always start on their own block.
+    summary = re.sub(r"(?<!\n)(##\s)", r"\n\n\1", summary)
+    summary = re.sub(r"(##[^\n]+)\s*(?=(?:\d+[.)]|[-•*]))", r"\1\n", summary)
+
+    # Normalize numbered lists (e.g., "1.[I10]" or "... điều trị.2.[E78.5]").
+    summary = re.sub(r"(?<![A-Za-zÀ-Ỵa-zà-ỵ0-9])(\d+[.)])(?=\S)", r"\1 ", summary)
+    summary = re.sub(r"(?<!^)(?<!\n)(\d+[.)]\s*(?=[\[A-ZÀ-Ỵa-zà-ỵ]))", r"\n\1", summary)
+
+    # Normalize malformed inline bullets to markdown list items.
+    summary = re.sub(r"([:;.!?\n])\s*\*(?=[A-ZÀ-Ỵa-zà-ỵ0-9])", r"\1\n- ", summary)
+    summary = re.sub(r"([:;.!?\n])\s*([•●▪])\s*(?=[A-ZÀ-Ỵa-zà-ỵ0-9])", r"\1\n- ", summary)
+    summary = re.sub(r"([:;.!?])\s*-\s+(?=[A-ZÀ-Ỵa-zà-ỵ0-9])", r"\1\n- ", summary)
+
+    # Keep only the first occurrence of each canonical section header.
+    canonical_titles = {
+        re.sub(r"\s+", " ", header).strip().lower()
+        for _, header in _PATIENT_SUMMARY_SECTION_HEADERS
+    }
+    seen_titles: set[str] = set()
+    deduped_lines: list[str] = []
+    for line in summary.split("\n"):
+        stripped = line.strip()
+        match = re.match(r"^##\s+(.+?)\s*:?\s*$", stripped, flags=re.IGNORECASE)
+        if match:
+            normalized_title = re.sub(r"\s+", " ", match.group(1)).strip().lower()
+            if normalized_title in canonical_titles:
+                if normalized_title in seen_titles:
+                    continue
+                seen_titles.add(normalized_title)
+        deduped_lines.append(line)
+    summary = "\n".join(deduped_lines)
+
+    summary = re.sub(r"\n{3,}", "\n\n", summary).strip()
+    return _break_dense_lines(summary)
+
+
 def _top_scores_for_log(scores_by_class: dict[str, float], top_k: int = 3) -> list[tuple[str, float]]:
     ranked = sorted(
         ((str(label), float(score)) for label, score in scores_by_class.items()),
@@ -159,6 +320,82 @@ def _classify_llm_error(message: str) -> str:
     if "cannot connect" in msg:
         return "The backend cannot reach the model endpoint."
     return "The model request failed unexpectedly."
+
+
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def _build_upload_analysis_cache_key(
+    *,
+    record_type: str,
+    title: str,
+    extracted_text: str,
+    image_base64: Optional[str],
+) -> str:
+    """
+    Build deterministic cache key for upload analysis reuse.
+    """
+    normalized_type = (record_type or "").strip().lower()
+    normalized_title = re.sub(r"\s+", " ", (title or "").strip().lower())
+    text_hash = _sha256_hex(extracted_text or "")
+    image_hash = _sha256_hex(image_base64 or "")
+    title_hash = _sha256_hex(normalized_title)
+    return (
+        f"type:{normalized_type}|title:{title_hash[:16]}|"
+        f"text:{text_hash[:24]}|image:{image_hash[:24]}"
+    )
+
+
+def _decode_cached_upload_analysis(payload: str) -> Optional[dict[str, Any]]:
+    """
+    Decode cached upload analysis JSON payload.
+    """
+    if not payload:
+        return None
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+async def _get_cached_upload_analysis(cache_key: str) -> Optional[dict[str, Any]]:
+    """
+    Return cached upload analysis result if present.
+    """
+    if not response_cache.enabled:
+        return None
+    cached = await get_cached_response(cache_key, query_type=UPLOAD_ANALYSIS_CACHE_TYPE)
+    if not cached:
+        return None
+    payload, _ = cached
+    return _decode_cached_upload_analysis(payload)
+
+
+async def _store_upload_analysis_cache(cache_key: str, result: dict[str, Any]) -> None:
+    """
+    Store successful upload analysis result for reuse.
+    """
+    if not response_cache.enabled:
+        return
+    if not isinstance(result, dict):
+        return
+    status = str(result.get("status") or "").lower()
+    if status not in {"completed", "skipped"}:
+        return
+    try:
+        serialized = json.dumps(result, ensure_ascii=False)
+    except Exception:
+        return
+    await cache_response(
+        query=cache_key,
+        response=serialized,
+        query_type=UPLOAD_ANALYSIS_CACHE_TYPE,
+        metadata={"kind": "upload_analysis", "status": status},
+    )
 
 
 async def _analyze_ecg_with_classifier(
@@ -364,6 +601,24 @@ async def analyze_uploaded_record(
     if (record_type or "").strip().lower() == "ecg" and image_base64:
         # ECG path is image-first; do not include OCR text in model prompt.
         extracted = ""
+
+    cache_key = _build_upload_analysis_cache_key(
+        record_type=record_type,
+        title=safe_title,
+        extracted_text=extracted,
+        image_base64=image_base64,
+    )
+    cached_result = await _get_cached_upload_analysis(cache_key)
+    if cached_result:
+        logger.info(
+            "[upload-analysis] cache hit record_type=%s title=%s text_len=%s has_image=%s",
+            record_type,
+            safe_title[:120],
+            len(extracted),
+            bool(image_base64),
+        )
+        return cached_result
+
     request_id = uuid.uuid4().hex[:8]
 
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -389,13 +644,15 @@ async def analyze_uploaded_record(
     if (record_type or "").strip().lower() == "ecg" and image_base64:
         logger.info("[upload-analysis] routing ECG request to classifier flow id=%s", request_id)
         try:
-            return await _analyze_ecg_with_classifier(
+            result = await _analyze_ecg_with_classifier(
                 request_id=request_id,
                 record_type=record_type,
                 safe_title=safe_title,
                 image_base64=image_base64,
                 base_result=base_result,
             )
+            await _store_upload_analysis_cache(cache_key, result)
+            return result
         except Exception as exc:
             ecg_fallback_reason = _sanitize_text(str(exc) or repr(exc), max_len=500)
             logger.warning(
@@ -411,7 +668,7 @@ async def analyze_uploaded_record(
 
     if not extracted and not image_base64:
         logger.warning("[upload-analysis] skipped id=%s: no OCR text and no image payload", request_id)
-        return {
+        result = {
             **base_result,
             "status": "skipped",
             "summary": "No extractable content found for AI analysis.",
@@ -419,6 +676,8 @@ async def analyze_uploaded_record(
             "recommended_follow_up": [],
             "limitations": ["No OCR text or image content was available."],
         }
+        await _store_upload_analysis_cache(cache_key, result)
+        return result
 
     prompt = f"""Analyze the uploaded medical record and return concise clinical insights.
 
@@ -584,6 +843,7 @@ Rules:
             bool(ecg_fallback_reason),
             (time.perf_counter() - start_total) * 1000,
         )
+        await _store_upload_analysis_cache(cache_key, result)
         return result
     except Exception as exc:
         detail = _sanitize_text(str(exc) or repr(exc), max_len=500)
@@ -757,6 +1017,118 @@ async def process_medical_query(
     }
     elapsed_total = (time.perf_counter() - start_total) * 1000
     logger.info(f"[LLM] pipeline_total: Took {elapsed_total:.1f} ms")
+
+
+async def generate_patient_profile_summary(
+    patient_id: UUID,
+) -> dict[str, Any]:
+    """
+    Generate an AI clinical summary for a patient profile.
+
+    Uses MedGemma to synthesize patient data into a structured clinical
+    overview following the Problem List / POMR medical format.
+
+    Args:
+        patient_id: Patient UUID
+
+    Returns:
+        Dict with summary text, model name, and generation timestamp.
+    """
+    start_total = time.perf_counter()
+    request_id = uuid.uuid4().hex[:8]
+    logger.info(
+        "[patient-summary] start id=%s patient=%s model=%s",
+        request_id,
+        str(patient_id),
+        settings.medical_model,
+    )
+
+    # Gather patient context via RAG (includes demographics, conditions,
+    # medications, vitals, appointments, medical records).
+    patient_context = await get_patient_context(patient_id)
+
+    summary_prompt = f"""Dựa trên thông tin bệnh nhân dưới đây, hãy tạo một bản tóm tắt lâm sàng ngắn gọn theo chuẩn y khoa.
+
+{patient_context}
+
+Hãy viết bản tóm tắt theo đúng định dạng sau (bằng tiếng Việt, có dấu):
+
+## Danh sách vấn đề (Problem List)
+Liệt kê các bệnh lý/vấn đề sức khỏe hiện tại, kèm mã ICD-10 nếu có.
+Ví dụ: 1. [E11] Đái tháo đường type 2 — Đang điều trị
+
+## Thuốc đang dùng (Current Medications)
+Liệt kê tên thuốc, liều lượng, tần suất dùng.
+
+## Dị ứng (Allergies)
+Liệt kê các dị ứng đã biết hoặc ghi "Chưa ghi nhận dị ứng" nếu không có.
+
+## Diễn tiến bệnh (Disease Progress)
+Mô tả ngắn gọn diễn tiến của các bệnh lý chính dựa trên dữ liệu sinh hiệu và lịch sử khám bệnh. Ví dụ: xu hướng đường huyết, huyết áp qua các lần đo gần đây, tuân thủ điều trị.
+
+## Tóm tắt sinh hiệu gần nhất (Recent Vitals)
+Tóm tắt các chỉ số sinh hiệu gần nhất trên một dòng.
+Ví dụ: HA: 120/80 mmHg | Nhịp tim: 72 bpm | SpO₂: 98% | Đường huyết: 5.6 mmol/L
+
+## Đánh giá lâm sàng (Clinical Assessment)
+Viết 2-3 câu đánh giá tổng quát tình trạng sức khỏe của bệnh nhân, bao gồm mức độ kiểm soát bệnh và các khuyến nghị theo dõi.
+
+QUY TẮC:
+- Viết bằng tiếng Việt có dấu.
+- Không dùng placeholder như [Insert...], [TODO], [N/A].
+- Nếu thiếu dữ liệu, ghi rõ "Chưa có dữ liệu" thay vì bỏ trống.
+- Giữ ngắn gọn, súc tích, chuyên nghiệp.
+- Đây là tóm tắt cho bác sĩ xem trên hồ sơ bệnh nhân."""
+
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    try:
+        raw = await llm_client.generate(
+            model=settings.medical_model,
+            prompt=summary_prompt,
+            system="Bạn là trợ lý AI y khoa chuyên tạo tóm tắt lâm sàng cho bác sĩ. Viết ngắn gọn, chuyên nghiệp, bằng tiếng Việt có dấu.",
+            stream=False,
+            num_predict=1200,
+        )
+        summary_text = (raw or "").strip()
+        if not summary_text:
+            summary_text = "Không thể tạo tóm tắt lâm sàng. Vui lòng thử lại sau."
+
+        # Post-process malformed markdown from model output so UI renders
+        # section headers/lists consistently (similar readability as chat responses).
+        summary_text = _normalize_patient_summary_markdown(summary_text)
+
+        elapsed_ms = (time.perf_counter() - start_total) * 1000
+        logger.info(
+            "[patient-summary] completed id=%s patient=%s response_len=%s elapsed_ms=%.1f",
+            request_id,
+            str(patient_id),
+            len(summary_text),
+            elapsed_ms,
+        )
+
+        return {
+            "summary": summary_text,
+            "generated_at": timestamp,
+            "model": settings.medical_model,
+        }
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - start_total) * 1000
+        logger.exception(
+            "[patient-summary] failed id=%s patient=%s error=%s elapsed_ms=%.1f",
+            request_id,
+            str(patient_id),
+            str(exc)[:300],
+            elapsed_ms,
+        )
+        return {
+            "summary": "Tạo tóm tắt lâm sàng thất bại. Vui lòng thử lại sau.",
+            "generated_at": timestamp,
+            "model": settings.medical_model,
+            "error": str(exc)[:300],
+        }
+    finally:
+        await llm_client.unload(settings.medical_model)
 
 
 async def generate_clinical_summary(
