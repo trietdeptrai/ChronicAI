@@ -1,142 +1,300 @@
-# ECG Classifier
+# ChronicAI
 
-This folder contains the ECG image classification pipeline used by ChronicAI.
+Vietnam is facing a growing chronic disease burden, while clinical data is still fragmented across hospital systems, lab reports, PDFs, imaging files, prescriptions, and appointment logs.
 
-It uses:
-- MedSigLIP (`google/medsiglip-448`) to convert ECG images into embeddings
-- a classifier head on top of embeddings:
-  - MoE (`moe_classifier_medsiglip.pt`) - recommended
-  - MLP (`mlp_classifier_medsiglip.pt`)
+ChronicAI is built to solve that gap in continuity. It centralizes scattered records into a longitudinal patient view and adds conversational AI support, so clinicians can spend less time piecing together history and more time making treatment decisions.
 
-## 1. Quick Start (Run Inference)
+## Key Features
 
-From `chronic-ai/ecg_classifier/`:
+- Context-driven medical chat for doctors and patients, powered by MedGemma for clearer communication and better between-visit support.
+- Automated record ingestion: upload medical documents/PDFs and convert them into structured clinical data.
+- Longitudinal clinical summarization and risk-oriented workflow support to improve triage and follow-up decisions.
+- Multimodal image support for CT, MRI, X-ray, and ECG, with AI-generated preliminary interpretations for clinician review.
+- ECG-focused screening pipeline using MedSigLIP + a lightweight Mixture-of-Experts classifier for efficient heart-pattern triage.
+- Privacy-first architecture with support for local/on-premise deployment patterns, while this repository's default setup uses Vertex AI.
 
-```bash
-pip install -r requirements.txt
-```
+The sections below cover what you need to run the app locally: required accounts, environment setup, database initialization, and verification checks.
 
-Single image (MoE):
+## 1. What You Need
 
-```bash
-python inference_loader.py --ckpt ./embed_data/moe_classifier_medsiglip.pt --image ./sample_ecg.png --out ./preds_moe.json
-```
+### 1.1 External Accounts and Access (Required)
 
-Batch folder:
+Before running the app, make sure you have:
 
-```bash
-python inference_loader.py --ckpt ./embed_data/moe_classifier_medsiglip.pt --folder ./images --out ./preds_moe.json
-```
+- A Supabase account and project with:
+  - project URL
+  - anon key
+  - service role key
+- A Google Cloud project with Vertex AI enabled and a deployed endpoint that can serve chat completions.
+- Local Google Cloud CLI (`gcloud`) installed and authenticated on your machine.
+- Access to the selected LLM provider path (default in this repo is Vertex).
+- Hugging Face token (`HF_TOKEN`) with access to `google/medsiglip-448` if you use ECG embedding/inference flows.
 
-Important options:
-- `--model_id google/medsiglip-448`
-- `--device auto|cpu|cuda`
-- `--batch_size 16`
-- `--threshold 0.3`
-- `--hf_token <token>` (or set `HF_TOKEN`)
+Without these, the app will start but core AI/ECG features will fail.
 
-## 2. Expected Data and Artifacts
+### 1.2 Local Runtime Versions
 
-Default training paths are under:
+- Node.js `20.19.0` (see `.nvmrc`)
+- npm `10.x`
+- Python `3.11.11` (see `.python-version`)
 
-```text
-./dataset/ECG-Dataset/
-  X_train_medsiglip.npy
-  Y_train.npy
-  X_val_medsiglip.npy
-  Y_val.npy
-  X_test_medsiglip.npy
-  Y_test.npy
-```
-
-Existing checkpoints in this repo:
+## 2. Project Structure
 
 ```text
-./embed_data/moe_classifier_medsiglip.pt
-./embed_data/mlp_classifier_medsiglip.pt
+chronic-ai/
+  frontend/        # Next.js app
+  api/             # FastAPI + LangGraph workflows
+  ecg_classifier/  # ECG model pipeline
+  migrations/      # SQL migrations
+  supabase/        # Supabase config/migrations
 ```
 
-## 3. Re-train Deterministically
+## 3. Quick Start (Recommended)
 
-Use fixed seed + deterministic mode:
+From `chronic-ai/`:
+
+- Windows (PowerShell):
+```powershell
+.\scripts\bootstrap.ps1
+```
+
+- macOS/Linux:
+```bash
+bash ./scripts/bootstrap.sh
+```
+
+This will:
+- create `.venv`
+- install backend dependencies
+- install ECG classifier dependencies
+- install frontend dependencies with `npm ci`
+
+## 4. Configure Environment
+
+Follow these steps in order.
+
+1. Create backend env file:
+- copy `api/.env.example` to `api/.env`
+- fill required values (Supabase, model/provider settings)
+
+2. Prepare Google Cloud auth on your machine (required by backend runtime):
+- install Google Cloud CLI (`gcloud`)
+- run:
+```bash
+gcloud auth login
+gcloud config set project <YOUR_GCP_PROJECT_ID>
+gcloud auth application-default login
+```
+- confirm token command works:
+```bash
+gcloud auth print-access-token
+```
+
+3. Fill required Supabase variables in `api/.env`:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Where to find these in Supabase:
+- open your Supabase project dashboard
+- go to `Project Settings` -> `API`
+- copy:
+  - `Project URL` -> `SUPABASE_URL`
+  - `anon public` key -> `SUPABASE_ANON_KEY`
+  - `service_role` key -> `SUPABASE_SERVICE_ROLE_KEY`
+
+4. Configure LLM provider in `api/.env`:
+- set `LLM_PROVIDER=vertex` (default path in this repo)
+- set:
+  - `VERTEX_AI_HOST`
+  - `VERTEX_AI_PROJECT_ID`
+  - `VERTEX_AI_LOCATION`
+  - `VERTEX_AI_ENDPOINT_ID`
+  - `VERTEX_AI_MODEL`
+- set model routing:
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+
+How to fill Vertex values exactly:
+- `VERTEX_AI_PROJECT_ID`:
+  - your Google Cloud project ID (same value used in `gcloud config set project ...`)
+- `VERTEX_AI_LOCATION`:
+  - endpoint region, for example `us-central1` or `europe-west4`
+- `VERTEX_AI_ENDPOINT_ID`:
+  - Vertex Endpoint ID from `Vertex AI` -> `Online prediction` -> `Endpoints` -> select endpoint -> `Endpoint ID`
+- `VERTEX_AI_HOST`:
+  - endpoint host root only (no path)
+  - expected format:
+    - dedicated endpoint host: `https://<endpoint-host>.prediction.vertexai.goog`
+    - or regional API host: `https://<location>-aiplatform.googleapis.com`
+- `VERTEX_AI_MODEL`:
+  - set to the model name your endpoint serves (the identifier expected by your endpoint deployment)
+  - if one model is deployed, use that same model identifier here
+- `MEDICAL_MODEL` and `VERIFICATION_MODEL`:
+  - set both to the same model identifier unless you intentionally run different models
+  - recommended starting point: use the same value as `VERTEX_AI_MODEL`
+
+How to decide which model to deploy on Vertex:
+- this app sends OpenAI-style `chat/completions` requests to your endpoint
+- deploy one chat-capable model behind your endpoint, then use that model's exact identifier in:
+  - `VERTEX_AI_MODEL`
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+- if you are unsure which identifier to use:
+  - open Vertex endpoint details
+  - find the currently deployed model entry
+  - copy the model name/identifier shown for that deployment
+- do not leave these fields empty; backend health checks require them
+
+5. Set ECG/MedSigLIP access in `api/.env`:
+- `HF_TOKEN` (required for private/auth-gated access)
+- optionally keep defaults unless you changed artifacts:
+  - `ECG_MEDSIGLIP_MODEL_ID=google/medsiglip-448`
+  - `ECG_CLASSIFIER_CHECKPOINT_PATH=ecg_classifier/embed_data/moe_classifier_medsiglip.pt`
+
+6. Create frontend env file `frontend/.env.local`:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+7. Verify checkpoint artifact exists:
+- confirm `ecg_classifier/embed_data/moe_classifier_medsiglip.pt` is present
+- if missing, retrain/regenerate from `ecg_classifier/README.md`
+
+8. Quick required-value checklist before starting services:
+- `api/.env` has non-empty values for:
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `LLM_PROVIDER=vertex`
+  - `VERTEX_AI_HOST`
+  - `VERTEX_AI_PROJECT_ID`
+  - `VERTEX_AI_LOCATION`
+  - `VERTEX_AI_ENDPOINT_ID`
+  - `VERTEX_AI_MODEL`
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+- `frontend/.env.local` has:
+  - `NEXT_PUBLIC_API_URL`
+
+## 5. Setup Database (Supabase)
+
+Run these SQL files in your Supabase SQL editor, in this order:
+
+1. `chronic-ai/setup_db.sql`
+2. `chronic-ai/setup_vector_search.sql`
+3. `chronic-ai/seed_demo_data.sql` (optional but useful for testing/demo)
+
+Important:
+- run them on the same Supabase project whose credentials you put in `api/.env`
+- if migrations are skipped/out of order, API queries and RAG features can fail
+
+## 6. Run the App
+
+Start backend:
+
+- Windows:
+```bash
+cd api
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
+
+- macOS/Linux:
+```bash
+cd api
+../.venv/bin/python -m uvicorn app.main:app --reload
+```
+
+Start frontend (new terminal):
 
 ```bash
-python train_classifier.py --seed 42 --deterministic
+cd frontend
+npm run dev
 ```
 
-Useful flags:
-- `--base ./dataset/ECG-Dataset`
-- `--epochs 100`
-- `--patience 10`
-- `--threshold 0.3`
-- `--num_experts 5`
-- `--save_path ./embed_data/moe_classifier_medsiglip.pt`
+Open:
+- Frontend: `http://localhost:3000`
+- API docs: `http://localhost:8000/docs`
 
-Training now saves reproducibility metadata:
-- inside checkpoint key `run_metadata`
-- sidecar JSON: `<checkpoint>.metadata.json`
+## 7. Verify Everything Works
 
-Metadata includes:
-- runtime versions
-- seed and deterministic flag
-- dataset shapes
-- hyperparameters
+1. API health:
+- open `http://localhost:8000/docs`
+- ensure endpoints are listed and callable
 
-## 4. Full Pipeline (If You Need to Regenerate Data)
+2. Environment sanity checks:
+- backend logs should not show missing env var errors
+- Vertex calls should not return auth/permission errors
+- Supabase calls should not return key/schema errors
+- ECG endpoint path should resolve configured checkpoint file
 
-Typical order:
-
-1. Generate detection/image dataset:
+Recommended quick checks from terminal:
 ```bash
-python make_dataset.py
+gcloud auth print-access-token
 ```
-2. Build classification labels:
 ```bash
-python make_classification_label.py
+cd api
+..\.venv\Scripts\python.exe -c "from app.config import settings; print(settings.llm_provider, settings.vertex_ai_project_id, settings.vertex_ai_location, settings.vertex_ai_endpoint_id)"
 ```
-3. Build MedSigLIP embeddings:
+
+3. SSE streaming:
+- test `POST /chat/doctor/v2/stream`
+- test `POST /chat/patient/v2/stream`
+- confirm response streams multiple `stage` updates
+
+4. Safety behavior:
+- doctor flow can return `hitl_required`
+- patient flow escalates high-risk/self-harm scenarios
+
+5. RAG path:
+- ensure Supabase credentials are valid
+- verify patient context retrieval succeeds
+
+## 8. Common Commands
+
+Frontend:
+
 ```bash
-python create_embed.py
+cd frontend
+npm run dev
+npm run build
+npm run lint
 ```
-4. Train classifier:
+
+Backend:
+
 ```bash
-python train_classifier.py --seed 42 --deterministic
+cd api
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+pytest
 ```
 
-## 5. Output Format
+ECG classifier (deterministic training):
 
-Inference output JSON includes:
-- `scores_by_class`
-- `predicted_labels`
-- `summary`
+```bash
+cd ecg_classifier
+..\.venv\Scripts\python.exe train_classifier.py --seed 42 --deterministic
+```
 
-Diagnostic classes:
-- `NORM`
-- `MI`
-- `STTC`
-- `CD`
-- `HYP`
+## 9. Troubleshooting
 
-## 6. Known Performance (MoE)
+- Backend cannot connect to Supabase:
+  - recheck `api/.env` values
+  - verify project URL/key permissions
 
-- Hamming loss: `0.167`
-- ROC-AUC micro: `0.891`
-- ROC-AUC macro: `0.879`
+- Frontend cannot call API:
+  - verify `frontend/.env.local`
+  - ensure backend is running on port `8000`
 
-## 7. Troubleshooting
+- Install issues:
+  - rerun bootstrap script
+  - confirm Node/Python versions match section 1
 
-- `FileNotFoundError` on `.npy` files:
-  - verify `--base` path
-  - ensure embedding generation completed
+- Slow first AI response:
+  - model/provider warm-up can take time on first request
 
-- Hugging Face/auth errors:
-  - set `HF_TOKEN`
-  - ensure access to `google/medsiglip-448`
+## 10. Additional Docs
 
-- CUDA OOM:
-  - reduce `--batch_size`
-  - run with `--device cpu` if needed
-
-- Non-reproducible metrics:
-  - use `--seed` + `--deterministic`
-  - keep same dataset split and same package versions
+- ECG module details: `ecg_classifier/README.md`
+- Design/engineering notes remain under `docs/` and other project markdown files.
