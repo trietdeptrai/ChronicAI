@@ -207,6 +207,7 @@ export function useUploadPatientRecordImage() {
         }: {
             patientId: string
             recordType:
+            | "lab"
             | "xray"
             | "ecg"
             | "ct"

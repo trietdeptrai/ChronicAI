@@ -290,7 +290,7 @@ export function PatientDetail({ patientId, records, isDoctor, onAskAIAboutPatien
         )}
 
         {activeTab === 'chat' && (
-          <AIChat patientId={patientId} isDoctor={isDoctor} onAskAIAboutPatient={onAskAIAboutPatient} />
+          <AIChat patientId={patientId} isDoctor={isDoctor} />
         )}
 
         {activeTab === 'upload' && isDoctor && (

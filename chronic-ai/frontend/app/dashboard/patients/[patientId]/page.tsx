@@ -160,7 +160,7 @@ type PatientDetailUiText = {
     vitalNotesLabel: string
     vitalNotesPlaceholder: string
     vitalSaveFailed: string
-    vitalSaveButton: "Luu chi so",
+    vitalSaveButton: string
     vitalSaveSuccess: string
     recentHistoryLabel: string
     recordCountSuffix: string
@@ -191,7 +191,7 @@ type PatientDetailUiText = {
     skipButton: string
     saveCommentButton: string
     editDialogTitle: string
-    editRecordTitleLabel: "Tieu de",
+    editRecordTitleLabel: string
     editRecordTypeLabel: string
     editRecordFileLabel: string
     editRecordFileHint: string
@@ -201,7 +201,7 @@ type PatientDetailUiText = {
     deleteDialogTitle: string
     deleteDialogDescription: string
     activeRecordFallbackTitle: string
-    activeRecordNoImage: "Khong co anh hien thi",
+    activeRecordNoImage: string
     uploadProgressTitle: string
     uploadCompleted: string
     uploadFailed: string
@@ -332,7 +332,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         vitalNotesLabel: "Ghi chú",
         vitalNotesPlaceholder: "Nhập ghi chú nếu cần",
         vitalSaveFailed: "Lưu chềEsềEthất bại. Vui lòng thử lại.",
-        vitalSaveButton: "Save vitals",
+        vitalSaveButton: "Luu chi so",
         vitalSaveSuccess: "Đã lưu chềEsềEsinh tồn.",
         recentHistoryLabel: "Lịch sử gần đây",
         recordCountSuffix: "bản ghi",
@@ -363,7 +363,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         skipButton: "BềEqua",
         saveCommentButton: "Lưu nhận xét",
         editDialogTitle: "Cập nhật hềEsơ y khoa",
-        editRecordTitleLabel: "Title",
+        editRecordTitleLabel: "Tieu de",
         editRecordTypeLabel: "Loại hềEsơ",
         editRecordFileLabel: "Thay tệp (tùy chọn)",
         editRecordFileHint: "Nếu thay tệp, hềEthống sẽ chạy lại phân tích AI.",
@@ -373,7 +373,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         deleteDialogTitle: "Xóa hềEsơ y khoa?",
         deleteDialogDescription: "Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bềExóa.",
         activeRecordFallbackTitle: "Ảnh cận lâm sàng",
-        activeRecordNoImage: "No image available",
+        activeRecordNoImage: "Khong co anh hien thi",
         uploadProgressTitle: "Đang xử lý tải ảnh cận lâm sàng",
         uploadCompleted: "Hoàn tất. Đang cập nhật dữ liệu...",
         uploadFailed: "Tải lên thất bại.",
@@ -485,7 +485,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         vitalNotesLabel: "Notes",
         vitalNotesPlaceholder: "Add notes if needed",
         vitalSaveFailed: "Saving vital signs failed. Please try again.",
-        vitalSaveButton: "Luu chi so",
+        vitalSaveButton: "Save vitals",
         vitalSaveSuccess: "Vital signs saved.",
         recentHistoryLabel: "Recent history",
         recordCountSuffix: "records",
@@ -516,7 +516,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         skipButton: "Skip",
         saveCommentButton: "Save comment",
         editDialogTitle: "Update medical record",
-        editRecordTitleLabel: "Tieu de",
+        editRecordTitleLabel: "Title",
         editRecordTypeLabel: "Record type",
         editRecordFileLabel: "Replace file (optional)",
         editRecordFileHint: "Replacing the file will trigger AI analysis again.",
@@ -526,7 +526,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         deleteDialogTitle: "Delete medical record?",
         deleteDialogDescription: "The file, AI analysis result, and related data of this record will be deleted.",
         activeRecordFallbackTitle: "Clinical image",
-        activeRecordNoImage: "Khong co anh hien thi",
+        activeRecordNoImage: "No image available",
         uploadProgressTitle: "Processing clinical image upload",
         uploadCompleted: "Completed. Updating data...",
         uploadFailed: "Upload failed.",
