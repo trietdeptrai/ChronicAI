@@ -90,12 +90,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 4. Run the backend:
 ```bash
-uvicorn app.main:app --reload
+python3 -m uvicorn app.main:app --reload
 ```
 
 ## User Roles

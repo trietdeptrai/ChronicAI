@@ -55,7 +55,7 @@ For complete functionality with AI features and real data.
 
 3. **Install dependencies:**
    ```bash
-   pip install -r requirements.txt
+   python3 -m pip install -r requirements.txt
    ```
 
 4. **Set up database:**
@@ -65,7 +65,7 @@ For complete functionality with AI features and real data.
 
 5. **Start backend:**
    ```bash
-   uvicorn app.main:app --reload
+   python3 -m uvicorn app.main:app --reload
    ```
    Backend will run on http://localhost:8000
 

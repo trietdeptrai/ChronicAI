@@ -1,5 +1,15 @@
 from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ModuleNotFoundError as e:  # pragma: no cover
+    raise ModuleNotFoundError(
+        "Missing dependency 'pydantic-settings'.\n\n"
+        "This usually happens when `uvicorn` is being run from a different Python "
+        "environment than the one you installed dependencies into.\n\n"
+        "Fix (from `chronic-ai/api`):\n"
+        "  python3 -m pip install -r requirements.txt\n"
+        "  python3 -m uvicorn app.main:app --reload\n"
+    ) from e
 from typing import List
 
 
