@@ -8,7 +8,7 @@ import { Button } from "@/components/button"
 import { Input } from "@/components/input"
 import { Badge } from "@/components/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/card"
-import { User, Search, FileText, Activity, ImageIcon, ArrowRight } from "lucide-react"
+import { User, Search, FileText, Activity, Image as ImageIcon, ArrowRight } from "lucide-react"
 
 const imagingTypes = new Set(["xray", "ecg", "ct", "mri"])
 

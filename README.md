@@ -36,7 +36,7 @@ Without these, the app will start but core AI/ECG features will fail.
 
 - Node.js `20.19.0` (see `.nvmrc`)
 - npm `10.x`
-- Python `3.11.11` (see `.python-version`)
+- Python `3.11.9+` (3.11.x, see `.python-version`)
 
 ## 2. Project Structure
 
@@ -68,13 +68,15 @@ This will:
 - install backend dependencies
 - install ECG classifier dependencies
 - install frontend dependencies with `npm ci`
+- create `api/.env` from `api/.env.example` if missing
+- create `frontend/.env.local` with `NEXT_PUBLIC_API_URL=http://localhost:8000` if missing
 
 ## 4. Configure Environment
 
 Follow these steps in order.
 
 1. Create backend env file:
-- copy `api/.env.example` to `api/.env`
+- bootstrap auto-creates `api/.env` from `api/.env.example` when missing
 - fill required values (Supabase, model/provider settings)
 
 2. Prepare Google Cloud auth on your machine (required by backend runtime):
@@ -153,6 +155,7 @@ How to decide which model to deploy on Vertex:
   - `ECG_CLASSIFIER_CHECKPOINT_PATH=ecg_classifier/embed_data/moe_classifier_medsiglip.pt`
 
 6. Create frontend env file `frontend/.env.local`:
+- bootstrap auto-creates this file when missing
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -288,7 +291,7 @@ cd ecg_classifier
   - ensure backend is running on port `8000`
 
 - Install issues:
-  - rerun bootstrap script
+  - rerun bootstrap script (it now stops on failed dependency installs)
   - confirm Node/Python versions match section 1
 
 - Slow first AI response:
