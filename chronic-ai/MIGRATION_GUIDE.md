@@ -255,7 +255,7 @@ If API calls fail:
 
 1. **Start Backend** (in `api/` directory):
    ```bash
-   uvicorn app.main:app --reload
+   python3 -m uvicorn app.main:app --reload
    ```
 
 2. **Start Frontend** (in `frontend/` directory):
