@@ -13,17 +13,12 @@ End-to-end chronic care assistant with:
 
 Before running the app, make sure you have:
 
-- A Supabase account and project:
+- A Supabase account and project with:
   - project URL
   - anon key
   - service role key
-- A Google Cloud project with Vertex AI access:
-  - deployed endpoint
-  - endpoint host
-  - project ID
-  - location
-  - endpoint ID
-  - model ID/name used by the app
+- A Google Cloud project with Vertex AI enabled and a deployed endpoint that can serve chat completions.
+- Local Google Cloud CLI (`gcloud`) installed and authenticated on your machine.
 - Access to the selected LLM provider path (default in this repo is Vertex).
 - Hugging Face token (`HF_TOKEN`) with access to `google/medsiglip-448` if you use ECG embedding/inference flows.
 
@@ -74,12 +69,33 @@ Follow these steps in order.
 - copy `api/.env.example` to `api/.env`
 - fill required values (Supabase, model/provider settings)
 
-2. Fill required Supabase variables in `api/.env`:
+2. Prepare Google Cloud auth on your machine (required by backend runtime):
+- install Google Cloud CLI (`gcloud`)
+- run:
+```bash
+gcloud auth login
+gcloud config set project <YOUR_GCP_PROJECT_ID>
+gcloud auth application-default login
+```
+- confirm token command works:
+```bash
+gcloud auth print-access-token
+```
+
+3. Fill required Supabase variables in `api/.env`:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
-3. Configure LLM provider in `api/.env`:
+Where to find these in Supabase:
+- open your Supabase project dashboard
+- go to `Project Settings` -> `API`
+- copy:
+  - `Project URL` -> `SUPABASE_URL`
+  - `anon public` key -> `SUPABASE_ANON_KEY`
+  - `service_role` key -> `SUPABASE_SERVICE_ROLE_KEY`
+
+4. Configure LLM provider in `api/.env`:
 - set `LLM_PROVIDER=vertex` (default path in this repo)
 - set:
   - `VERTEX_AI_HOST`
@@ -91,29 +107,76 @@ Follow these steps in order.
   - `MEDICAL_MODEL`
   - `VERIFICATION_MODEL`
 
-4. Set ECG/MedSigLIP access in `api/.env`:
+How to fill Vertex values exactly:
+- `VERTEX_AI_PROJECT_ID`:
+  - your Google Cloud project ID (same value used in `gcloud config set project ...`)
+- `VERTEX_AI_LOCATION`:
+  - endpoint region, for example `us-central1` or `europe-west4`
+- `VERTEX_AI_ENDPOINT_ID`:
+  - Vertex Endpoint ID from `Vertex AI` -> `Online prediction` -> `Endpoints` -> select endpoint -> `Endpoint ID`
+- `VERTEX_AI_HOST`:
+  - endpoint host root only (no path)
+  - expected format:
+    - dedicated endpoint host: `https://<endpoint-host>.prediction.vertexai.goog`
+    - or regional API host: `https://<location>-aiplatform.googleapis.com`
+- `VERTEX_AI_MODEL`:
+  - set to the model name your endpoint serves (the identifier expected by your endpoint deployment)
+  - if one model is deployed, use that same model identifier here
+- `MEDICAL_MODEL` and `VERIFICATION_MODEL`:
+  - set both to the same model identifier unless you intentionally run different models
+  - recommended starting point: use the same value as `VERTEX_AI_MODEL`
+
+How to decide which model to deploy on Vertex:
+- this app sends OpenAI-style `chat/completions` requests to your endpoint
+- deploy one chat-capable model behind your endpoint, then use that model's exact identifier in:
+  - `VERTEX_AI_MODEL`
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+- if you are unsure which identifier to use:
+  - open Vertex endpoint details
+  - find the currently deployed model entry
+  - copy the model name/identifier shown for that deployment
+- do not leave these fields empty; backend health checks require them
+
+5. Set ECG/MedSigLIP access in `api/.env`:
 - `HF_TOKEN` (required for private/auth-gated access)
 - optionally keep defaults unless you changed artifacts:
   - `ECG_MEDSIGLIP_MODEL_ID=google/medsiglip-448`
   - `ECG_CLASSIFIER_CHECKPOINT_PATH=ecg_classifier/embed_data/moe_classifier_medsiglip.pt`
 
-5. Create frontend env file `frontend/.env.local`:
+6. Create frontend env file `frontend/.env.local`:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-6. Verify checkpoint artifact exists:
+7. Verify checkpoint artifact exists:
 - confirm `ecg_classifier/embed_data/moe_classifier_medsiglip.pt` is present
 - if missing, retrain/regenerate from `ecg_classifier/README.md`
+
+8. Quick required-value checklist before starting services:
+- `api/.env` has non-empty values for:
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - `LLM_PROVIDER=vertex`
+  - `VERTEX_AI_HOST`
+  - `VERTEX_AI_PROJECT_ID`
+  - `VERTEX_AI_LOCATION`
+  - `VERTEX_AI_ENDPOINT_ID`
+  - `VERTEX_AI_MODEL`
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+- `frontend/.env.local` has:
+  - `NEXT_PUBLIC_API_URL`
 
 ## 5. Setup Database (Supabase)
 
 Run these SQL files in your Supabase SQL editor, in this order:
 
-1. `setup_db.sql`
-2. `setup_vector_search.sql`
-3. `seed_demo_data.sql` (optional but useful for testing/demo)
+1. `chronic-ai/setup_db.sql`
+2. `chronic-ai/setup_vector_search.sql`
+3. `chronic-ai/seed_demo_data.sql` (optional but useful for testing/demo)
 
 Important:
 - run them on the same Supabase project whose credentials you put in `api/.env`
@@ -157,6 +220,15 @@ Open:
 - Vertex calls should not return auth/permission errors
 - Supabase calls should not return key/schema errors
 - ECG endpoint path should resolve configured checkpoint file
+
+Recommended quick checks from terminal:
+```bash
+gcloud auth print-access-token
+```
+```bash
+cd api
+..\.venv\Scripts\python.exe -c "from app.config import settings; print(settings.llm_provider, settings.vertex_ai_project_id, settings.vertex_ai_location, settings.vertex_ai_endpoint_id)"
+```
 
 3. SSE streaming:
 - test `POST /chat/doctor/v2/stream`
