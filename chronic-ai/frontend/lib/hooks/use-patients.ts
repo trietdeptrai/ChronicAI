@@ -29,6 +29,7 @@ import {
     createPatientVital,
     updatePatientVital,
     deletePatientVital,
+    getPatientSummary,
 } from "@/lib/api"
 import type {
     DeletePatientResponse,
@@ -206,11 +207,10 @@ export function useUploadPatientRecordImage() {
         }: {
             patientId: string
             recordType:
-                | "lab"
-                | "xray"
-                | "ecg"
-                | "ct"
-                | "mri"
+            | "xray"
+            | "ecg"
+            | "ct"
+            | "mri"
             file: File
             title?: string
             doctorComment?: string
@@ -391,7 +391,8 @@ export function useUpdateVitalSign() {
         Error,
         { patientId: string; vitalId: string; data: VitalSignInput }
     >({
-        mutationFn: ({ patientId, vitalId, data }) => updatePatientVital(patientId, vitalId, data),
+        mutationFn: ({ patientId, vitalId, data }) =>
+            updatePatientVital(patientId, vitalId, data),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
@@ -410,10 +411,21 @@ export function useDeleteVitalSign() {
         Error,
         { patientId: string; vitalId: string }
     >({
-        mutationFn: ({ patientId, vitalId }) => deletePatientVital(patientId, vitalId),
+        mutationFn: ({ patientId, vitalId }) =>
+            deletePatientVital(patientId, vitalId),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
         },
+    })
+}
+
+/**
+ * Hook for generating AI clinical summary for a patient profile (on-demand)
+ */
+export function useGeneratePatientSummary() {
+    return useMutation({
+        mutationFn: ({ patientId }: { patientId: string }) =>
+            getPatientSummary(patientId),
     })
 }

@@ -358,6 +358,76 @@ _MEDICAL_SCOPE_REFUSAL_VI = (
     "Vui lòng đặt lại câu hỏi theo ngữ cảnh lâm sàng."
 )
 
+_AGGREGATE_EXPLICIT_KEYWORDS: tuple[str, ...] = (
+    "all patients",
+    "overview",
+    "summary",
+    "report",
+    "dashboard",
+    "patient list",
+    "tất cả",
+    "tat ca",
+    "toan bo",
+    "tong quan",
+    "tong hop",
+    "bao cao",
+    "danh sach",
+    "thong ke",
+    "cac benh nhan",
+    "nhieu benh nhan",
+)
+
+_AGGREGATE_GROUP_QUERY_KEYWORDS: tuple[str, ...] = (
+    "co benh nhan nao",
+    "benh nhan nao",
+    "nhung benh nhan",
+    "benh nhan can",
+    "any patient",
+    "any patients",
+    "which patient",
+    "which patients",
+)
+
+_AGGREGATE_ATTENTION_KEYWORDS: tuple[str, ...] = (
+    "can chu y",
+    "can theo doi",
+    "can can thiep",
+    "nguy hiem",
+    "bao dong",
+    "khan cap",
+    "cap cuu",
+    "bat thuong",
+    "rui ro",
+    "xau di",
+    "critical",
+    "danger",
+    "high risk",
+    "alert",
+    "urgent",
+    "need attention",
+    "need intervention",
+)
+
+_AGGREGATE_TIME_SCOPE_KEYWORDS: tuple[str, ...] = (
+    "hom nay",
+    "today",
+    "sang nay",
+    "chieu nay",
+    "toi nay",
+    "trong ngay",
+    "24h",
+    "24 h",
+    "this shift",
+)
+
+_PATIENT_REFERENCE_KEYWORDS: tuple[str, ...] = (
+    "benh nhan",
+    "patient",
+    "patients",
+    "ho so",
+    "case",
+)
+
 
 def _normalize_query_text(text: str) -> str:
     """
@@ -380,6 +450,50 @@ def _query_contains_keyword(normalized_query: str, keyword: str) -> bool:
     if " " in keyword:
         return keyword in normalized_query
     return re.search(rf"\b{re.escape(keyword)}\b", normalized_query) is not None
+
+
+def _is_aggregate_patient_query(query: str) -> bool:
+    """
+    Detect aggregate doctor intents (population-level patient questions).
+
+    Examples:
+    - "Có bệnh nhân nào có chỉ số nguy hiểm cần chú ý hôm nay không?"
+    - "Any patients need urgent attention today?"
+    - "Tổng quan tất cả bệnh nhân đang theo dõi"
+    """
+    normalized_query = _normalize_query_text(query)
+    if not normalized_query:
+        return False
+
+    if any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in _AGGREGATE_EXPLICIT_KEYWORDS
+    ):
+        return True
+
+    has_patient_reference = any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in _PATIENT_REFERENCE_KEYWORDS
+    )
+    if not has_patient_reference:
+        return False
+
+    has_group_query = any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in _AGGREGATE_GROUP_QUERY_KEYWORDS
+    )
+    has_attention_intent = any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in _AGGREGATE_ATTENTION_KEYWORDS
+    )
+    has_time_scope = any(
+        _query_contains_keyword(normalized_query, kw)
+        for kw in _AGGREGATE_TIME_SCOPE_KEYWORDS
+    )
+
+    return (has_group_query and (has_attention_intent or has_time_scope)) or (
+        has_attention_intent and has_time_scope
+    )
 
 
 def _is_medical_scope_query(query: str, has_image: bool = False) -> Tuple[bool, str]:
@@ -700,10 +814,12 @@ Examples:
         logger.warning(f"[Graph] extract_patients: Failed: {e}")
         mentioned_names = []
 
+    combined_query = f"{state.get('query_vi', '')} {state.get('query_en', '')}".strip()
+
     # Determine query type
     if mentioned_names:
         query_type = QueryType.PATIENT_SPECIFIC
-    elif any(kw in state["query_en"].lower() for kw in ["all patients", "overview", "summary", "urgent", "tất cả"]):
+    elif _is_aggregate_patient_query(combined_query):
         query_type = QueryType.AGGREGATE
     elif state.get("image_base64"):
         query_type = QueryType.IMAGE_ANALYSIS
@@ -1264,8 +1380,12 @@ YÊU CẦU ĐỊNH DẠNG (BẮT BUỘC):
         return f"""Bạn là trợ lý AI y khoa hỗ trợ bác sĩ.
 
 Bác sĩ đang yêu cầu tổng quan về nhiều bệnh nhân.
-Hãy tóm tắt ngắn gọn, ưu tiên các trường hợp khẩn cấp lên đầu.
-Sử dụng định dạng danh sách dễ đọc.
+YÊU CẦU BẮT BUỘC:
+1. Trả lời trực tiếp câu hỏi của bác sĩ ở câu đầu tiên (ví dụ: "Có, hiện có ... bệnh nhân cần chú ý" hoặc "Không, hiện chưa có ...")
+2. Liệt kê tên bệnh nhân cụ thể trước, kèm lý do/chỉ số bất thường từ dữ liệu
+3. Ưu tiên ca khẩn cấp hoặc nguy cơ cao lên đầu danh sách
+4. Nếu không có bệnh nhân nguy cơ cao, nêu rõ "Không ghi nhận bệnh nhân nguy cơ cao trong dữ liệu hiện có"
+5. KHÔNG giải thích định nghĩa chung (ví dụ "chỉ số nguy hiểm là gì") trừ khi bác sĩ hỏi trực tiếp về tiêu chí
 
 {safety_guidelines}"""
 
@@ -1826,7 +1946,9 @@ async def process_doctor_query_graph(
         if enable_patient_confirmation_hitl is None
         else enable_patient_confirmation_hitl
     )
-    cache_mode = f"hitl:llm:{int(bool(llm_hitl))}:pc:{int(bool(patient_confirmation_hitl))}"
+    cache_mode = (
+        f"hitl:llm:{int(bool(llm_hitl))}:pc:{int(bool(patient_confirmation_hitl))}:routing:v2"
+    )
 
     # Check cache first (only for queries without images)
     if not image_path and response_cache.enabled:

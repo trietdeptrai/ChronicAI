@@ -36,7 +36,7 @@ from app.models.schemas import (
     VitalSource,
 )
 from app.services.ocr import OCRDependencyError, extract_text
-from app.services.llm import generate_clinical_summary
+from app.services.llm import generate_clinical_summary, generate_patient_profile_summary
 
 router = APIRouter(prefix="/doctor", tags=["Doctor"])
 logger = logging.getLogger(__name__)
@@ -4376,6 +4376,35 @@ async def get_patient_detail(patient_id: str):
         "recent_vitals": vitals.data or [],
         "recent_consultations": consultations.data or [],
     }
+
+
+@router.get("/patients/{patient_id}/summary")
+async def get_patient_summary(patient_id: str):
+    """
+    Generate an AI clinical summary for the patient profile.
+
+    Uses MedGemma to synthesize the patient's medical data into a structured
+    clinical overview following the Problem List / POMR medical format.
+
+    Returns:
+        JSON with summary text, generation timestamp, and model name.
+    """
+    try:
+        patient_uuid = UUID(patient_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid patient_id format")
+
+    # Verify patient exists
+    supabase = get_supabase()
+    patient = supabase.table("patients").select("id").eq(
+        "id", str(patient_uuid)
+    ).maybe_single().execute()
+
+    if not patient or not patient.data:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    result = await generate_patient_profile_summary(patient_uuid)
+    return result
 
 
 @router.patch("/patients/{patient_id}")

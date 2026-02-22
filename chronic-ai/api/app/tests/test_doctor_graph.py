@@ -88,6 +88,42 @@ def test_add_paragraph_breaks_formats_dense_numbered_and_star_lists():
     assert "\n- Thêm thuốc hạ huyết áp khác:" in formatted
 
 
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Có bệnh nhân nào có chỉ số nguy hiểm cần chú ý hôm nay không?", True),
+        ("Any patients need urgent attention today?", True),
+        ("Tổng quan tất cả bệnh nhân đang theo dõi", True),
+        ("Các ngưỡng chỉ số nguy hiểm thường gặp là gì?", False),
+        ("Metformin có tác dụng phụ gì?", False),
+    ],
+)
+def test_is_aggregate_patient_query_detection(query, expected):
+    assert doctor_graph._is_aggregate_patient_query(query) is expected
+
+
+@pytest.mark.asyncio
+async def test_extract_patients_classifies_vietnamese_attention_query_as_aggregate(monkeypatch):
+    async def _mock_generate(**_kwargs):
+        return "[]"
+
+    async def _mock_with_circuit_breaker(_breaker, _retry_func, call, **_kwargs):
+        return await call()
+
+    monkeypatch.setattr(doctor_graph.llm_client, "generate", _mock_generate)
+    monkeypatch.setattr(doctor_graph, "with_circuit_breaker", _mock_with_circuit_breaker)
+
+    state = {
+        "query_vi": "Có bệnh nhân nào có chỉ số nguy hiểm cần chú ý hôm nay không?",
+        "query_en": "Có bệnh nhân nào có chỉ số nguy hiểm cần chú ý hôm nay không?",
+        "image_base64": None,
+    }
+
+    result = await doctor_graph.extract_patients_node(state)
+    assert result["mentioned_patient_names"] == []
+    assert result["query_type"] == doctor_graph.QueryType.AGGREGATE
+
+
 @pytest.mark.asyncio
 async def test_resolve_patients_requires_single_selection_for_ambiguous_single_name(monkeypatch):
     patients = [

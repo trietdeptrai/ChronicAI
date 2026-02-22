@@ -54,6 +54,7 @@ import {
     useUploadPatientRecordImage,
     useUpdatePatientRecord,
     useDeletePatientRecord,
+    useGeneratePatientSummary,
 } from "@/lib/hooks"
 import type {
     MedicalRecord,
@@ -65,8 +66,9 @@ import type {
     VitalSign,
     VitalSignInput,
 } from "@/types"
-import { Activity, ArrowLeft, FileText, Upload } from "lucide-react"
+import { Activity, ArrowLeft, FileText, Upload, Sparkles, RotateCw, Clock, Monitor } from "lucide-react"
 import { toast } from "sonner"
+import ReactMarkdown from "react-markdown"
 
 type ImagingRecordType =
     | "lab"
@@ -235,6 +237,15 @@ type PatientDetailUiText = {
         vitalSource: Record<string, string>
         glucoseTiming: Record<string, string>
     }
+    summaryCardTitle: string
+    summaryCardSubtitle: string
+    summaryGenerateButton: string
+    summaryRegenerateButton: string
+    summaryGenerating: string
+    summaryGeneratingHint: string
+    summaryError: string
+    summaryTimestamp: string
+    summaryModel: string
     metrics: {
         bloodPressure: string
         heartRate: string
@@ -426,6 +437,15 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
                 random: "Ngẫu nhiên",
             },
         },
+        summaryCardTitle: "Tóm tắt lâm sàng",
+        summaryCardSubtitle: "Tóm tắt hồ sơ y khoa bằng AI",
+        summaryGenerateButton: "Tạo tóm tắt",
+        summaryRegenerateButton: "Tạo lại",
+        summaryGenerating: "Đang tạo tóm tắt...",
+        summaryGeneratingHint: "MedGemma đang phân tích dữ liệu bệnh nhân...",
+        summaryError: "Không thể tạo tóm tắt. Vui lòng thử lại.",
+        summaryTimestamp: "Tạo lúc",
+        summaryModel: "Mô hình",
         metrics: {
             bloodPressure: "HA",
             heartRate: "Mạch",
@@ -570,6 +590,15 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
                 random: "Random",
             },
         },
+        summaryCardTitle: "Clinical Summary",
+        summaryCardSubtitle: "AI-generated medical profile summary",
+        summaryGenerateButton: "Generate Summary",
+        summaryRegenerateButton: "Regenerate",
+        summaryGenerating: "Generating summary...",
+        summaryGeneratingHint: "MedGemma is analyzing patient data...",
+        summaryError: "Unable to generate summary. Please try again.",
+        summaryTimestamp: "Generated at",
+        summaryModel: "Model",
         metrics: {
             bloodPressure: "BP",
             heartRate: "Heart rate",
@@ -604,14 +633,14 @@ type RecordEditState = {
     recordId: string
     title: string
     recordType:
-        | "prescription"
-        | "lab"
-        | "xray"
-        | "ecg"
-        | "ct"
-        | "mri"
-        | "notes"
-        | "referral"
+    | "prescription"
+    | "lab"
+    | "xray"
+    | "ecg"
+    | "ct"
+    | "mri"
+    | "notes"
+    | "referral"
     doctorComment: string
     file: File | null
 }
@@ -873,6 +902,14 @@ export default function PatientDetailPage() {
     const [editError, setEditError] = useState<string | null>(null)
     const [deleteRecord, setDeleteRecord] = useState<MedicalRecord | null>(null)
     const [recordListError, setRecordListError] = useState<string | null>(null)
+
+    const summaryMutation = useGeneratePatientSummary()
+    const [summaryText, setSummaryText] = useState<string | null>(null)
+    const [summaryMeta, setSummaryMeta] = useState<{ generated_at: string; model: string } | null>(null)
+    const formattedSummaryText = useMemo(
+        () => normalizeClinicalSummaryMarkdown(summaryText),
+        [summaryText]
+    )
 
     const [vitalForm, setVitalForm] = useState<VitalFormState>({
         recordedAt: "",
@@ -2086,246 +2123,117 @@ export default function PatientDetailPage() {
                 </CardContent>
             </Card>
 
-            <input
-                ref={medicalHistoryImportInputRef}
-                type="file"
-                accept=".json,.pdf,application/json,application/pdf"
-                className="hidden"
-                onChange={handleMedicalHistoryImportFileChange}
-            />
-            {isMedicalHistoryEditing && (
-                <Card>
+            {/* Clinical Summary Card */}
+            <Card className="overflow-hidden border-0 shadow-lg">
+                <div className="bg-gradient-to-r from-teal-500/10 via-emerald-500/10 to-cyan-500/10 border-b">
                     <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <CardTitle>{language === "vi" ? "Cập nhật tiền sử y khoa" : "Update Medical History"}</CardTitle>
-                        <div className="flex gap-2">
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={handleCancelMedicalHistoryEdit}
-                                disabled={isMedicalHistorySaving}
-                            >
-                                {uiText.cancelButton}
-                            </Button>
-                            <Button
-                                type="button"
-                                size="sm"
-                                onClick={handleSaveMedicalHistory}
-                                disabled={isMedicalHistorySaving}
-                            >
-                                {isMedicalHistorySaving
-                                    ? uiText.savingLabel
-                                    : (language === "vi" ? "Lưu tiền sử" : "Save History")}
-                            </Button>
-                        </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <div className="flex w-full sm:w-auto">
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="rounded-r-none border-r-0"
-                                onClick={handleExportMedicalHistory}
-                                disabled={exportMedicalHistoryMutation.isPending || importMedicalHistoryPreviewMutation.isPending}
-                            >
-                                <FileText className="mr-2 h-4 w-4" />
-                                {exportMedicalHistoryMutation.isPending
-                                    ? exportText.exporting
-                                    : (language === "vi" ? "Xuat tien su y khoa" : "Export medical history")}
-                            </Button>
-                            <select
-                                aria-label={language === "vi" ? "Dinh dang xuat tien su y khoa" : "Medical history export format"}
-                                value={medicalHistoryExportFormat}
-                                onChange={(event) => setMedicalHistoryExportFormat(event.target.value as TextExportFormat)}
-                                disabled={exportMedicalHistoryMutation.isPending || importMedicalHistoryPreviewMutation.isPending}
-                                className="border-input h-9 w-24 rounded-l-none rounded-r-md border bg-transparent px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50"
-                            >
-                                <option value="json">JSON</option>
-                                <option value="pdf">PDF</option>
-                            </select>
-                        </div>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={handleMedicalHistoryImportButtonClick}
-                            disabled={exportMedicalHistoryMutation.isPending || importMedicalHistoryPreviewMutation.isPending}
-                        >
-                            <Upload className="mr-2 h-4 w-4" />
-                            {importMedicalHistoryPreviewMutation.isPending
-                                ? exportText.importing
-                                : (language === "vi" ? "Nhap tien su y khoa" : "Import medical history")}
-                        </Button>
-                        <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={handleStartMedicalHistoryEdit}
-                            disabled={isMedicalHistorySaving}
-                        >
-                            {language === "vi" ? "Chinh sua tien su y khoa" : "Edit medical history"}
-                        </Button>
-                    </div>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        {medicalHistoryError && (
-                            <p className="text-sm text-destructive">{medicalHistoryError}</p>
-                        )}
-                        <div className="space-y-4">
-                            {MEDICAL_HISTORY_FIELD_GROUPS.map((group) => (
-                                <div key={group.title.en} className="rounded-lg border p-3 space-y-4">
-                                    <p className="text-sm font-semibold text-foreground">{group.title[language]}</p>
-                                    <div className="space-y-4">
-                                        {group.fields.map((field) => {
-                                            const fieldValues = medicalHistoryForm[field.key] ?? []
-                                            const editableValues = fieldValues.length > 0 ? fieldValues : [""]
-                                            return (
-                                                <div key={field.key} className="space-y-2">
-                                                    <div className="flex items-center justify-between gap-2">
-                                                        <Label className="text-sm">{field.label[language]}</Label>
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            onClick={() => addMedicalHistoryEntry(field.key)}
-                                                            disabled={isMedicalHistorySaving}
-                                                        >
-                                                            {language === "vi" ? "Thêm dòng" : "Add line"}
-                                                        </Button>
-                                                    </div>
-                                                    <div className="space-y-2">
-                                                        {editableValues.map((value, index) => (
-                                                            <div
-                                                                key={`${field.key}-${index}`}
-                                                                className="flex flex-col gap-2 sm:flex-row sm:items-start"
-                                                            >
-                                                                <Textarea
-                                                                    value={value}
-                                                                    onChange={(event) =>
-                                                                        updateMedicalHistoryEntry(field.key, index, event.target.value)
-                                                                    }
-                                                                    rows={2}
-                                                                    placeholder={field.placeholder[language]}
-                                                                    className="min-h-[70px]"
-                                                                    disabled={isMedicalHistorySaving}
-                                                                />
-                                                                <Button
-                                                                    type="button"
-                                                                    size="sm"
-                                                                    variant="ghost"
-                                                                    onClick={() => removeMedicalHistoryEntry(field.key, index)}
-                                                                    disabled={
-                                                                        isMedicalHistorySaving
-                                                                        || (fieldValues.length === 0 && index === 0)
-                                                                    }
-                                                                >
-                                                                    {language === "vi" ? "Xóa" : "Remove"}
-                                                                </Button>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
-
-            {!isMedicalHistoryEditing && (
-                <Card>
-                    <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <CardTitle>{language === "vi" ? "Tiền sử y khoa" : "Medical History"}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex w-full sm:w-auto">
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="rounded-r-none border-r-0"
-                                onClick={handleExportMedicalHistory}
-                                disabled={exportMedicalHistoryMutation.isPending || importMedicalHistoryPreviewMutation.isPending}
-                            >
-                                <FileText className="mr-2 h-4 w-4" />
-                                {exportMedicalHistoryMutation.isPending
-                                    ? exportText.exporting
-                                    : (language === "vi" ? "Xuat tien su y khoa" : "Export medical history")}
-                            </Button>
-                            <select
-                                aria-label={language === "vi" ? "Dinh dang xuat tien su y khoa" : "Medical history export format"}
-                                value={medicalHistoryExportFormat}
-                                onChange={(event) => setMedicalHistoryExportFormat(event.target.value as TextExportFormat)}
-                                disabled={exportMedicalHistoryMutation.isPending || importMedicalHistoryPreviewMutation.isPending}
-                                className="border-input h-9 w-24 rounded-l-none rounded-r-md border bg-transparent px-2 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50"
-                            >
-                                <option value="json">JSON</option>
-                                <option value="pdf">PDF</option>
-                            </select>
-                        </div>
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={handleMedicalHistoryImportButtonClick}
-                                disabled={exportMedicalHistoryMutation.isPending || importMedicalHistoryPreviewMutation.isPending}
-                            >
-                                <Upload className="mr-2 h-4 w-4" />
-                                {importMedicalHistoryPreviewMutation.isPending
-                                    ? exportText.importing
-                                    : (language === "vi" ? "Nhap tien su y khoa" : "Import medical history")}
-                            </Button>
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={handleStartMedicalHistoryEdit}
-                                disabled={isMedicalHistorySaving}
-                            >
-                                {language === "vi" ? "Chinh sua tien su y khoa" : "Edit medical history"}
-                            </Button>
-                        </div>
-                    </div>
-                    {medicalHistorySuccess && (
-                        <p className="text-sm text-emerald-600">{medicalHistorySuccess}</p>
-                    )}
-                    {medicalHistoryError && (
-                        <p className="text-sm text-destructive">{medicalHistoryError}</p>
-                    )}
-                    {historySections.length > 0 ? (
-                        historySections.map((section) => (
-                            <div key={section.title} className="rounded-lg border p-3">
-                                <p className="text-sm font-semibold text-foreground">{section.title}</p>
-                                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                                    {section.items.map((item, index) => (
-                                        <li key={`${section.title}-${index}`} className="break-words leading-relaxed">
-                                            {item}
-                                        </li>
-                                    ))}
-                                </ul>
+                        <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 shadow-md shadow-teal-500/25">
+                                <Sparkles className="h-5 w-5 text-white" />
                             </div>
-                        ))
-                    ) : (
-                        <p className="text-sm text-muted-foreground">
-                            {language === "vi"
-                                ? "Chưa có thông tin tiền sử y khoa được ghi nhận."
-                                : "No medical history has been recorded yet."}
-                        </p>
+                            <div>
+                                <CardTitle className="text-lg">{uiText.summaryCardTitle}</CardTitle>
+                                <p className="text-xs text-muted-foreground mt-0.5">{uiText.summaryCardSubtitle}</p>
+                            </div>
+                        </div>
+                        <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                                if (!patientId) return
+                                summaryMutation.mutate(
+                                    { patientId },
+                                    {
+                                        onSuccess: (data) => {
+                                            setSummaryText(data.summary)
+                                            setSummaryMeta({
+                                                generated_at: data.generated_at,
+                                                model: data.model,
+                                            })
+                                        },
+                                        onError: () => {
+                                            toast.error(uiText.summaryError)
+                                        },
+                                    }
+                                )
+                            }}
+                            disabled={summaryMutation.isPending}
+                            className={summaryText
+                                ? "bg-muted text-muted-foreground hover:bg-muted/80"
+                                : "bg-gradient-to-r from-teal-500 to-emerald-600 text-white hover:from-teal-600 hover:to-emerald-700 shadow-md shadow-teal-500/25"
+                            }
+                        >
+                            {summaryMutation.isPending ? (
+                                <>
+                                    <RotateCw className="h-4 w-4 mr-2 animate-spin" />
+                                    {uiText.summaryGenerating}
+                                </>
+                            ) : summaryText ? (
+                                <>
+                                    <RotateCw className="h-4 w-4 mr-2" />
+                                    {uiText.summaryRegenerateButton}
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles className="h-4 w-4 mr-2" />
+                                    {uiText.summaryGenerateButton}
+                                </>
+                            )}
+                        </Button>
+                    </CardHeader>
+                </div>
+                <CardContent className="pt-5">
+                    {summaryMutation.isPending && (
+                        <div className="flex flex-col items-center justify-center py-12 gap-4">
+                            <div className="relative">
+                                <div className="h-12 w-12 rounded-full border-2 border-teal-200 border-t-teal-500 animate-spin" />
+                                <Sparkles className="h-5 w-5 text-teal-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                            </div>
+                            <div className="text-center">
+                                <p className="text-sm font-medium text-foreground">{uiText.summaryGenerating}</p>
+                                <p className="text-xs text-muted-foreground mt-1">{uiText.summaryGeneratingHint}</p>
+                            </div>
+                        </div>
                     )}
-                    </CardContent>
-                </Card>
-            )}
+                    {!summaryMutation.isPending && summaryText && (
+                        <div className="space-y-4">
+                            <div className="text-sm leading-relaxed markdown-content clinical-summary-content">
+                                <ReactMarkdown>{formattedSummaryText}</ReactMarkdown>
+                            </div>
+                            {summaryMeta && (
+                                <div className="flex items-center gap-4 pt-3 border-t border-border/50 text-xs text-muted-foreground">
+                                    <span className="flex items-center gap-1.5">
+                                        <Clock className="h-3 w-3" />
+                                        {uiText.summaryTimestamp}: {new Date(summaryMeta.generated_at).toLocaleString(uiText.locale)}
+                                    </span>
+                                    <span className="flex items-center gap-1.5">
+                                        <Monitor className="h-3 w-3" />
+                                        {uiText.summaryModel}: {summaryMeta.model}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {!summaryMutation.isPending && !summaryText && (
+                        <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+                            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-50 to-emerald-50 dark:from-teal-950/30 dark:to-emerald-950/30">
+                                <Sparkles className="h-7 w-7 text-teal-500/60" />
+                            </div>
+                            <div>
+                                <p className="text-sm text-muted-foreground">
+                                    {language === "vi"
+                                        ? "Nhấn nút để AI tạo tóm tắt lâm sàng từ dữ liệu hồ sơ bệnh nhân."
+                                        : "Click the button to generate an AI clinical summary from patient data."}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
 
             <Card>
                 <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <CardTitle>
-                        {language === "vi" ? "HềEsơ điều trềE- Khám định kỳ" : "Treatment Records - Regular Checkup"}
-                    </CardTitle>
+                    <CardTitle>{uiText.vitalsCardTitle}</CardTitle>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <input
                             ref={vitalImportInputRef}
@@ -2719,28 +2627,9 @@ export default function PatientDetailPage() {
                                                         ))}
                                                     </div>
                                                 )}
-                                                {checkupNotes.reasonForVisit && (
-                                                    <p className="mt-3 text-xs text-muted-foreground">
-                                                        <span className="font-medium text-foreground">
-                                                            {language === "vi" ? "Lý do khám: " : "Reason for visit: "}
-                                                        </span>
-                                                        {checkupNotes.reasonForVisit}
-                                                    </p>
-                                                )}
-                                                {checkupNotes.testResultComment && (
-                                                    <p className="mt-1 text-xs text-muted-foreground">
-                                                        <span className="font-medium text-foreground">
-                                                            {language === "vi" ? "Nhận xét kết quả: " : "Test result comments: "}
-                                                        </span>
-                                                        {checkupNotes.testResultComment}
-                                                    </p>
-                                                )}
-                                                {checkupNotes.patientProgress && (
-                                                    <p className="mt-1 text-xs text-muted-foreground">
-                                                        <span className="font-medium text-foreground">
-                                                            {language === "vi" ? "Tiến triển: " : "Patient progress: "}
-                                                        </span>
-                                                        {checkupNotes.patientProgress}
+                                                {vital.notes && formatVitalNotes(vital.notes) && (
+                                                    <p className="mt-3 whitespace-pre-wrap break-all rounded-md bg-muted/40 px-2 py-1.5 font-mono text-xs text-muted-foreground">
+                                                        {formatVitalNotes(vital.notes)}
                                                     </p>
                                                 )}
                                                 {checkupNotes.treatmentPlan && (
@@ -4374,12 +4263,142 @@ function formatVitalSource(source: VitalSign["source"] | undefined, uiText: Pati
     return uiText.options.vitalSource[source] ?? uiText.options.vitalSource.unknown
 }
 
+function normalizeClinicalSummaryMarkdown(summary: string | null): string {
+    const raw = String(summary || "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .trim()
+    if (!raw) return ""
+
+    const sectionPatterns = [
+        {
+            pattern: "Danh sách vấn đề(?:\\s*\\(Problem List\\))?|Problem List",
+            header: "Danh sách vấn đề (Problem List)",
+        },
+        {
+            pattern: "Thuốc đang dùng(?:\\s*\\(Current Medications\\))?|Current Medications",
+            header: "Thuốc đang dùng (Current Medications)",
+        },
+        {
+            pattern: "Dị ứng(?:\\s*\\(Allergies\\))?|Allergies",
+            header: "Dị ứng (Allergies)",
+        },
+        {
+            pattern: "Diễn tiến bệnh(?:\\s*\\(Disease Progress\\))?|Disease Progress",
+            header: "Diễn tiến bệnh (Disease Progress)",
+        },
+        {
+            pattern: "Tóm tắt sinh hiệu gần nhất(?:\\s*\\(Recent Vitals\\))?|Recent Vitals",
+            header: "Tóm tắt sinh hiệu gần nhất (Recent Vitals)",
+        },
+        {
+            pattern: "Đánh giá lâm sàng(?:\\s*\\(Clinical Assessment\\))?|Clinical Assessment",
+            header: "Đánh giá lâm sàng (Clinical Assessment)",
+        },
+    ]
+
+    let text = raw.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ")
+    const sectionPrefixes = sectionPatterns.map(({ header }) => header.split("(")[0].trim().toLowerCase())
+
+    // Drop malformed headings like "## Danh sách vấn đề (undefined" and orphan ")" lines.
+    text = text
+        .split("\n")
+        .filter((line) => {
+            const trimmed = line.trim()
+            if (!trimmed) return true
+            if (/^[()]+$/.test(trimmed)) return false
+            if (!/\bundefined\b/i.test(trimmed)) return true
+
+            const headingText = trimmed
+                .replace(/^#{1,6}\s*/, "")
+                .replace(/^\*\*|\*\*$/g, "")
+                .trim()
+                .toLowerCase()
+
+            const looksLikeSectionHeader = sectionPrefixes.some(prefix => headingText.startsWith(prefix))
+            return !looksLikeSectionHeader
+        })
+        .join("\n")
+
+    text = text
+        .split("\n")
+        .map((line) => {
+            const boldMarkers = (line.match(/\*\*/g) || []).length
+            const balanced = boldMarkers % 2 === 0 ? line : line.replace(/\*\*/g, "")
+            return balanced.replace(/(?!^)(\d+[.)]\s*(?=[\[\]A-Za-zÀ-ỹ]))/g, "\n$1")
+        })
+        .join("\n")
+
+    text = text.replace(/([.!?])(?=[A-Za-zÀ-ỹ#*])/g, "$1 ")
+
+    for (const section of sectionPatterns) {
+        const matcher = new RegExp(
+            `(^|[\\n.!?])\\s*(?:#{1,4}\\s*)?(?:\\*\\*)?\\s*(?:${section.pattern})\\s*(?:\\*\\*)?\\s*:?\\s*`,
+            "gi"
+        )
+        text = text.replace(matcher, (_match, prefix: string) => `${prefix}\n\n## ${section.header}\n`)
+    }
+
+    text = text.replace(/([^\n]|^)(##\s)/g, (_match, prefix: string, header: string) => `${prefix}\n\n${header}`)
+    text = text.replace(/(##[^\n]+)\s*(?=(?:\d+[.)]|[-•*]))/g, "$1\n")
+    text = text.replace(/(^|[^A-Za-zÀ-ỹ0-9])(\d+[.)])(?=\S)/g, "$1$2 ")
+    text = text.replace(/([:;.!?\n])\s*\*(?=[A-Za-zÀ-ỹ0-9])/g, "$1\n- ")
+    text = text.replace(/([:;.!?\n])\s*[•●▪]\s*(?=[A-Za-zÀ-ỹ0-9])/g, "$1\n- ")
+    text = text.replace(/([:;.!?])\s*-\s+(?=[A-Za-zÀ-ỹ0-9])/g, "$1\n- ")
+
+    // Defensive de-duplication in case malformed input triggers repeated canonical headings.
+    const canonicalSectionTitles = new Set(
+        sectionPatterns.map(({ header }) => header.replace(/\s+/g, " ").trim().toLowerCase())
+    )
+    const dedupedLines: string[] = []
+    const seenHeaders = new Set<string>()
+    for (const line of text.split("\n")) {
+        const trimmed = line.trim()
+        if (/^[()]+$/.test(trimmed)) continue
+        if (/^##\s+/.test(trimmed)) {
+            const normalizedTitle = trimmed
+                .replace(/^##\s+/, "")
+                .replace(/\s*:+\s*$/, "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase()
+            if (canonicalSectionTitles.has(normalizedTitle)) {
+                if (seenHeaders.has(normalizedTitle)) continue
+                seenHeaders.add(normalizedTitle)
+            }
+            dedupedLines.push(line)
+            continue
+        }
+        dedupedLines.push(line)
+    }
+
+    text = dedupedLines.join("\n")
+
+    return text.replace(/\n{3,}/g, "\n\n").trim()
+}
+
 function formatGlucoseTiming(
     timing: VitalSign["blood_glucose_timing"] | undefined,
     uiText: PatientDetailUiText
 ): string {
     if (!timing) return ""
     return uiText.options.glucoseTiming[timing] ?? ""
+}
+
+function formatVitalNotes(notes: string): string {
+    const trimmed = notes.trim()
+    if (!trimmed) return ""
+
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+            JSON.parse(trimmed)
+            return "" // Hide raw JSON payload completely
+        } catch {
+            return notes
+        }
+    }
+
+    return notes
 }
 
 function truncateText(text: string, maxLength: number): string {
@@ -4432,5 +4451,3 @@ function buildDownloadName(name: string | undefined, fallback: string, suffix = 
 
     return `${candidate}${suffix}${extension}`
 }
-
-

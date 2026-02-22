@@ -378,3 +378,15 @@ export async function getPatientTextImportStatus(
     const endpoint = `/doctor/patients/${patientId}/import/${jobId}`
     return apiClient<PatientTextImportStatusResponse>(endpoint)
 }
+
+/**
+ * Generate an AI clinical summary for a patient profile
+ */
+export async function getPatientSummary(
+    patientId: string
+): Promise<import("@/types").PatientSummaryResponse> {
+    return apiClient<import("@/types").PatientSummaryResponse>(
+        `/doctor/patients/${patientId}/summary`,
+        { timeout: 120000 }
+    )
+}

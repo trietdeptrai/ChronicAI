@@ -24,7 +24,7 @@
 | **Framework** | FastAPI | Latest |
 | **Python** | Python | 3.11+ |
 | **Database** | Supabase (PostgreSQL + pgvector) | - |
-| **AI Models** | MedGemma 4B | Via Ollama |
+| **AI Models** | MedGemma | Via Ollama |
 | **Embeddings** | nomic-embed-text | Via Ollama |
 | **OCR** | PaddleOCR | Latest |
 

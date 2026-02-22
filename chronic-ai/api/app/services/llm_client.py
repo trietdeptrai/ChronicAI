@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -161,8 +162,16 @@ class LLMClient:
         candidate_urls = [primary_url]
         custom_path = (settings.vertex_ai_chat_completions_path or "").strip()
         fallback_host = self._default_vertex_service_host()
-        configured_host = (settings.vertex_ai_host or "").strip().rstrip("/")
-        if configured_host and configured_host != fallback_host and not custom_path:
+        configured_host = self._normalize_vertex_host(settings.vertex_ai_host or "")
+        # Dedicated endpoint hosts (prediction.vertexai.goog) must NOT be routed
+        # through the shared aiplatform.googleapis.com domain.
+        is_dedicated_host = "prediction.vertexai.goog" in configured_host.lower()
+        if (
+            configured_host
+            and configured_host != fallback_host
+            and not custom_path
+            and not is_dedicated_host
+        ):
             candidate_urls.append(self._vertex_chat_completions_url(host_override=fallback_host))
 
         try:
@@ -263,8 +272,22 @@ class LLMClient:
             return f"{parts[0]}//{parts[2]}"
         return url
 
+    @staticmethod
+    def _normalize_vertex_host(raw_host: str) -> str:
+        """
+        Normalize configured Vertex host.
+
+        Accepts values with or without scheme. If scheme is missing, defaults to https.
+        """
+        host = (raw_host or "").strip().rstrip("/")
+        if not host:
+            return ""
+        if re.match(r"^https?://", host, flags=re.IGNORECASE):
+            return host
+        return f"https://{host}"
+
     def _vertex_chat_completions_url(self, host_override: Optional[str] = None) -> str:
-        host = (host_override or settings.vertex_ai_host or "").strip().rstrip("/")
+        host = self._normalize_vertex_host(host_override or settings.vertex_ai_host or "")
         if not host:
             host = self._default_vertex_service_host()
 
