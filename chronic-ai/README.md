@@ -9,10 +9,31 @@ End-to-end chronic care assistant with:
 
 ## 1. What You Need
 
+### 1.1 External Accounts and Access (Required)
+
+Before running the app, make sure you have:
+
+- A Supabase account and project:
+  - project URL
+  - anon key
+  - service role key
+- A Google Cloud project with Vertex AI access:
+  - deployed endpoint
+  - endpoint host
+  - project ID
+  - location
+  - endpoint ID
+  - model ID/name used by the app
+- Access to the selected LLM provider path (default in this repo is Vertex).
+- Hugging Face token (`HF_TOKEN`) with access to `google/medsiglip-448` if you use ECG embedding/inference flows.
+
+Without these, the app will start but core AI/ECG features will fail.
+
+### 1.2 Local Runtime Versions
+
 - Node.js `20.19.0` (see `.nvmrc`)
 - npm `10.x`
 - Python `3.11.11` (see `.python-version`)
-- A Supabase project (URL + keys)
 
 ## 2. Project Structure
 
@@ -47,15 +68,44 @@ This will:
 
 ## 4. Configure Environment
 
+Follow these steps in order.
+
 1. Create backend env file:
 - copy `api/.env.example` to `api/.env`
 - fill required values (Supabase, model/provider settings)
 
-2. Create frontend env file `frontend/.env.local`:
+2. Fill required Supabase variables in `api/.env`:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+3. Configure LLM provider in `api/.env`:
+- set `LLM_PROVIDER=vertex` (default path in this repo)
+- set:
+  - `VERTEX_AI_HOST`
+  - `VERTEX_AI_PROJECT_ID`
+  - `VERTEX_AI_LOCATION`
+  - `VERTEX_AI_ENDPOINT_ID`
+  - `VERTEX_AI_MODEL`
+- set model routing:
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+
+4. Set ECG/MedSigLIP access in `api/.env`:
+- `HF_TOKEN` (required for private/auth-gated access)
+- optionally keep defaults unless you changed artifacts:
+  - `ECG_MEDSIGLIP_MODEL_ID=google/medsiglip-448`
+  - `ECG_CLASSIFIER_CHECKPOINT_PATH=ecg_classifier/embed_data/moe_classifier_medsiglip.pt`
+
+5. Create frontend env file `frontend/.env.local`:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+6. Verify checkpoint artifact exists:
+- confirm `ecg_classifier/embed_data/moe_classifier_medsiglip.pt` is present
+- if missing, retrain/regenerate from `ecg_classifier/README.md`
 
 ## 5. Setup Database (Supabase)
 
@@ -64,6 +114,10 @@ Run these SQL files in your Supabase SQL editor, in this order:
 1. `setup_db.sql`
 2. `setup_vector_search.sql`
 3. `seed_demo_data.sql` (optional but useful for testing/demo)
+
+Important:
+- run them on the same Supabase project whose credentials you put in `api/.env`
+- if migrations are skipped/out of order, API queries and RAG features can fail
 
 ## 6. Run the App
 
@@ -98,16 +152,22 @@ Open:
 - open `http://localhost:8000/docs`
 - ensure endpoints are listed and callable
 
-2. SSE streaming:
+2. Environment sanity checks:
+- backend logs should not show missing env var errors
+- Vertex calls should not return auth/permission errors
+- Supabase calls should not return key/schema errors
+- ECG endpoint path should resolve configured checkpoint file
+
+3. SSE streaming:
 - test `POST /chat/doctor/v2/stream`
 - test `POST /chat/patient/v2/stream`
 - confirm response streams multiple `stage` updates
 
-3. Safety behavior:
+4. Safety behavior:
 - doctor flow can return `hitl_required`
 - patient flow escalates high-risk/self-harm scenarios
 
-4. RAG path:
+5. RAG path:
 - ensure Supabase credentials are valid
 - verify patient context retrieval succeeds
 
