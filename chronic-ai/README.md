@@ -1,215 +1,220 @@
-# ChronicAI - Merged Frontend
+# ChronicAI
 
-This project combines the Figma-designed UI with the ChronicAI backend into a unified Next.js application.
+End-to-end chronic care assistant with:
+- Next.js 16 frontend (doctor and patient dashboards)
+- FastAPI backend
+- LangGraph orchestration
+- SSE streaming updates
+- Supabase (PostgreSQL + pgvector) for persistence and RAG
 
-## Project Structure
+## 1. What You Need
 
-```
+### 1.1 External Accounts and Access (Required)
+
+Before running the app, make sure you have:
+
+- A Supabase account and project:
+  - project URL
+  - anon key
+  - service role key
+- A Google Cloud project with Vertex AI access:
+  - deployed endpoint
+  - endpoint host
+  - project ID
+  - location
+  - endpoint ID
+  - model ID/name used by the app
+- Access to the selected LLM provider path (default in this repo is Vertex).
+- Hugging Face token (`HF_TOKEN`) with access to `google/medsiglip-448` if you use ECG embedding/inference flows.
+
+Without these, the app will start but core AI/ECG features will fail.
+
+### 1.2 Local Runtime Versions
+
+- Node.js `20.19.0` (see `.nvmrc`)
+- npm `10.x`
+- Python `3.11.11` (see `.python-version`)
+
+## 2. Project Structure
+
+```text
 chronic-ai/
-├── frontend/              # Next.js frontend (merged)
-│   ├── app/              # Next.js app directory
-│   │   ├── dashboard/    # Main dashboard pages
-│   │   ├── layout.tsx    # Root layout
-│   │   ├── page.tsx      # Landing page (role selection)
-│   │   └── globals.css   # Global styles
-│   ├── components/       # React components
-│   │   ├── pages/        # Page components from Figma
-│   │   ├── ui/           # UI components (shadcn/ui + custom)
-│   │   └── figma/        # Figma-specific components
-│   ├── lib/              # Utilities and data
-│   │   ├── api/          # API client for backend
-│   │   ├── hooks/        # Custom React hooks
-│   │   ├── data/         # Mock data
-│   │   └── utils.ts      # Utility functions
-│   ├── types/            # TypeScript type definitions
-│   └── contexts/         # React contexts
-└── api/                  # Python FastAPI backend
-    └── app/              # Backend application code
+  frontend/        # Next.js app
+  api/             # FastAPI + LangGraph workflows
+  ecg_classifier/  # ECG model pipeline
+  migrations/      # SQL migrations
+  supabase/        # Supabase config/migrations
 ```
 
-## Features
+## 3. Quick Start (Recommended)
 
-### Figma UI Components
-- **DoctorDashboard**: Complete doctor interface with patient management
-- **PatientDashboard**: Patient view with health records
-- **DashboardHome**: Overview with stats and charts
-- **PatientsPage**: Patient list and detail views
-- **CalendarView**: Appointment scheduling
-- **ChatView**: AI chat interface
-- **DocumentUpload**: Medical document management
-- **SettingsPage**: User settings and preferences
+From `chronic-ai/`:
 
-### Backend Integration
-- **API Client**: Ready-to-use API integration (`lib/api/`)
-- **React Query**: Data fetching and caching
-- **TypeScript Types**: Full type safety
-- **Auth Context**: User authentication state management
+- Windows (PowerShell):
+```powershell
+.\scripts\bootstrap.ps1
+```
 
-## Getting Started
-
-### Prerequisites
-- Node.js 20+ 
-- npm or pnpm
-- Python 3.11+ (for backend)
-
-### Frontend Setup
-
-1. Navigate to the frontend directory:
+- macOS/Linux:
 ```bash
-cd frontend
+bash ./scripts/bootstrap.sh
 ```
 
-2. Install dependencies:
-```bash
-npm install
-# or
-pnpm install
-```
+This will:
+- create `.venv`
+- install backend dependencies
+- install ECG classifier dependencies
+- install frontend dependencies with `npm ci`
 
-3. Run the development server:
-```bash
-npm run dev
-# or
-pnpm dev
-```
+## 4. Configure Environment
 
-4. Open [http://localhost:3000](http://localhost:3000)
+Follow these steps in order.
 
-### Backend Setup
+1. Create backend env file:
+- copy `api/.env.example` to `api/.env`
+- fill required values (Supabase, model/provider settings)
 
-1. Navigate to the api directory:
-```bash
-cd api
-```
+2. Fill required Supabase variables in `api/.env`:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
 
-2. Create a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+3. Configure LLM provider in `api/.env`:
+- set `LLM_PROVIDER=vertex` (default path in this repo)
+- set:
+  - `VERTEX_AI_HOST`
+  - `VERTEX_AI_PROJECT_ID`
+  - `VERTEX_AI_LOCATION`
+  - `VERTEX_AI_ENDPOINT_ID`
+  - `VERTEX_AI_MODEL`
+- set model routing:
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
 
-3. Install dependencies:
-```bash
-python3 -m pip install -r requirements.txt
-```
+4. Set ECG/MedSigLIP access in `api/.env`:
+- `HF_TOKEN` (required for private/auth-gated access)
+- optionally keep defaults unless you changed artifacts:
+  - `ECG_MEDSIGLIP_MODEL_ID=google/medsiglip-448`
+  - `ECG_CLASSIFIER_CHECKPOINT_PATH=ecg_classifier/embed_data/moe_classifier_medsiglip.pt`
 
-4. Run the backend:
-```bash
-python3 -m uvicorn app.main:app --reload
-```
-
-## User Roles
-
-The application supports two user roles:
-
-1. **Doctor** (`/dashboard` after selecting "Bác sĩ")
-   - Manage multiple patients
-   - View patient records
-   - Upload and analyze medical documents
-   - AI-assisted clinical decision support
-   - Alerts and monitoring
-
-2. **Patient** (`/dashboard` after selecting "Bệnh nhân")
-   - View personal health records
-   - Ask AI about diagnosis and medications
-   - Receive monitoring reminders
-   - Schedule appointments
-
-## Technology Stack
-
-### Frontend
-- **Next.js 16**: React framework with app router
-- **React 19**: UI library
-- **TypeScript**: Type safety
-- **Tailwind CSS 4**: Styling
-- **Radix UI**: Accessible UI components
-- **React Query**: Server state management
-- **Recharts**: Data visualization
-- **Lucide React**: Icons
-
-### Backend (from original project)
-- **FastAPI**: Python web framework
-- **PostgreSQL**: Database
-- **LangChain**: AI integration
-- **Ollama**: Local LLM support
-
-## API Integration
-
-The frontend is configured to work with the backend API. Update the API base URL in `lib/api/client.ts`:
-
-```typescript
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-```
-
-## Environment Variables
-
-Create a `.env.local` file in the frontend directory:
+5. Create frontend env file `frontend/.env.local`:
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-## Key Components
+6. Verify checkpoint artifact exists:
+- confirm `ecg_classifier/embed_data/moe_classifier_medsiglip.pt` is present
+- if missing, retrain/regenerate from `ecg_classifier/README.md`
 
-### Landing Page (`app/page.tsx`)
-- Role selection interface
-- Stores user role in localStorage
-- Redirects to dashboard
+## 5. Setup Database (Supabase)
 
-### Dashboard (`app/dashboard/page.tsx`)
-- Checks user role from localStorage
-- Renders appropriate dashboard (Doctor/Patient)
-- Handles logout
+Run these SQL files in your Supabase SQL editor, in this order:
 
-### Doctor Dashboard (`components/pages/DoctorDashboard.tsx`)
-- Sidebar navigation
-- Alert panel
-- Dynamic content based on selected tab
-- Patient management
+1. `setup_db.sql`
+2. `setup_vector_search.sql`
+3. `seed_demo_data.sql` (optional but useful for testing/demo)
 
-### Patient Dashboard (`components/pages/PatientDashboard.tsx`)
-- Personal health overview
-- AI chat for health questions
-- Medical timeline
-- Appointment booking
+Important:
+- run them on the same Supabase project whose credentials you put in `api/.env`
+- if migrations are skipped/out of order, API queries and RAG features can fail
 
-## Development Notes
+## 6. Run the App
 
-### Import Paths
-The project uses the `@/` alias for imports:
-- `@/components/*` - React components
-- `@/lib/*` - Utilities, hooks, API
-- `@/types/*` - TypeScript types
-- `@/contexts/*` - React contexts
+Start backend:
 
-### Mock Data
-Mock data is available in `lib/data/mockData.ts` for development without backend.
+- Windows:
+```bash
+cd api
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+```
 
-### Styling
-- Global styles in `app/globals.css`
-- Tailwind configuration in `tailwind.config.ts`
-- Component-specific styles use Tailwind utility classes
+- macOS/Linux:
+```bash
+cd api
+../.venv/bin/python -m uvicorn app.main:app --reload
+```
 
-## Building for Production
+Start frontend (new terminal):
 
 ```bash
 cd frontend
-npm run build
-npm start
+npm run dev
 ```
 
-## Original Projects
+Open:
+- Frontend: `http://localhost:3000`
+- API docs: `http://localhost:8000/docs`
 
-- **Figma Design**: Chronic Care Management App UI
-- **Backend**: ChronicAI - AI-powered chronic disease management
+## 7. Verify Everything Works
 
-## License
+1. API health:
+- open `http://localhost:8000/docs`
+- ensure endpoints are listed and callable
 
-See original project licenses.
+2. Environment sanity checks:
+- backend logs should not show missing env var errors
+- Vertex calls should not return auth/permission errors
+- Supabase calls should not return key/schema errors
+- ECG endpoint path should resolve configured checkpoint file
 
-## Support
+3. SSE streaming:
+- test `POST /chat/doctor/v2/stream`
+- test `POST /chat/patient/v2/stream`
+- confirm response streams multiple `stage` updates
 
-For issues or questions:
-1. Check the documentation in `/docs`
-2. Review API documentation at `/api/docs`
-3. Consult the original project READMEs in `frontend_original_backup/`
+4. Safety behavior:
+- doctor flow can return `hitl_required`
+- patient flow escalates high-risk/self-harm scenarios
+
+5. RAG path:
+- ensure Supabase credentials are valid
+- verify patient context retrieval succeeds
+
+## 8. Common Commands
+
+Frontend:
+
+```bash
+cd frontend
+npm run dev
+npm run build
+npm run lint
+```
+
+Backend:
+
+```bash
+cd api
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+pytest
+```
+
+ECG classifier (deterministic training):
+
+```bash
+cd ecg_classifier
+..\.venv\Scripts\python.exe train_classifier.py --seed 42 --deterministic
+```
+
+## 9. Troubleshooting
+
+- Backend cannot connect to Supabase:
+  - recheck `api/.env` values
+  - verify project URL/key permissions
+
+- Frontend cannot call API:
+  - verify `frontend/.env.local`
+  - ensure backend is running on port `8000`
+
+- Install issues:
+  - rerun bootstrap script
+  - confirm Node/Python versions match section 1
+
+- Slow first AI response:
+  - model/provider warm-up can take time on first request
+
+## 10. Additional Docs
+
+- ECG module details: `ecg_classifier/README.md`
+- Design/engineering notes remain under `docs/` and other project markdown files.

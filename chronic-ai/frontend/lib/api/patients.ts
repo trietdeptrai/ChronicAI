@@ -20,6 +20,7 @@ import type {
     PatientTextImportResponse,
     PatientMetadataImportPreview,
     PatientMetadataImportPreviewResponse,
+    MedicalHistoryImportPreviewResponse,
     VitalSignInput,
     VitalSignsResponse,
     VitalImportPreviewResponse,
@@ -134,6 +135,35 @@ export async function createPatientVital(
 }
 
 /**
+ * Update a vital sign entry for a patient
+ */
+export async function updatePatientVital(
+    patientId: string,
+    vitalId: string,
+    payload: VitalSignInput
+): Promise<VitalSignCreateResponse> {
+    return apiClient<VitalSignCreateResponse>(`/doctor/patients/${patientId}/vitals/${vitalId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+    })
+}
+
+/**
+ * Delete a vital sign entry for a patient
+ */
+export async function deletePatientVital(
+    patientId: string,
+    vitalId: string
+): Promise<{ status: string; patient_id: string; vital_id: string; message: string }> {
+    return apiClient<{ status: string; patient_id: string; vital_id: string; message: string }>(
+        `/doctor/patients/${patientId}/vitals/${vitalId}`,
+        {
+            method: "DELETE",
+        }
+    )
+}
+
+/**
  * Get dashboard statistics
  */
 export async function getDashboardStats(doctorId?: string): Promise<DashboardStats> {
@@ -159,11 +189,12 @@ export async function uploadPatientPhoto(
 }
 
 /**
- * Upload a patient ECG/X-ray image as a medical record
+ * Upload a patient test-result image (lab/X-ray/ECG/CT/MRI) as a medical record.
  */
 export async function uploadPatientRecordImage(
     patientId: string,
     recordType:
+        | "lab"
         | "xray"
         | "ecg"
         | "ct"
@@ -234,6 +265,18 @@ export async function exportPatientVitals(
 }
 
 /**
+ * Export medical-history section (sub-data scope).
+ */
+export async function exportPatientMedicalHistory(
+    patientId: string,
+    format: "json" | "pdf" = "json",
+    language: "vi" | "en" = "en"
+) {
+    const endpoint = `/doctor/patients/${patientId}/medical-history/export?format=${encodeURIComponent(format)}&lang=${encodeURIComponent(language)}`
+    return downloadFile(endpoint)
+}
+
+/**
  * Import vital-sign data for preview/prefill only (no DB write).
  */
 export async function importPatientVitalsPreview(
@@ -244,6 +287,19 @@ export async function importPatientVitalsPreview(
     formData.append("file", file)
     const endpoint = `/doctor/patients/${patientId}/vitals/import/preview`
     return uploadFile<VitalImportPreviewResponse>(endpoint, formData, "POST")
+}
+
+/**
+ * Import medical-history section data for preview/prefill only (no DB write).
+ */
+export async function importPatientMedicalHistoryPreview(
+    patientId: string,
+    file: File
+): Promise<MedicalHistoryImportPreviewResponse> {
+    const formData = new FormData()
+    formData.append("file", file)
+    const endpoint = `/doctor/patients/${patientId}/medical-history/import/preview`
+    return uploadFile<MedicalHistoryImportPreviewResponse>(endpoint, formData, "POST")
 }
 
 /**

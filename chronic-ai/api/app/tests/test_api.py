@@ -92,6 +92,17 @@ class TestDoctorEndpoints:
         response = client.get(f"/doctor/patients/{patient_id}/export?format=txt")
         assert response.status_code == 422
 
+    def test_export_patient_medical_history_rejects_invalid_uuid(self, client):
+        """Medical-history export endpoint validates patient_id format."""
+        response = client.get("/doctor/patients/not-a-uuid/medical-history/export?format=json")
+        assert response.status_code == 400
+
+    def test_export_patient_medical_history_rejects_invalid_format(self, client):
+        """Medical-history export endpoint validates export format."""
+        patient_id = "00000000-0000-0000-0000-000000000000"
+        response = client.get(f"/doctor/patients/{patient_id}/medical-history/export?format=txt")
+        assert response.status_code == 422
+
     def test_export_patient_files_rejects_invalid_uuid(self, client):
         """Patient file export endpoint validates patient_id format."""
         response = client.get("/doctor/patients/not-a-uuid/export/files")

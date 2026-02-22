@@ -8,8 +8,10 @@ import {
     createPatient,
     deletePatient,
     exportPatientMetadata,
+    exportPatientMedicalHistory,
     exportPatientText,
     exportPatientVitals,
+    importPatientMedicalHistoryPreview,
     importPatientMetadataPreview,
     importPatientVitalsPreview,
     startPatientTextImport,
@@ -25,6 +27,8 @@ import {
     deletePatientRecord,
     getPatientVitals,
     createPatientVital,
+    updatePatientVital,
+    deletePatientVital,
     getPatientSummary,
 } from "@/lib/api"
 import type {
@@ -40,6 +44,7 @@ import type {
     PatientTextImportStatusResponse,
     PatientMetadataImportPreview,
     PatientMetadataImportPreviewResponse,
+    MedicalHistoryImportPreviewResponse,
     VitalSignsResponse,
     VitalSignCreateResponse,
     VitalSignInput,
@@ -187,7 +192,7 @@ export function useUploadPatientPhoto() {
 }
 
 /**
- * Hook for uploading patient ECG/X-ray images
+ * Hook for uploading patient test-result images.
  */
 export function useUploadPatientRecordImage() {
     const queryClient = useQueryClient()
@@ -270,9 +275,29 @@ export function useExportVitalSigns() {
     })
 }
 
+export function useExportMedicalHistory() {
+    return useMutation({
+        mutationFn: ({
+            patientId,
+            format,
+            language,
+        }: {
+            patientId: string
+            format: "json" | "pdf"
+            language: "vi" | "en"
+        }) => exportPatientMedicalHistory(patientId, format, language),
+    })
+}
+
 export function useImportVitalSignsPreview() {
     return useMutation<VitalImportPreviewResponse, Error, { patientId: string; file: File }>({
         mutationFn: ({ patientId, file }) => importPatientVitalsPreview(patientId, file),
+    })
+}
+
+export function useImportMedicalHistoryPreview() {
+    return useMutation<MedicalHistoryImportPreviewResponse, Error, { patientId: string; file: File }>({
+        mutationFn: ({ patientId, file }) => importPatientMedicalHistoryPreview(patientId, file),
     })
 }
 
@@ -348,6 +373,46 @@ export function useCreateVitalSign() {
 
     return useMutation<VitalSignCreateResponse, Error, { patientId: string; data: VitalSignInput }>({
         mutationFn: ({ patientId, data }) => createPatientVital(patientId, data),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
+        },
+    })
+}
+
+/**
+ * Hook for updating an existing vital sign entry
+ */
+export function useUpdateVitalSign() {
+    const queryClient = useQueryClient()
+
+    return useMutation<
+        VitalSignCreateResponse,
+        Error,
+        { patientId: string; vitalId: string; data: VitalSignInput }
+    >({
+        mutationFn: ({ patientId, vitalId, data }) =>
+            updatePatientVital(patientId, vitalId, data),
+        onSuccess: (_data, variables) => {
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
+            queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
+        },
+    })
+}
+
+/**
+ * Hook for deleting a vital sign entry
+ */
+export function useDeleteVitalSign() {
+    const queryClient = useQueryClient()
+
+    return useMutation<
+        { status: string; patient_id: string; vital_id: string; message: string },
+        Error,
+        { patientId: string; vitalId: string }
+    >({
+        mutationFn: ({ patientId, vitalId }) =>
+            deletePatientVital(patientId, vitalId),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId] })
             queryClient.invalidateQueries({ queryKey: ["patients", variables.patientId, "vitals"] })
