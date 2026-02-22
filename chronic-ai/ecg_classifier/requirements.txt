@@ -1,5 +1,6 @@
-torch
-transformers
-pillow
-numpy
-tqdm
+numpy==1.26.3
+pillow==10.2.0
+scikit-learn==1.4.2
+torch==2.8.0
+tqdm==4.67.3
+transformers==4.57.6

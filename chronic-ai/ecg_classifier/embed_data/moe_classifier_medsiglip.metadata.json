@@ -1,0 +1,58 @@
+{
+  "timestamp_utc": "2026-02-22T10:55:41.185560+00:00",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python_version": "3.11.9",
+  "torch_version": "2.8.0+cpu",
+  "numpy_version": "1.26.3",
+  "device": "cpu",
+  "seed": 42,
+  "deterministic": true,
+  "paths": {
+    "base": ".\\embed_data",
+    "x_train": ".\\embed_data\\X_train_medsiglip.npy",
+    "y_train": ".\\embed_data\\Y_train.npy",
+    "x_val": ".\\embed_data\\X_val_medsiglip.npy",
+    "y_val": ".\\embed_data\\Y_val.npy",
+    "x_test": ".\\embed_data\\X_test_medsiglip.npy",
+    "y_test": ".\\embed_data\\Y_test.npy"
+  },
+  "dataset_shapes": {
+    "x_train": [
+      13028,
+      1152
+    ],
+    "y_train": [
+      13028,
+      5
+    ],
+    "x_val": [
+      4342,
+      1152
+    ],
+    "y_val": [
+      4342,
+      5
+    ],
+    "x_test": [
+      4343,
+      1152
+    ],
+    "y_test": [
+      4343,
+      5
+    ]
+  },
+  "hyperparameters": {
+    "batch_size": 256,
+    "num_workers": 0,
+    "epochs": 100,
+    "patience": 10,
+    "num_experts": 5,
+    "gate_hidden": 512,
+    "temperature": 1.0,
+    "learning_rate": 0.0001,
+    "weight_decay": 1e-05,
+    "lambda_balance": 0.1,
+    "threshold": 0.3
+  }
+}
