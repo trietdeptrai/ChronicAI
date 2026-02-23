@@ -30,9 +30,15 @@ Before running the app, make sure you have:
 - A Google Cloud project with Vertex AI enabled and a deployed endpoint that can serve chat completions.
 - Local Google Cloud CLI (`gcloud`) installed and authenticated on your machine.
 - Access to the selected LLM provider path (default in this repo is Vertex).
+<<<<<<< Updated upstream
 - Hugging Face token (`HF_TOKEN`) with access to `google/medsiglip-448` if you use ECG embedding/inference flows.
 
 Without these, the app will start but core AI/ECG features will fail.
+=======
+- Hugging Face token (`HF_TOKEN`) with access to `google/medsiglip-448` for ECG embedding/inference flows.
+
+Without these, the app will start but core AI/ECG features will fail. `HF_TOKEN` is a hard requirement for ECG features.
+>>>>>>> Stashed changes
 
 ### 1.2 Local Runtime Versions
 
@@ -40,6 +46,19 @@ Without these, the app will start but core AI/ECG features will fail.
 - npm `10.x`
 - Python `3.11.9+` (3.11.x, see `.python-version`)
 
+<<<<<<< Updated upstream
+=======
+Version management tips:
+- Node.js: run `nvm use` from `chronic-ai/` to load the version in `.nvmrc`.
+- Python: use `pyenv` to install/pin `3.11.9` to avoid dependency/runtime mismatch issues.
+  - example:
+```bash
+pyenv install 3.11.9
+pyenv local 3.11.9
+python --version
+```
+
+>>>>>>> Stashed changes
 ## 2. Project Structure
 
 ```text
@@ -53,7 +72,17 @@ chronic-ai/
 
 ## 3. Quick Start (Recommended)
 
+<<<<<<< Updated upstream
 From `chronic-ai/`:
+=======
+From repository root (`ChronicAI/`), move into the app directory first:
+
+```bash
+cd chronic-ai
+```
+
+Then run bootstrap:
+>>>>>>> Stashed changes
 
 - Windows (PowerShell):
 ```powershell
@@ -132,6 +161,7 @@ How to fill Vertex values exactly:
     - dedicated endpoint host: `https://<endpoint-host>.prediction.vertexai.goog`
     - or regional API host: `https://<location>-aiplatform.googleapis.com`
 - `VERTEX_AI_MODEL`:
+<<<<<<< Updated upstream
   - set to the model name your endpoint serves (the identifier expected by your endpoint deployment)
   - if one model is deployed, use that same model identifier here
 - `MEDICAL_MODEL` and `VERIFICATION_MODEL`:
@@ -152,6 +182,29 @@ How to decide which model to deploy on Vertex:
 
 5. Set ECG/MedSigLIP access in `api/.env`:
 - `HF_TOKEN` (required for private/auth-gated access)
+=======
+  - this project standard is MedGemma 27B on Vertex AI
+  - set to `google/medgemma-27b-it` (the model identifier expected by your endpoint deployment)
+- `MEDICAL_MODEL` and `VERIFICATION_MODEL`:
+  - set both to the same value as `VERTEX_AI_MODEL`
+  - use `google/medgemma-27b-it` for both
+
+How to decide which model to deploy on Vertex:
+- this app sends OpenAI-style `chat/completions` requests to your endpoint
+- deploy MedGemma 27B behind your endpoint, then use its identifier in:
+  - `VERTEX_AI_MODEL`
+  - `MEDICAL_MODEL`
+  - `VERIFICATION_MODEL`
+- expected identifier in this repo:
+  - `google/medgemma-27b-it`
+- if you need to confirm what is currently deployed on your endpoint:
+  - open Vertex endpoint details
+  - verify the deployed model entry is MedGemma 27B
+- do not leave these fields empty; backend health checks require them
+
+5. Set ECG/MedSigLIP access in `api/.env`:
+- `HF_TOKEN` (hard requirement for ECG features; required for private/auth-gated model access)
+>>>>>>> Stashed changes
 - optionally keep defaults unless you changed artifacts:
   - `ECG_MEDSIGLIP_MODEL_ID=google/medsiglip-448`
   - `ECG_CLASSIFIER_CHECKPOINT_PATH=ecg_classifier/embed_data/moe_classifier_medsiglip.pt`
@@ -192,6 +245,10 @@ Run these SQL files in your Supabase SQL editor, in this order:
 3. `chronic-ai/seed_demo_data.sql` (optional but useful for testing/demo)
 
 Important:
+<<<<<<< Updated upstream
+=======
+- enable the `vector` extension (`pgvector`) on your Supabase project before running `chronic-ai/setup_vector_search.sql`
+>>>>>>> Stashed changes
 - run them on the same Supabase project whose credentials you put in `api/.env`
 - if migrations are skipped/out of order, API queries and RAG features can fail
 
