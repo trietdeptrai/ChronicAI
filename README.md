@@ -1,8 +1,10 @@
 # ChronicAI
 
-Vietnam is facing a growing chronic disease burden, while clinical data is still fragmented across hospital systems, lab reports, PDFs, imaging files, prescriptions, and appointment logs.
+Vietnam is facing a rapidly growing chronic disease burden, but the information needed to manage long-term care is still scattered across disconnected places: hospital systems, lab portals, PDF reports, imaging files, prescriptions, and appointment logs. That fragmentation makes it hard to see a patient’s story as one continuous timeline, especially when decisions need to be made quickly.
 
-ChronicAI is built to solve that gap in continuity. It centralizes scattered records into a longitudinal patient view and adds conversational AI support, so clinicians can spend less time piecing together history and more time making treatment decisions.
+This is happening while clinicians are under intensifying pressure. In Vietnam, outpatient departments in major hospitals may have to examine roughly 150 to 200 patients per day, and some specialties go even higher, which compresses consultation time and pushes more of the “record reconstruction” work onto already overloaded doctors. In parallel, research in Vietnam continues to show meaningful levels of psychological strain in the health workforce, including measurable stress and burnout signals.
+
+ChronicAI is built to close that continuity gap. It centralizes scattered records into a longitudinal patient view and adds conversational AI support, so clinicians spend less time hunting for context and more time making treatment decisions with the full history in front of them.
 
 ## Key Features
 
