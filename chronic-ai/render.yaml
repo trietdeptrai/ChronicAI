@@ -1,0 +1,48 @@
+# render.yaml — Render Blueprint for ChronicAI Backend
+# Docs: https://render.com/docs/blueprint-spec
+#
+# How to use:
+#   1. Push this file to your `deployment` branch root.
+#   2. In Render dashboard → "New" → "Blueprint" → connect your repo.
+#   3. Render auto-reads this file and creates the service.
+
+services:
+  - type: web
+    name: chronic-ai-api
+    runtime: docker
+    # Point to the api/ subdirectory which contains the Dockerfile
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    # Deploy from a specific branch
+    branch: deployment
+    plan: free # free | starter ($7/mo, no sleep) | standard ($25/mo)
+
+    # Health check — Render pings this to confirm service is up
+    healthCheckPath: /health
+
+    # Environment variables — fill these in the Render dashboard or here (non-secrets only)
+    envVars:
+      - key: FASTAPI_HOST
+        value: "0.0.0.0"
+      - key: LLM_PROVIDER
+        value: vertex
+      - key: EMBEDDING_PROVIDER
+        value: gemini
+      - key: EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: IMAGE_UPLOAD_RUN_OCR
+        value: "false"
+      - key: PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK
+        value: "True"
+      - key: ENABLE_HITL
+        value: "true"
+      # ── Secrets: set these in the Render dashboard, NOT here ──
+      # SUPABASE_URL
+      # SUPABASE_ANON_KEY
+      # SUPABASE_SERVICE_ROLE_KEY
+      # VERTEX_AI_HOST
+      # VERTEX_AI_PROJECT_ID
+      # VERTEX_AI_ENDPOINT_ID
+      # VERTEX_AI_MODEL
+      # VERTEX_AI_LOCATION
+      # CORS_ORIGINS
