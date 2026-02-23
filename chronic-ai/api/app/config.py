@@ -55,14 +55,9 @@ class Settings(BaseSettings):
 
     # Model Configuration
     medical_model: str = "alibayram/medgemma"
-    ecg_medsiglip_model_id: str = "google/medsiglip-448"
-    ecg_classifier_checkpoint_path: str = str(
-        Path(__file__).resolve().parents[2]
-        / "ecg_classifier"
-        / "embed_data"
-        / "moe_classifier_medsiglip.pt"
-    )
-    ecg_classifier_device: str = "auto"  # auto | cpu | cuda
+    # ECG Classifier Vertex AI Endpoint
+    ecg_classifier_endpoint_url: str = ""  # e.g. https://<endpoint>.prediction.vertexai.goog/predict
+    ecg_classifier_endpoint_timeout: int = 60
     # Upload pipeline behavior
     # False by default: image uploads go directly to LLM (no OCR in hot path)
     image_upload_run_ocr: bool = False

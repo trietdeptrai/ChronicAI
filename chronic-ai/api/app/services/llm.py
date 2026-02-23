@@ -429,8 +429,7 @@ async def _analyze_ecg_with_classifier(
 
     logger.info("[upload-analysis][ecg] classifier inference start id=%s", request_id)
     start_classifier = time.perf_counter()
-    classifier_output = await asyncio.to_thread(
-        ecg_classifier_service.predict_from_base64,
+    classifier_output = await ecg_classifier_service.predict_from_base64(
         image_base64,
     )
     classifier_elapsed_ms = (time.perf_counter() - start_classifier) * 1000
