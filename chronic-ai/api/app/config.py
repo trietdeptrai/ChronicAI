@@ -55,9 +55,14 @@ class Settings(BaseSettings):
 
     # Model Configuration
     medical_model: str = "alibayram/medgemma"
-    # ECG Classifier Vertex AI Endpoint
-    ecg_classifier_endpoint_url: str = ""  # e.g. https://<endpoint>.prediction.vertexai.goog/predict
+    # ECG Classifier Remote Endpoint
+    ecg_classifier_endpoint_url: str = ""  # Any HTTP endpoint that accepts {"image_base64": "..."}
     ecg_classifier_endpoint_timeout: int = 60
+    # Auth type: none | bearer | api_key | vertex_gcloud (default, backward-compat)
+    ecg_classifier_auth_type: str = "vertex_gcloud"
+    ecg_classifier_bearer_token: str = ""   # Used when auth_type=bearer
+    ecg_classifier_api_key: str = ""        # Used when auth_type=api_key
+    ecg_classifier_api_key_header: str = "X-API-Key"  # Header name for api_key auth
     # Upload pipeline behavior
     # False by default: image uploads go directly to LLM (no OCR in hot path)
     image_upload_run_ocr: bool = False

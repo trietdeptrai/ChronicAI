@@ -13,8 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy serving code
 COPY serve.py .
 
-# Vertex AI uses port 8080 by default
-ENV AIP_HTTP_PORT=8080
+# Generic PORT env — works on any platform.
+# Vertex AI overrides with AIP_HTTP_PORT automatically; serve.py checks both.
+ENV PORT=8080
 EXPOSE 8080
 
 # Start the server

@@ -1,13 +1,13 @@
-# ChronicAI: ECG Classifier Vertex AI Migration Guide
+# ChronicAI: ECG Classifier Migration Guide
 
-We have migrated the ECG classification pipeline from local PyTorch inference (which required ~2.5GB of dependencies) to an API-based architecture using **Vertex AI Custom Prediction**. This guide explains the new architecture and provide step-by-step instructions for deployment and backend configuration.
+We have migrated the ECG classification pipeline from local PyTorch inference (which required ~2.5GB of dependencies) to an API-based architecture. The serving container can be deployed to **Vertex AI**, **any cloud with Docker support**, or **locally**. This guide explains the architecture, deployment options, and backend configuration.
 
 ---
 
 ## 🏗 New Architecture
 
-1.  **Backend** sends a base64-encoded ECG image to a **Vertex AI Custom Endpoint**.
-2.  **Vertex AI Endpoint** runs the full pipeline: MedSigLIP image embedding → MoE Classifier scores.
+1.  **Backend** sends a base64-encoded ECG image to a **remote ECG classifier endpoint**.
+2.  **ECG Classifier Endpoint** runs the full pipeline: MedSigLIP image embedding → MoE Classifier scores.
 3.  **Backend** receives the scores and passes them to **MedGemma** (also via Vertex AI) for final clinical analysis.
 
 > [!NOTE]
@@ -24,13 +24,13 @@ A standalone serving environment has been created in `chronic-ai/ecg_classifier/
 - `requirements.txt`: Minimal dependencies for the inference container.
 
 ### 2. Backend Refactor (Lightweight API)
-- **`app/services/ecg_classifier_service.py`**: Completely rewritten. It no longer imports `torch` or `transformers`. It now makes authenticated HTTP calls to the Vertex AI endpoint.
-- **`app/config.py` & `.env.example`**: Updated to include `ECG_CLASSIFIER_ENDPOINT_URL` and `ECG_CLASSIFIER_ENDPOINT_TIMEOUT`.
+- **`app/services/ecg_classifier_service.py`**: Completely rewritten. It no longer imports `torch` or `transformers`. It now makes authenticated HTTP calls to any remote endpoint.
+- **`app/config.py` & `.env.example`**: Updated to include `ECG_CLASSIFIER_ENDPOINT_URL`, `ECG_CLASSIFIER_AUTH_TYPE`, and related credential fields.
 - **`app/services/llm.py`**: Updated calling site to be async/await compatible.
 
 ---
 
-## 🚀 Deployment Instructions
+## 🚀 Deployment — Option A: Vertex AI
 
 ### Prerequisites
 - Google Cloud project with Vertex AI API enabled.
@@ -100,15 +100,60 @@ gsutil cp ../embed_data/moe_classifier_medsiglip.pt \
 3. Select a machine type with a GPU (e.g., `n1-standard-4` with 1x NVIDIA T4).
 4. After deployment, copy the **Endpoint URL**.
 
----
-
-## ⚙️ Backend Configuration
-
-Update your backend `.env` file with the new endpoint URL:
-
+### Backend Config for Vertex AI
 ```bash
 ECG_CLASSIFIER_ENDPOINT_URL=https://<endpoint-id>.prediction.vertexai.goog/v1/projects/<project>/locations/<region>/endpoints/<endpoint-id>:predict
+ECG_CLASSIFIER_AUTH_TYPE=vertex_gcloud
 ECG_CLASSIFIER_ENDPOINT_TIMEOUT=60
+```
+
+---
+
+## 🌐 Deployment — Option B: Any Other Platform
+
+The serving container is a standard Docker image. It runs on **any platform** that
+supports Docker containers: Modal, RunPod, Railway, Fly.io, Hugging Face Spaces,
+a cloud VM, or your local machine.
+
+### Build the Container
+```bash
+cd chronic-ai/ecg_classifier/serving
+docker build -t ecg-classifier .
+```
+
+### Run Locally
+```bash
+docker run -p 8080:8080 \
+    -e PORT=8080 \
+    -e CHECKPOINT_PATH=/models/moe_classifier_medsiglip.pt \
+    -v $(pwd)/../embed_data:/models \
+    ecg-classifier
+```
+
+### Environment Variables for the Container
+
+| Variable | Required | Description |
+|---|---|---|
+| `PORT` | No | HTTP port (default `8080`) |
+| `CHECKPOINT_PATH` | Yes* | Path to `.pt` model checkpoint inside the container |
+| `HF_TOKEN` | No | HuggingFace token if MedSigLIP model is gated |
+| `MEDSIGLIP_MODEL_ID` | No | Override embedding model (default `google/medsiglip-448`) |
+
+\* Or use Docker volume mount to put the checkpoint at the default path.
+
+### Backend Auth Configuration
+
+| Platform | Auth Type | Config |
+|---|---|---|
+| Local Docker / VPN | `none` | No extra config needed |
+| Service with static token | `bearer` | Set `ECG_CLASSIFIER_BEARER_TOKEN` |
+| Service with API key | `api_key` | Set `ECG_CLASSIFIER_API_KEY` (+ optional `ECG_CLASSIFIER_API_KEY_HEADER`) |
+| Vertex AI | `vertex_gcloud` | Default, uses `gcloud auth print-access-token` |
+
+Example `.env` for a local container:
+```bash
+ECG_CLASSIFIER_ENDPOINT_URL=http://localhost:8080/predict
+ECG_CLASSIFIER_AUTH_TYPE=none
 ```
 
 ---
@@ -116,7 +161,6 @@ ECG_CLASSIFIER_ENDPOINT_TIMEOUT=60
 ## 🧪 Verification
 
 ### Local Container Testing
-You can test the container locally before pushing:
 ```bash
 cd chronic-ai/ecg_classifier/serving
 docker build -t ecg-classifier .
@@ -137,3 +181,4 @@ curl -X POST http://localhost:8080/predict \
 ### Backend Verification
 Run the FastAPI backend and upload an ECG image. Monitor the logs for `[ecg-classifier] predict complete (remote)`.
 If the endpoint is not configured, the system will automatically fall back to MedGemma-only analysis (graceful degradation).
+

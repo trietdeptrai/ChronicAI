@@ -3,11 +3,17 @@ ECG classifier service.
 
 Pipeline:
 1) Receive base64-encoded ECG image.
-2) Call the Vertex AI-hosted ECG classifier endpoint (MedSigLIP + MoE).
+2) Call a remote ECG classifier endpoint (MedSigLIP + MoE).
 3) Return per-class scores for downstream MedGemma analysis.
 
 The endpoint runs the full pipeline: image → MedSigLIP embedding → classifier → scores.
 This service only makes an HTTP call — no local PyTorch or transformers needed.
+
+Supported auth types (via ECG_CLASSIFIER_AUTH_TYPE):
+  - none:          No auth headers (local dev, VPN-protected endpoints)
+  - bearer:        Static Authorization: Bearer <token>
+  - api_key:       Configurable header + key (e.g. X-API-Key)
+  - vertex_gcloud: GCP access token via gcloud CLI (default, backward-compat)
 """
 
 from __future__ import annotations
@@ -25,7 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 class ECGClassifierService:
-    """Calls the Vertex AI-hosted ECG classifier endpoint for predictions."""
+    """Calls a remote ECG classifier endpoint for predictions.
+
+    Works with any HTTP endpoint that accepts ``{"image_base64": "..."}``
+    and returns per-class scores.  Auth is controlled by
+    ``ECG_CLASSIFIER_AUTH_TYPE`` (see module docstring).
+    """
 
     def __init__(self) -> None:
         self._timeout = httpx.Timeout(
@@ -44,17 +55,55 @@ class ECGClassifierService:
 
     async def _get_auth_headers(self) -> dict[str, str]:
         """
-        Get authentication headers for the Vertex AI endpoint.
+        Build authentication headers based on the configured auth type.
 
-        Reuses the same gcloud token mechanism as the LLM client.
+        Supported types: none, bearer, api_key, vertex_gcloud.
         """
-        from app.services.llm_client import llm_client
+        auth_type = (settings.ecg_classifier_auth_type or "vertex_gcloud").strip().lower()
 
-        token = await llm_client._get_vertex_access_token()
-        return {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
+        if auth_type == "none":
+            return {"Content-Type": "application/json"}
+
+        if auth_type == "bearer":
+            token = (settings.ecg_classifier_bearer_token or "").strip()
+            if not token:
+                raise RuntimeError(
+                    "ECG_CLASSIFIER_BEARER_TOKEN is required when "
+                    "ECG_CLASSIFIER_AUTH_TYPE=bearer"
+                )
+            return {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+
+        if auth_type == "api_key":
+            key = (settings.ecg_classifier_api_key or "").strip()
+            header_name = (
+                settings.ecg_classifier_api_key_header or "X-API-Key"
+            ).strip()
+            if not key:
+                raise RuntimeError(
+                    "ECG_CLASSIFIER_API_KEY is required when "
+                    "ECG_CLASSIFIER_AUTH_TYPE=api_key"
+                )
+            return {
+                header_name: key,
+                "Content-Type": "application/json",
+            }
+
+        if auth_type == "vertex_gcloud":
+            from app.services.llm_client import llm_client
+
+            token = await llm_client._get_vertex_access_token()
+            return {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+
+        raise RuntimeError(
+            f"Unsupported ECG_CLASSIFIER_AUTH_TYPE='{auth_type}'. "
+            "Use: none, bearer, api_key, or vertex_gcloud."
+        )
 
     async def predict_from_base64(self, image_base64: str) -> dict[str, Any]:
         """

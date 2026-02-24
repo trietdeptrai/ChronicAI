@@ -1,16 +1,19 @@
 """
-ECG Classifier Serving Container for Vertex AI.
+ECG Classifier Serving Container.
 
 Loads MedSigLIP (google/medsiglip-448) + MoE/MLP classifier checkpoint
 and serves predictions via HTTP.
 
-Vertex AI will send:
-  - POST requests to the inference route (default: /predict)
-  - GET  requests to the health route (default: /health)
+Routes:
+  - POST /predict   — classify a base64-encoded ECG image
+  - GET  /health    — liveness / readiness check
 
-The model checkpoint is loaded from the path specified by the
-AIP_STORAGE_URI environment variable (set by Vertex AI) or from
-a local fallback path.
+The model checkpoint is resolved in this order:
+  1. AIP_STORAGE_URI env var (set automatically by Vertex AI)
+  2. CHECKPOINT_PATH env var (any other platform / local dev)
+  3. Default path relative to this script
+
+Port is resolved as: PORT → AIP_HTTP_PORT → 8080.
 """
 
 from __future__ import annotations
@@ -403,5 +406,10 @@ def predict(request: PredictRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("AIP_HTTP_PORT", "8080"))
+    # PORT (generic) → AIP_HTTP_PORT (Vertex AI) → 8080 (default)
+    port = int(
+        os.environ.get("PORT")
+        or os.environ.get("AIP_HTTP_PORT")
+        or "8080"
+    )
     uvicorn.run(app, host="0.0.0.0", port=port)
