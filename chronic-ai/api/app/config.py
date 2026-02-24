@@ -10,7 +10,7 @@ except ModuleNotFoundError as e:  # pragma: no cover
         "  python3 -m pip install -r requirements.txt\n"
         "  python3 -m uvicorn app.main:app --reload\n"
     ) from e
-from typing import List
+from typing import List, Union
 import json
 from pydantic import field_validator
 
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # Application Configuration
     fastapi_host: str = "0.0.0.0"
     fastapi_port: int = 8000
-    cors_origins: List[str] = ["http://localhost:3000"]
+    cors_origins: Union[str, List[str]] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")
     @classmethod
