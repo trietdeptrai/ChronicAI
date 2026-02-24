@@ -259,19 +259,19 @@ type PatientDetailUiText = {
 const exportUiText: Record<DashboardLanguage, ExportUiText> = {
     vi: {
         formatAriaLabel: "Định dạng xuất dữ liệu",
-        filterAriaLabel: "BềElọc hềEsơ",
-        exportTextButton: "Xuất hềEsơ tổng",
+        filterAriaLabel: "Bộ lọc hồ sơ",
+        exportTextButton: "Xuất hồ sơ tổng",
         exportFilesButton: "Xuất tệp y khoa",
-        importTextButton: "Nhập hềEsơ tổng",
+        importTextButton: "Nhập hồ sơ tổng",
         exporting: "Đang xuất...",
         importing: "Đang nhập...",
-        exportHint: "Xuất hềEsơ tổng ra tệp ZIP gồm dữ liệu văn bản và tệp y khoa.",
-        missingPatientDataId: "Không thềExuất dữ liệu: thiếu mã bệnh nhân.",
-        missingPatientFilesId: "Không thềExuất tệp: thiếu mã bệnh nhân.",
-        missingPatientImportId: "Không thềEnhập dữ liệu: thiếu mã bệnh nhân.",
-        invalidImportFileType: "Tệp nhập không hợp lềE Nhập hềEsơ tổng chềEhềEtrợ .zip.",
-        exportTextSuccessJson: "Đã xuất hềEsơ tổng ZIP (văn bản JSON).",
-        exportTextSuccessPdf: "Đã xuất hềEsơ tổng ZIP (văn bản PDF).",
+        exportHint: "Xuất hồ sơ tổng ra tệp ZIP gồm dữ liệu văn bản và tệp y khoa.",
+        missingPatientDataId: "Không thể xuất dữ liệu: thiếu mã bệnh nhân.",
+        missingPatientFilesId: "Không thể xuất tệp: thiếu mã bệnh nhân.",
+        missingPatientImportId: "Không thể nhập dữ liệu: thiếu mã bệnh nhân.",
+        invalidImportFileType: "Tệp nhập không hợp lệ. Nhập hồ sơ tổng chỉ hỗ trợ .zip.",
+        exportTextSuccessJson: "Đã xuất hồ sơ tổng ZIP (văn bản JSON).",
+        exportTextSuccessPdf: "Đã xuất hồ sơ tổng ZIP (văn bản PDF).",
         exportFilesSuccess: "Đã xuất tệp đính kèm dạng ZIP.",
         importSuccess: "Đã nhập dữ liệu bệnh nhân.",
         exportTextFailed: "Xuất dữ liệu bệnh nhân thất bại.",
@@ -305,45 +305,45 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
     vi: {
         locale: "vi-VN",
         backButton: "Quay lại",
-        pageTitle: "HềEsơ bệnh nhân",
-        loadingPatient: "Đang tải hềEsơ bệnh nhân...",
-        loadPatientErrorTitle: "Không thềEtải hềEsơ bệnh nhân",
+        pageTitle: "Hồ sơ bệnh nhân",
+        loadingPatient: "Đang tải hồ sơ bệnh nhân...",
+        loadPatientErrorTitle: "Không thể tải hồ sơ bệnh nhân",
         loadPatientErrorHint: "Vui lòng thử lại sau",
-        photoCardTitle: "Ảnh hềEsơ",
+        photoCardTitle: "Ảnh hồ sơ",
         patientPhotoUploadLabel: "Tải ảnh mới",
         photoUploadFailed: "Tải ảnh thất bại. Vui lòng thử lại.",
-        photoUpdateSuccess: "Đã cập nhật ảnh hềEsơ.",
+        photoUpdateSuccess: "Đã cập nhật ảnh hồ sơ.",
         photoUploadButton: "Cập nhật ảnh",
         uploadingLabel: "Đang tải...",
         savingLabel: "Đang lưu...",
         updatingLabel: "Đang cập nhật...",
         deletingLabel: "Đang xóa...",
-        vitalsCardTitle: "ChềEsềEsinh tồn",
+        vitalsCardTitle: "Chỉ số sinh tồn",
         vitalRecordedAtLabel: "Thời gian đo",
         vitalSourceLabel: "Nguồn dữ liệu",
         vitalBpSystolicLabel: "Huyết áp tâm thu",
         vitalBpDiastolicLabel: "Huyết áp tâm trương",
         vitalHeartRateLabel: "Nhịp tim (bpm)",
-        vitalSpo2Label: "SpO₁E(%)",
-        vitalTemperatureLabel: "Nhiệt đềE(°C)",
+        vitalSpo2Label: "SpO₂ (%)",
+        vitalTemperatureLabel: "Nhiệt độ (°C)",
         vitalWeightLabel: "Cân nặng (kg)",
         vitalBloodGlucoseLabel: "Đường huyết (mmol/L)",
         vitalGlucoseTimingLabel: "Thời điểm đo",
         vitalNotesLabel: "Ghi chú",
         vitalNotesPlaceholder: "Nhập ghi chú nếu cần",
-        vitalSaveFailed: "Lưu chềEsềEthất bại. Vui lòng thử lại.",
-        vitalSaveButton: "Luu chi so",
-        vitalSaveSuccess: "Đã lưu chềEsềEsinh tồn.",
+        vitalSaveFailed: "Lưu chỉ số thất bại. Vui lòng thử lại.",
+        vitalSaveButton: "Lưu chỉ số",
+        vitalSaveSuccess: "Đã lưu chỉ số sinh tồn.",
         recentHistoryLabel: "Lịch sử gần đây",
         recordCountSuffix: "bản ghi",
         vitalsLoading: "Đang tải dữ liệu sinh tồn...",
-        vitalsLoadFailed: "Không thềEtải dữ liệu sinh tồn.",
-        vitalsEmpty: "Chưa có chềEsềEsinh tồn nào.",
-        medicalRecordsTitle: "HềEsơ y khoa",
+        vitalsLoadFailed: "Không thể tải dữ liệu sinh tồn.",
+        vitalsEmpty: "Chưa có chỉ số sinh tồn nào.",
+        medicalRecordsTitle: "Hồ sơ y khoa",
         medicalRecordsSubtitle: "Xem và lọc các tài liệu đã tải lên",
-        recordsLoading: "Đang tải hềEsơ y khoa...",
-        recordsLoadFailed: "Không thềEtải hềEsơ y khoa.",
-        recordsEmpty: "Chưa có hềEsơ y khoa nào.",
+        recordsLoading: "Đang tải hồ sơ y khoa...",
+        recordsLoadFailed: "Không thể tải hồ sơ y khoa.",
+        recordsEmpty: "Chưa có hồ sơ y khoa nào.",
         recordVerifiedBadge: "Đã xác thực",
         editButton: "Chỉnh sửa",
         deleteButton: "Xóa",
@@ -351,29 +351,29 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         noAttachment: "Không có tệp đính kèm",
         imagingCardTitle: "Ảnh cận lâm sàng",
         imagingTypeLabel: "Loại ảnh",
-        recordTitleLabel: "Tiêu đềE(tùy chọn)",
+        recordTitleLabel: "Tiêu đề (tùy chọn)",
         recordTitlePlaceholder: "Ví dụ: CT ngực 2026-02-01",
         recordFileLabel: "Tải ảnh cận lâm sàng",
         recordUploadFailed: "Tải ảnh thất bại. Vui lòng thử lại.",
         recordUploadButton: "Tải ảnh cận lâm sàng",
         postUploadDialogTitle: "Thêm nhận xét bác sĩ (tùy chọn)",
-        postUploadDialogHint: "AI đã phân tích xong. Bạn có thềEbềEsung nhận xét bác sĩ cho hềEsơ này.",
-        postUploadNoAnalysis: "Chưa có nội dung phân tích AI đềEtham khảo.",
+        postUploadDialogHint: "AI đã phân tích xong. Bạn có thể bổ sung nhận xét bác sĩ cho hồ sơ này.",
+        postUploadNoAnalysis: "Chưa có nội dung phân tích AI để tham khảo.",
         doctorCommentPlaceholder: "Nhập nhận xét bác sĩ...",
-        skipButton: "BềEqua",
+        skipButton: "Bỏ qua",
         saveCommentButton: "Lưu nhận xét",
-        editDialogTitle: "Cập nhật hềEsơ y khoa",
-        editRecordTitleLabel: "Tieu de",
-        editRecordTypeLabel: "Loại hềEsơ",
+        editDialogTitle: "Cập nhật hồ sơ y khoa",
+        editRecordTitleLabel: "Tiêu đề",
+        editRecordTypeLabel: "Loại hồ sơ",
         editRecordFileLabel: "Thay tệp (tùy chọn)",
-        editRecordFileHint: "Nếu thay tệp, hềEthống sẽ chạy lại phân tích AI.",
+        editRecordFileHint: "Nếu thay tệp, hệ thống sẽ chạy lại phân tích AI.",
         editRecordCommentLabel: "Nhận xét bác sĩ",
         cancelButton: "Hủy",
         saveChangesButton: "Lưu thay đổi",
-        deleteDialogTitle: "Xóa hềEsơ y khoa?",
-        deleteDialogDescription: "Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bềExóa.",
+        deleteDialogTitle: "Xóa hồ sơ y khoa?",
+        deleteDialogDescription: "Tệp, kết quả phân tích AI và dữ liệu liên quan của bản ghi này sẽ bị xóa.",
         activeRecordFallbackTitle: "Ảnh cận lâm sàng",
-        activeRecordNoImage: "Khong co anh hien thi",
+        activeRecordNoImage: "Không có ảnh hiển thị",
         uploadProgressTitle: "Đang xử lý tải ảnh cận lâm sàng",
         uploadCompleted: "Hoàn tất. Đang cập nhật dữ liệu...",
         uploadFailed: "Tải lên thất bại.",
@@ -383,31 +383,31 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         uploadStageEcgClassifier: "Đang chạy ECG classifier...",
         uploadStageImageAnalysis: "Đang phân tích hình ảnh...",
         uploadStageAiAnalysis: "Đang phân tích AI bằng MedGemma...",
-        uploadStageSave: "Đang lưu kết quả vào hềEsơ...",
+        uploadStageSave: "Đang lưu kết quả vào hồ sơ...",
         errors: {
             missingPatientId: "Không tìm thấy mã bệnh nhân.",
             choosePhotoFirst: "Vui lòng chọn ảnh trước khi tải lên.",
-            invalidPhotoFile: "Tệp không hợp lềE Vui lòng chọn ảnh.",
+            invalidPhotoFile: "Tệp không hợp lệ. Vui lòng chọn ảnh.",
             chooseImagingFileFirst: "Vui lòng chọn ảnh cận lâm sàng.",
-            invalidImagingFile: "Tệp không hợp lềE Vui lòng chọn ảnh.",
+            invalidImagingFile: "Tệp không hợp lệ. Vui lòng chọn ảnh.",
             recordUploadFallback: "Tải ảnh thất bại. Vui lòng thử lại.",
-            saveDoctorCommentFailed: "Không thềElưu nhận xét bác sĩ.",
+            saveDoctorCommentFailed: "Không thể lưu nhận xét bác sĩ.",
             replacementFileInvalid: "Tệp thay thế phải là ảnh hoặc PDF.",
-            updateRecordFailed: "Cập nhật hềEsơ y khoa thất bại.",
-            deleteRecordFailed: "Xóa hềEsơ y khoa thất bại.",
-            enterAtLeastOneVital: "Vui lòng nhập ít nhất một chềEsềE",
+            updateRecordFailed: "Cập nhật hồ sơ y khoa thất bại.",
+            deleteRecordFailed: "Xóa hồ sơ y khoa thất bại.",
+            enterAtLeastOneVital: "Vui lòng nhập ít nhất một chỉ số",
         },
         success: {
             recordUploadSuccess: "Đã tải tệp thành công.",
             saveDoctorCommentSuccess: "Đã lưu nhận xét bác sĩ.",
-            updateRecordSuccess: "Đã cập nhật hềEsơ y khoa.",
-            deleteRecordSuccess: "Đã xóa hềEsơ y khoa thành công.",
+            updateRecordSuccess: "Đã cập nhật hồ sơ y khoa.",
+            deleteRecordSuccess: "Đã xóa hồ sơ y khoa thành công.",
         },
         options: {
             imagingType: {
                 lab: "Xét nghiệm",
                 xray: "X-quang",
-                ecg: "Điện tâm đềE(ECG)",
+                ecg: "Điện tâm đồ (ECG)",
                 ct: "CT",
                 mri: "MRI",
             },
@@ -426,7 +426,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
                 self_reported: "Tự báo cáo",
                 clinic: "Phòng khám",
                 hospital: "Bệnh viện",
-                device: "Device",
+                device: "Thiết bị",
                 unknown: "Không rõ",
             },
             glucoseTiming: {
@@ -477,7 +477,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         vitalBpSystolicLabel: "Systolic blood pressure",
         vitalBpDiastolicLabel: "Diastolic blood pressure",
         vitalHeartRateLabel: "Heart rate (bpm)",
-        vitalSpo2Label: "SpO₁E(%)",
+        vitalSpo2Label: "SpO₂ (%)",
         vitalTemperatureLabel: "Temperature (°C)",
         vitalWeightLabel: "Weight (kg)",
         vitalBloodGlucoseLabel: "Blood glucose (mmol/L)",
@@ -693,8 +693,8 @@ const MEDICAL_HISTORY_FIELD_GROUPS: MedicalHistoryFieldGroup[] = [
             },
             {
                 key: "allergies",
-                label: { vi: "DềEứng", en: "Allergies" },
-                placeholder: { vi: "Nhập 1 dềEứng mỗi dòng", en: "Enter one allergy per line" },
+                label: { vi: "Dị ứng", en: "Allergies" },
+                placeholder: { vi: "Nhập 1 dị ứng mỗi dòng", en: "Enter one allergy per line" },
             },
             {
                 key: "psychiatric_history",
@@ -746,24 +746,24 @@ const MEDICAL_HISTORY_FIELD_GROUPS: MedicalHistoryFieldGroup[] = [
     },
     {
         title: {
-            vi: "Tien su dieu tri",
+            vi: "Tiền sử điều trị",
             en: "Treatment History",
         },
         fields: [
             {
                 key: "previous_treatments",
-                label: { vi: "Điều trềEtrước đây", en: "Previous Treatments" },
-                placeholder: { vi: "Nhập 1 điều trềEmỗi dòng", en: "Enter one previous treatment per line" },
+                label: { vi: "Điều trị trước đây", en: "Previous Treatments" },
+                placeholder: { vi: "Nhập 1 điều trị mỗi dòng", en: "Enter one previous treatment per line" },
             },
             {
                 key: "physiotherapy",
-                label: { vi: "Vật lý trềEliệu", en: "Physiotherapy" },
+                label: { vi: "Vật lý trị liệu", en: "Physiotherapy" },
                 placeholder: { vi: "Nhập 1 mục mỗi dòng", en: "Enter one physiotherapy item per line" },
             },
             {
                 key: "other_relevant_treatments",
-                label: { vi: "Điều trềEliên quan khác", en: "Other Relevant Treatments" },
-                placeholder: { vi: "Nhập 1 điều trềEmỗi dòng", en: "Enter one treatment item per line" },
+                label: { vi: "Điều trị liên quan khác", en: "Other Relevant Treatments" },
+                placeholder: { vi: "Nhập 1 điều trị mỗi dòng", en: "Enter one treatment item per line" },
             },
         ],
     },
@@ -1348,7 +1348,7 @@ export default function PatientDetailPage() {
         if (!lowerName.endsWith(".json") && !lowerName.endsWith(".pdf")) {
             toast.error(
                 language === "vi"
-                    ? "Tệp nhập sinh tồn không hợp lềE ChềEhềEtrợ .json hoặc .pdf."
+                    ? "Tệp nhập sinh tồn không hợp lệ. Chỉ hỗ trợ .json hoặc .pdf."
                     : "Invalid vital import file. Only .json or .pdf is supported."
             )
             resetInput()
@@ -1399,7 +1399,7 @@ export default function PatientDetailPage() {
                     } else {
                         toast.success(
                             language === "vi"
-                                ? "Đã nhập dữ liệu sinh tồn đềEđiền sẵn."
+                                ? "Đã nhập dữ liệu sinh tồn để điền sẵn."
                                 : "Vital-sign data imported for prefill."
                         )
                     }
@@ -1852,12 +1852,12 @@ export default function PatientDetailPage() {
         ? {
             dateOfBirth: "Ngày sinh",
             gender: "Giới tính",
-            nric: "SềECCCD",
-            insuranceNumber: "Mã sềEBHYT",
-            diagnosis: "Chuẩn đoán",
+            nric: "Số CCCD",
+            insuranceNumber: "Mã số BHYT",
+            diagnosis: "Chẩn đoán",
             email: "Email",
-            address: "Address",
-            emergencyContact: "Liên hềEkhẩn cấp",
+            address: "Địa chỉ",
+            emergencyContact: "Liên hệ khẩn cấp",
             unknown: "--",
         }
         : {
@@ -1867,7 +1867,7 @@ export default function PatientDetailPage() {
             insuranceNumber: "Health insurance number",
             diagnosis: "Diagnosis",
             email: "Email",
-            address: "Dia chi",
+            address: "Address",
             emergencyContact: "Emergency contact",
             unknown: "--",
         }
@@ -1973,7 +1973,7 @@ export default function PatientDetailPage() {
                         getErrorMessage(
                             err,
                             language === "vi"
-                                ? "Không thềEcập nhật tiền sử y khoa."
+                                ? "Không thể cập nhật tiền sử y khoa."
                                 : "Failed to update medical history."
                         )
                     )
@@ -2594,7 +2594,7 @@ export default function PatientDetailPage() {
                                                             onClick={() => openRecordUploadDialog(vital.id)}
                                                         >
                                                             <Upload className="mr-2 h-4 w-4" />
-                                                            {language === "vi" ? "Tai tep y khoa" : "Upload medical files"}
+                                                            {language === "vi" ? "Tải tệp y khoa" : "Upload medical files"}
                                                         </Button>
                                                         {role === "doctor" && (
                                                             <>
@@ -2635,7 +2635,7 @@ export default function PatientDetailPage() {
                                                 {checkupNotes.treatmentPlan && (
                                                     <p className="mt-1 text-xs text-muted-foreground">
                                                         <span className="font-medium text-foreground">
-                                                            {language === "vi" ? "Kế hoạch điều trềE " : "Treatment plan: "}
+                                                            {language === "vi" ? "Kế hoạch điều trị: " : "Treatment plan: "}
                                                         </span>
                                                         {checkupNotes.treatmentPlan}
                                                     </p>
@@ -2655,7 +2655,7 @@ export default function PatientDetailPage() {
                                                 )}
                                                 <div className="mt-4 rounded-md border bg-muted/20 p-3">
                                                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                                        {language === "vi" ? "Ket qua can lam sang" : "Medical test results"}
+                                                        {language === "vi" ? "Kết quả cận lâm sàng" : "Medical test results"}
                                                     </p>
                                                     {recordsLoading && (
                                                         <p className="mt-2 text-xs text-muted-foreground">{uiText.recordsLoading}</p>
@@ -2663,7 +2663,7 @@ export default function PatientDetailPage() {
                                                     {!recordsLoading && !recordsError && group.records.length === 0 && (
                                                         <p className="mt-2 text-xs text-muted-foreground">
                                                             {language === "vi"
-                                                                ? "Chua co ket qua xet nghiem duoc lien ket voi lan kham nay."
+                                                                ? "Chưa có kết quả xét nghiệm được liên kết với lần khám này."
                                                                 : "No linked medical test results for this check-up yet."}
                                                         </p>
                                                     )}
@@ -2756,7 +2756,7 @@ export default function PatientDetailPage() {
                                     {!recordsLoading && !recordsError && unlinkedMedicalRecords.length > 0 && (
                                         <div className="rounded-lg border border-dashed p-3">
                                             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                                {language === "vi" ? "Ket qua chua lien ket" : "Unlinked medical test results"}
+                                                {language === "vi" ? "Kết quả chưa liên kết" : "Unlinked medical test results"}
                                             </p>
                                             <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
                                                 {unlinkedMedicalRecords.map((record) => (
@@ -2784,11 +2784,11 @@ export default function PatientDetailPage() {
                 <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
                         <CardTitle>
-                            {language === "vi" ? "HềEsơ điều trềE- Kết quả cận lâm sàng" : "Treatment Records - Medical Test Results"}
+                            {language === "vi" ? "Hồ sơ điều trị - Kết quả cận lâm sàng" : "Treatment Records - Medical Test Results"}
                         </CardTitle>
                         <p className="text-sm text-muted-foreground">
                             {language === "vi"
-                                ? "ChềEhiển thềEkết quả xét nghiệm và chẩn đoán hình ảnh (lab, X-ray, ECG, CT, MRI)."
+                                ? "Chỉ hiển thị kết quả xét nghiệm và chẩn đoán hình ảnh (lab, X-ray, ECG, CT, MRI)."
                                 : "Only test-result records are shown here (lab, X-ray, ECG, CT, MRI)."}
                         </p>
                     </div>
@@ -2800,7 +2800,7 @@ export default function PatientDetailPage() {
                             }}
                         >
                             <Upload className="mr-2 h-4 w-4" />
-                            {language === "vi" ? "Tai tep y khoa" : "Upload medical files"}
+                            {language === "vi" ? "Tải tệp y khoa" : "Upload medical files"}
                         </Button>
                         <div className="w-full sm:w-56">
                             <Label htmlFor="record-filter" className="sr-only">
@@ -2938,7 +2938,7 @@ export default function PatientDetailPage() {
             >
                 <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
-                        <DialogTitle>{language === "vi" ? "Tai tep y khoa" : "Upload medical files"}</DialogTitle>
+                        <DialogTitle>{language === "vi" ? "Tải tệp y khoa" : "Upload medical files"}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-4">
                         <p className="text-sm text-muted-foreground">
@@ -4159,7 +4159,7 @@ function buildPatientHistorySections(patient: Patient, language: DashboardLangua
             ),
         },
         {
-            title: isVi ? "DềEứng" : "Allergies",
+            title: isVi ? "Dị ứng" : "Allergies",
             items: toHistoryItems(nestedHistoryArray(medicalHistory, "allergies") || patient.allergies),
         },
         {
@@ -4202,7 +4202,7 @@ function buildPatientHistorySections(patient: Patient, language: DashboardLangua
             ),
         },
         {
-            title: isVi ? "Điều trềEtrước đây" : "Previous Treatments",
+            title: isVi ? "Điều trị trước đây" : "Previous Treatments",
             items: toHistoryItems(
                 nestedHistoryArray(treatmentHistory, "previous_treatments")
                 || nestedHistoryArray(nestedHistoryArray(familyHistory, "treatment_history"), "previous_treatments")
@@ -4210,7 +4210,7 @@ function buildPatientHistorySections(patient: Patient, language: DashboardLangua
             ),
         },
         {
-            title: isVi ? "Vật lý trềEliệu" : "Physiotherapy",
+            title: isVi ? "Vật lý trị liệu" : "Physiotherapy",
             items: toHistoryItems(
                 nestedHistoryArray(treatmentHistory, "physiotherapy")
                 || nestedHistoryArray(nestedHistoryArray(familyHistory, "treatment_history"), "physiotherapy")
@@ -4218,7 +4218,7 @@ function buildPatientHistorySections(patient: Patient, language: DashboardLangua
             ),
         },
         {
-            title: isVi ? "Điều trềEliên quan khác" : "Other Relevant Treatments",
+            title: isVi ? "Điều trị liên quan khác" : "Other Relevant Treatments",
             items: toHistoryItems(
                 nestedHistoryArray(treatmentHistory, "other_relevant_treatments")
                 || nestedHistoryArray(nestedHistoryArray(familyHistory, "treatment_history"), "other_relevant_treatments")
