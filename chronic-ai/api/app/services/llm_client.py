@@ -129,6 +129,7 @@ class LLMClient:
             images=images,
             num_predict=num_predict,
             stream=False,
+            include_system_role=True,
         )
         headers = self._openai_compatible_headers()
 
@@ -139,7 +140,27 @@ class LLMClient:
                     headers=headers,
                     json=payload,
                 )
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    error_text = self._extract_http_error(response)
+                    if response.status_code == 400 and self._is_role_alternation_error(error_text):
+                        logger.warning(
+                            "OpenAI-compatible endpoint rejected system role ordering; retrying without system role"
+                        )
+                        fallback_payload = self._build_openai_compatible_payload(
+                            model=model,
+                            prompt=prompt,
+                            system=system,
+                            images=images,
+                            num_predict=num_predict,
+                            stream=False,
+                            include_system_role=False,
+                        )
+                        response = await client.post(
+                            url,
+                            headers=headers,
+                            json=fallback_payload,
+                        )
+                    response.raise_for_status()
                 return self._extract_vertex_text(response.json())
         except httpx.ConnectError:
             raise RuntimeError(
@@ -467,17 +488,21 @@ class LLMClient:
         images: Optional[List[str]],
         num_predict: int,
         stream: bool,
+        include_system_role: bool = True,
     ) -> dict:
         messages: list[dict] = []
-        if system:
+        effective_prompt = prompt
+        if include_system_role and system:
             messages.append({
                 "role": "system",
                 "content": system,
             })
+        elif system:
+            effective_prompt = self._merge_system_into_user_prompt(system, prompt)
 
         user_content: Union[str, List[dict]]
         if images:
-            user_content = [{"type": "text", "text": prompt}]
+            user_content = [{"type": "text", "text": effective_prompt}]
             for image in images:
                 user_content.append({
                     "type": "image_url",
@@ -486,7 +511,7 @@ class LLMClient:
                     },
                 })
         else:
-            user_content = prompt
+            user_content = effective_prompt
 
         messages.append({
             "role": "user",
@@ -510,6 +535,16 @@ class LLMClient:
             "temperature": settings.openai_compatible_temperature,
             "stream": stream,
         }
+
+    @staticmethod
+    def _merge_system_into_user_prompt(system: Optional[str], prompt: str) -> str:
+        system_text = (system or "").strip()
+        if not system_text:
+            return prompt
+        user_text = (prompt or "").strip()
+        if not user_text:
+            return system_text
+        return f"{system_text}\n\nUser request:\n{user_text}"
 
     @staticmethod
     def _to_data_url(image_base64: str) -> str:
@@ -1074,6 +1109,11 @@ class LLMClient:
         except Exception:
             pass
         return (response.text or "No response")[:300]
+
+    @staticmethod
+    def _is_role_alternation_error(error_text: str) -> bool:
+        text = (error_text or "").strip().lower()
+        return bool(text) and "roles must alternate" in text
 
     def _is_model_missing_error(self, response: httpx.Response, model: str) -> bool:
         message = self._extract_error_message(response).lower()
