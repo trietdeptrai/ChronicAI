@@ -34,3 +34,6 @@ build/
 .idea/
 .vscode/
 .agent/
+.agents/
+.junie/
+skills-lock.json

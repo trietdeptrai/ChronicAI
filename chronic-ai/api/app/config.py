@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ModuleNotFoundError as e:  # pragma: no cover
@@ -18,6 +18,8 @@ class Settings(BaseSettings):
         # Resolve .env relative to api/ directory so runtime cwd does not matter.
         env_file=str(Path(__file__).resolve().parents[1] / ".env"),
         case_sensitive=False,
+        # Allow unrelated legacy env vars in .env without crashing startup.
+        extra="ignore",
     )
 
     # Supabase Configuration - defaults for testing
@@ -89,8 +91,8 @@ class Settings(BaseSettings):
     # - embedding_provider=hash: local deterministic vectors (no external service needed)
     # - embedding_provider=ollama: use Ollama embedding model from embedding_model
     # - embedding_provider=gemini: use Vertex Gemini embedding model from embedding_model
-    embedding_model: str = "nomic-embed-text"
-    embedding_provider: str = "hash"  # hash | ollama | gemini
+    embedding_model: str = "gemini-embedding-001"
+    embedding_provider: str = "gemini"  # hash | ollama | gemini
     embedding_dimensions: int = 768
     embedding_task_type_document: str = "RETRIEVAL_DOCUMENT"
     embedding_task_type_query: str = "RETRIEVAL_QUERY"
@@ -112,3 +114,4 @@ class Settings(BaseSettings):
     audit_retention_entries: int = 10000
 
 settings = Settings()
+

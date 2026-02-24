@@ -150,6 +150,13 @@ How to decide which model to deploy on Vertex:
   - copy the model name/identifier shown for that deployment
 - do not leave these fields empty; backend health checks require them
 
+Embedding configuration for RAG (default path in this repo):
+- set `EMBEDDING_PROVIDER=gemini`
+- set `EMBEDDING_MODEL=gemini-embedding-001`
+- keep task type defaults unless you intentionally change retrieval behavior:
+  - `EMBEDDING_TASK_TYPE_DOCUMENT=RETRIEVAL_DOCUMENT`
+  - `EMBEDDING_TASK_TYPE_QUERY=RETRIEVAL_QUERY`
+
 5. Set ECG/MedSigLIP access in `api/.env`:
 - `HF_TOKEN` (required for private/auth-gated access)
 - optionally keep defaults unless you changed artifacts:
@@ -180,6 +187,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
   - `VERTEX_AI_MODEL`
   - `MEDICAL_MODEL`
   - `VERIFICATION_MODEL`
+  - `EMBEDDING_PROVIDER=gemini`
+  - `EMBEDDING_MODEL=gemini-embedding-001`
 - `frontend/.env.local` has:
   - `NEXT_PUBLIC_API_URL`
 
@@ -233,6 +242,7 @@ Open:
 - Vertex calls should not return auth/permission errors
 - Supabase calls should not return key/schema errors
 - ECG endpoint path should resolve configured checkpoint file
+- startup logs should show `Embedding provider: gemini` and `Embedding model: gemini-embedding-001` for default RAG embedding
 
 Recommended quick checks from terminal:
 ```bash

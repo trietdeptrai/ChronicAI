@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 # Configure logging to see translation debug messages
 logging.basicConfig(
@@ -22,6 +22,8 @@ async def lifespan(app: FastAPI):
     logger.info("=" * 50)
     logger.info("SERVER STARTING")
     logger.info("=" * 50)
+    logger.info("Embedding provider: %s", settings.embedding_provider)
+    logger.info("Embedding model: %s", settings.embedding_model)
 
     yield  # Server runs here
 
@@ -105,3 +107,4 @@ if __name__ == "__main__":
         port=settings.fastapi_port,
         reload=True
     )
+
