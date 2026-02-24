@@ -57,18 +57,26 @@ class Settings(BaseSettings):
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: object) -> object:
-        """Accept a JSON array string or a plain comma-separated string."""
+    def parse_cors_origins(cls, v: object) -> List[str]:
+        """Accept a JSON array string or a plain comma-separated string, and strip trailing slashes."""
         if isinstance(v, str):
             v = v.strip()
             if not v:
                 return []
             try:
-                return json.loads(v)
+                origins = json.loads(v)
+                if isinstance(origins, str):
+                    origins = [origins]
             except json.JSONDecodeError:
                 # Treat as comma-separated list
-                return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
+                origins = [origin.strip() for origin in v.split(",") if origin.strip()]
+        elif isinstance(v, list):
+            origins = v
+        else:
+            return []
+
+        # Ensure all origins are strings and strip trailing slashes
+        return [str(o).rstrip("/") for o in origins if o]
 
     # Model Configuration
     medical_model: str = "alibayram/medgemma"
