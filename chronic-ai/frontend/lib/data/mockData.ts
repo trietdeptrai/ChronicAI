@@ -238,7 +238,7 @@ export const mockRecords: MedicalRecord[] = [
     date: '2026-01-22',
     type: 'imaging',
     title: 'CT ngực - Đánh giá sau hóa trị',
-    summary: 'Khối u phổi giảm kích thước 40% so với trư��c. Không có di căn mới.',
+    summary: 'Khối u phổi giảm kích thước 40% so với trước. Không có di căn mới.',
     details: {
       findings: [
         'Khối u thùy trên phổi phải: 3.2cm (giảm từ 5.5cm)',
