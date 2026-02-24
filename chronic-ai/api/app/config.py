@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     patient_photo_signed_url_ttl_seconds: int = 3600
 
     # LLM Provider Configuration
-    llm_provider: str = "ollama"  # vertex | ollama
+    llm_provider: str = "ollama"  # vertex | ollama | openai_compatible
 
     # Vertex AI OpenAI-compatible endpoint configuration
     vertex_ai_host: str = ""
@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     vertex_ai_gcloud_command: str = "gcloud"
     vertex_ai_token_ttl_seconds: int = 3300
     vertex_ai_temperature: float = 0.2
+
+    # OpenAI-compatible endpoint configuration (for providers like Featherless)
+    openai_compatible_base_url: str = ""
+    openai_compatible_chat_completions_path: str = "/chat/completions"
+    openai_compatible_api_key: str = ""
+    openai_compatible_model: str = ""
+    openai_compatible_temperature: float = 0.2
 
     # Legacy Ollama Configuration (optional fallback)
     ollama_host: str = "http://localhost:11434"
@@ -80,6 +87,9 @@ class Settings(BaseSettings):
 
     # Model Configuration
     medical_model: str = "alibayram/medgemma"
+    # Optional dedicated model for upload-file AI analysis (especially image uploads).
+    # If empty, upload analysis falls back to medical_model.
+    upload_analysis_model: str = ""
     # ECG Classifier Remote Endpoint
     ecg_classifier_endpoint_url: str = ""  # Any HTTP endpoint that accepts {"image_base64": "..."}
     ecg_classifier_endpoint_timeout: int = 60
@@ -113,12 +123,16 @@ class Settings(BaseSettings):
     # Embedding settings:
     # - embedding_provider=hash: local deterministic vectors (no external service needed)
     # - embedding_provider=ollama: use Ollama embedding model from embedding_model
-    # - embedding_provider=gemini: use Vertex Gemini embedding model from embedding_model
+    # - embedding_provider=gemini: use Gemini embeddings API key route
+    #   (falls back to Vertex Gemini route when GEMINI_API_KEY is not set)
     embedding_model: str = "nomic-embed-text"
     embedding_provider: str = "hash"  # hash | ollama | gemini
     embedding_dimensions: int = 768
     embedding_task_type_document: str = "RETRIEVAL_DOCUMENT"
     embedding_task_type_query: str = "RETRIEVAL_QUERY"
+    gemini_api_key: str = ""
+    gemini_embedding_api_base: str = "https://generativelanguage.googleapis.com"
+    gemini_embedding_api_version: str = "v1beta"
 
     # Resilience Configuration
     llm_retry_max_attempts: int = 3

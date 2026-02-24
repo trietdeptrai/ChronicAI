@@ -3,8 +3,9 @@ LLM client wrapper.
 
 Supports:
 - Vertex AI OpenAI-compatible chat completions (default)
+- OpenAI-compatible chat completions (e.g. Featherless)
 - Legacy Ollama generation fallback
-- Embeddings via local hash vectors (default), Ollama, or Gemini
+- Embeddings via local hash vectors (default), Ollama, Gemini API, or Vertex Gemini
 """
 import asyncio
 import hashlib
@@ -29,7 +30,7 @@ class LLMClient:
     """
     Backward-compatible client interface used across the codebase.
 
-    Despite the class name, this client now routes generation to Vertex AI by default.
+    Despite the class name, this client routes generation by configured provider.
     """
 
     def __init__(self, host: str = None):
@@ -77,7 +78,24 @@ class LLMClient:
                 num_predict=num_predict,
             )
 
-        # Vertex provider.
+        if self._provider in {"openai_compatible", "openai", "featherless"}:
+            if stream:
+                return self._stream_openai_compatible_response(
+                    model=model,
+                    prompt=prompt,
+                    system=system,
+                    images=images,
+                    num_predict=num_predict,
+                )
+            return await self._generate_openai_compatible(
+                model=model,
+                prompt=prompt,
+                system=system,
+                images=images,
+                num_predict=num_predict,
+            )
+
+        # Vertex provider (default).
         if stream:
             return self._stream_vertex_response(
                 model=model,
@@ -94,6 +112,52 @@ class LLMClient:
             images=images,
             num_predict=num_predict,
         )
+
+    async def _generate_openai_compatible(
+        self,
+        model: str,
+        prompt: str,
+        system: Optional[str] = None,
+        images: Optional[List[str]] = None,
+        num_predict: int = 2048,
+    ) -> str:
+        url = self._openai_compatible_chat_completions_url()
+        payload = self._build_openai_compatible_payload(
+            model=model,
+            prompt=prompt,
+            system=system,
+            images=images,
+            num_predict=num_predict,
+            stream=False,
+        )
+        headers = self._openai_compatible_headers()
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                return self._extract_vertex_text(response.json())
+        except httpx.ConnectError:
+            raise RuntimeError(
+                f"Cannot connect to OpenAI-compatible endpoint at {self._host_from_url(url)}"
+            )
+        except httpx.TimeoutException:
+            raise RuntimeError("OpenAI-compatible request timed out")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"OpenAI-compatible error ({e.response.status_code}): "
+                f"{self._extract_http_error(e.response)}"
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(
+                f"OpenAI-compatible generation failed: {type(e).__name__}: {str(e) or 'Unknown error'}"
+            )
 
     async def _generate_ollama(
         self,
@@ -259,6 +323,30 @@ class LLMClient:
         if text:
             yield text
 
+    async def _stream_openai_compatible_response(
+        self,
+        model: str,
+        prompt: str,
+        system: Optional[str],
+        images: Optional[List[str]],
+        num_predict: int,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming compatibility for existing call sites.
+
+        Current implementation emits one final chunk. This preserves the interface
+        used by the rest of the codebase without introducing SSE complexity.
+        """
+        text = await self._generate_openai_compatible(
+            model=model,
+            prompt=prompt,
+            system=system,
+            images=images,
+            num_predict=num_predict,
+        )
+        if text:
+            yield text
+
     def _default_vertex_service_host(self) -> str:
         location = (settings.vertex_ai_location or "us-central1").strip() or "us-central1"
         return f"https://{location}-aiplatform.googleapis.com"
@@ -310,6 +398,18 @@ class LLMClient:
             f"{host}/v1/projects/{project}/locations/{location}/endpoints/{endpoint_id}/chat/completions"
         )
 
+    def _openai_compatible_chat_completions_url(self) -> str:
+        raw_base = (settings.openai_compatible_base_url or "").strip()
+        if not raw_base:
+            raise RuntimeError(
+                "OpenAI-compatible route requires OPENAI_COMPATIBLE_BASE_URL"
+            )
+        base = self._normalize_vertex_host(raw_base)
+        path = (settings.openai_compatible_chat_completions_path or "").strip() or "/chat/completions"
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{base}{path}"
+
     def _build_vertex_payload(
         self,
         *,
@@ -358,6 +458,59 @@ class LLMClient:
         }
         return payload
 
+    def _build_openai_compatible_payload(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        system: Optional[str],
+        images: Optional[List[str]],
+        num_predict: int,
+        stream: bool,
+    ) -> dict:
+        messages: list[dict] = []
+        if system:
+            messages.append({
+                "role": "system",
+                "content": system,
+            })
+
+        user_content: Union[str, List[dict]]
+        if images:
+            user_content = [{"type": "text", "text": prompt}]
+            for image in images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": self._to_data_url(image),
+                    },
+                })
+        else:
+            user_content = prompt
+
+        messages.append({
+            "role": "user",
+            "content": user_content,
+        })
+
+        selected_model = (
+            (model or "").strip()
+            or (settings.openai_compatible_model or "").strip()
+            or settings.medical_model
+        )
+        if not selected_model:
+            raise RuntimeError(
+                "OpenAI-compatible route requires OPENAI_COMPATIBLE_MODEL or MEDICAL_MODEL"
+            )
+
+        return {
+            "model": selected_model,
+            "messages": messages,
+            "max_tokens": num_predict,
+            "temperature": settings.openai_compatible_temperature,
+            "stream": stream,
+        }
+
     @staticmethod
     def _to_data_url(image_base64: str) -> str:
         if image_base64.startswith("data:"):
@@ -405,6 +558,13 @@ class LLMClient:
         project = (settings.vertex_ai_project_id or "").strip()
         if project:
             headers["x-goog-user-project"] = project
+        return headers
+
+    def _openai_compatible_headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        api_key = (settings.openai_compatible_api_key or "").strip()
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         return headers
 
     async def _get_vertex_access_token(self) -> str:
@@ -530,7 +690,13 @@ class LLMClient:
                     "Embedding provider is gemini; defaulting EMBEDDING_MODEL to %s",
                     gemini_model,
                 )
-            return await self._embed_gemini(text, gemini_model, task_type=task_type)
+            gemini_api_key = (settings.gemini_api_key or "").strip()
+            if gemini_api_key:
+                return await self._embed_gemini_api(text, gemini_model, task_type=task_type)
+            logger.info(
+                "GEMINI_API_KEY not set; falling back to Vertex Gemini embedding route."
+            )
+            return await self._embed_gemini_vertex(text, gemini_model, task_type=task_type)
 
         raise RuntimeError(
             f"Unsupported embedding provider '{self._embedding_provider}'. "
@@ -582,7 +748,50 @@ class LLMClient:
         except Exception as e:
             raise RuntimeError(f"Ollama embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
 
-    async def _embed_gemini(
+    async def _embed_gemini_api(
+        self,
+        text: str,
+        model: str,
+        *,
+        task_type: Optional[str] = None,
+    ) -> List[float]:
+        url = self._gemini_embedding_url(model)
+        headers = self._gemini_headers()
+        payload = self._build_gemini_embedding_payload(text, task_type=task_type)
+        requested_dims = max(int(settings.embedding_dimensions), 0)
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                embedding = self._extract_vertex_embedding(response.json())
+                if requested_dims and len(embedding) != requested_dims:
+                    logger.warning(
+                        "Gemini embedding dimension mismatch: expected=%s actual=%s model=%s",
+                        requested_dims,
+                        len(embedding),
+                        model,
+                    )
+                return embedding
+        except httpx.ConnectError:
+            raise RuntimeError("Cannot connect to Gemini embeddings endpoint")
+        except httpx.TimeoutException:
+            raise RuntimeError("Gemini embedding request timed out")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"Gemini embedding error ({e.response.status_code}): "
+                f"{self._extract_http_error(e.response)}"
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"Gemini embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
+    async def _embed_gemini_vertex(
         self,
         text: str,
         model: str,
@@ -625,6 +834,52 @@ class LLMClient:
             raise
         except Exception as e:
             raise RuntimeError(f"Vertex Gemini embedding failed: {type(e).__name__}: {str(e) or 'Unknown error'}")
+
+    def _gemini_embedding_url(self, model: str) -> str:
+        model_ref = (model or "").strip()
+        if not model_ref:
+            raise RuntimeError(
+                "Embedding model is required. Set EMBEDDING_MODEL (for example: gemini-embedding-001)."
+            )
+        clean_model = model_ref
+        if clean_model.startswith("models/"):
+            clean_model = clean_model.split("/", 1)[1]
+
+        base = self._normalize_vertex_host(settings.gemini_embedding_api_base or "")
+        version = (settings.gemini_embedding_api_version or "v1beta").strip().strip("/")
+        return f"{base}/{version}/models/{clean_model}:embedContent"
+
+    def _build_gemini_embedding_payload(
+        self,
+        text: str,
+        *,
+        task_type: Optional[str] = None,
+    ) -> dict:
+        payload: dict = {
+            "content": {
+                "parts": [{"text": text or ""}],
+            },
+            "taskType": (
+                task_type
+                or settings.embedding_task_type_document
+                or "RETRIEVAL_DOCUMENT"
+            ),
+        }
+
+        requested_dims = max(int(settings.embedding_dimensions), 0)
+        if requested_dims:
+            payload["outputDimensionality"] = requested_dims
+
+        return payload
+
+    def _gemini_headers(self) -> dict:
+        api_key = (settings.gemini_api_key or "").strip()
+        if not api_key:
+            raise RuntimeError("Gemini embedding route requires GEMINI_API_KEY")
+        return {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        }
 
     def _vertex_embedding_url(self, model: str) -> str:
         project = (settings.vertex_ai_project_id or "").strip()
@@ -866,14 +1121,18 @@ class LLMClient:
 
     async def list_models(self) -> List[dict]:
         """List available models."""
-        if self._provider != "ollama":
-            model_name = settings.vertex_ai_model or settings.medical_model
+        if self._provider == "ollama":
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(f"{self.host}/api/tags")
+                response.raise_for_status()
+                return response.json().get("models", [])
+
+        if self._provider in {"openai_compatible", "openai", "featherless"}:
+            model_name = settings.openai_compatible_model or settings.medical_model
             return [{"name": model_name}] if model_name else []
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(f"{self.host}/api/tags")
-            response.raise_for_status()
-            return response.json().get("models", [])
+        model_name = settings.vertex_ai_model or settings.medical_model
+        return [{"name": model_name}] if model_name else []
 
     async def pull_model(self, model: str) -> bool:
         """
@@ -924,8 +1183,41 @@ class LLMClient:
 
     async def check_model_available(self, model: str) -> bool:
         """Check if a model is available."""
-        if self._embedding_provider == "hash" and model == settings.embedding_model:
-            return True
+        if model == settings.embedding_model:
+            if self._embedding_provider == "hash":
+                return True
+            if self._embedding_provider == "gemini":
+                if (settings.gemini_api_key or "").strip():
+                    return bool((settings.embedding_model or "").strip())
+                project = bool((settings.vertex_ai_project_id or "").strip())
+                location = bool((settings.vertex_ai_location or "").strip())
+                return project and location and bool((settings.embedding_model or "").strip())
+            if self._embedding_provider == "ollama":
+                try:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                        response = await client.get(f"{self.host}/api/tags")
+                        response.raise_for_status()
+                        models = response.json().get("models", [])
+                        model_names = [m.get("name", "") for m in models]
+                        return any(
+                            name == model or name.startswith(f"{model}:")
+                            for name in model_names
+                        )
+                except Exception:
+                    return False
+
+        if self._provider in {"openai_compatible", "openai", "featherless"}:
+            requested_model = (model or "").strip()
+            configured_model = (settings.openai_compatible_model or settings.medical_model or "").strip()
+            effective_model = requested_model or configured_model
+            base_url = bool((settings.openai_compatible_base_url or "").strip())
+            if requested_model and configured_model and requested_model != configured_model:
+                logger.warning(
+                    "Requested model '%s' differs from configured OpenAI-compatible model '%s'.",
+                    requested_model,
+                    configured_model,
+                )
+            return base_url and bool(effective_model)
 
         if self._provider != "ollama":
             project = bool((settings.vertex_ai_project_id or "").strip())
@@ -950,11 +1242,20 @@ class LLMClient:
 
     async def health_check(self) -> bool:
         """Check whether configured LLM provider is reachable."""
-        if self._provider != "ollama":
-            if not await self.check_model_available(settings.medical_model):
-                return False
+        if not await self.check_model_available(settings.medical_model):
+            return False
+
+        if self._provider == "ollama":
             try:
-                _ = await self._generate_vertex(
+                async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                    response = await client.get(f"{self.host}/api/tags")
+                    return response.status_code == 200
+            except Exception:
+                return False
+
+        try:
+            if self._provider in {"openai_compatible", "openai", "featherless"}:
+                _ = await self._generate_openai_compatible(
                     model=settings.medical_model,
                     prompt="Reply with: ok",
                     system="You are a health check assistant. Respond with exactly 'ok'.",
@@ -962,15 +1263,17 @@ class LLMClient:
                     num_predict=8,
                 )
                 return True
-            except Exception as e:
-                logger.warning("Vertex health check failed: %s", e)
-                return False
 
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
-                response = await client.get(f"{self.host}/api/tags")
-                return response.status_code == 200
-        except Exception:
+            _ = await self._generate_vertex(
+                model=settings.medical_model,
+                prompt="Reply with: ok",
+                system="You are a health check assistant. Respond with exactly 'ok'.",
+                images=None,
+                num_predict=8,
+            )
+            return True
+        except Exception as e:
+            logger.warning("%s health check failed: %s", self._provider, e)
             return False
 
 
