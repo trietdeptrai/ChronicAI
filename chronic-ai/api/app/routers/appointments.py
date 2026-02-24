@@ -9,9 +9,8 @@ from typing import Any, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
-
 from app.db.database import get_supabase
+from app.models.schemas import AppointmentRequestCreate, AppointmentDecisionRequest
 
 router = APIRouter(prefix="/appointments", tags=["Appointments"])
 logger = logging.getLogger(__name__)
@@ -165,32 +164,6 @@ def _refresh_patient_next_appointment(supabase: object, patient_id: UUID) -> Non
     ).execute()
 
 
-class AppointmentRequestCreate(BaseModel):
-    patient_id: UUID
-    doctor_id: Optional[UUID] = None
-    start_at: datetime
-    duration_minutes: int = Field(default=30, ge=10, le=240)
-    appointment_type: Literal[
-        "follow_up",
-        "routine_check",
-        "new_symptom",
-        "medication_review",
-        "lab_result_review",
-        "other",
-    ] = "follow_up"
-    chief_complaint: str = Field(..., min_length=3, max_length=2000)
-    symptoms: Optional[str] = Field(None, max_length=4000)
-    notes: Optional[str] = Field(None, max_length=4000)
-    contact_phone: Optional[str] = Field(None, max_length=20)
-    preferred_contact_method: Literal["phone", "sms", "app"] = "phone"
-    is_follow_up: Optional[bool] = None
-
-
-class AppointmentDecisionRequest(BaseModel):
-    doctor_id: UUID
-    decision: Literal["accepted", "rejected"]
-    doctor_response_note: Optional[str] = Field(None, max_length=4000)
-    rejection_reason: Optional[str] = Field(None, max_length=4000)
 
 
 @router.post("/request", status_code=status.HTTP_201_CREATED)

@@ -4,10 +4,19 @@ Chat Router - AI-powered medical chat endpoints.
 import logging
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Optional
 from uuid import UUID
 import json
+
+from app.models.schemas import (
+    ChatRequest,
+    ChatRequestV2,
+    ChatResponse,
+    CreateConversationRequest,
+    DoctorChatRequest,
+    DoctorChatRequestV2,
+    HITLResumeRequest,
+)
 
 from app.services.llm import process_medical_query
 from app.services.orchestrator import process_doctor_query
@@ -17,99 +26,12 @@ from app.services.patient_graph import process_patient_chat_graph
 from app.services.output_formatter import format_as_plain_text
 from app.services import chat_history_service
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
-class DoctorChatRequest(BaseModel):
-    """Doctor orchestrator chat request - no patient_id required."""
-    message: str
-    image_path: Optional[str] = None
-
-
-class DoctorChatRequestV2(BaseModel):
-    """
-    Enhanced doctor chat request with LangGraph orchestration.
-    
-    Supports human-in-the-loop (HITL) and formatted output.
-    """
-    message: str
-    image_path: Optional[str] = None
-    enable_hitl: bool = Field(
-        default=True,
-        description="Legacy global HITL toggle (fallback default for feature-specific toggles)"
-    )
-    enable_llm_hitl: Optional[bool] = Field(
-        default=None,
-        description="Enable LLM-based HITL (input verification + safety review)"
-    )
-    enable_patient_confirmation_hitl: Optional[bool] = Field(
-        default=None,
-        description="Enable non-LLM HITL for ambiguous patient matching confirmation"
-    )
-    output_format: Literal["plain", "structured", "markdown"] = Field(
-        default="structured",
-        description="Output format: plain text, structured JSON, or markdown"
-    )
-    thread_id: Optional[str] = Field(
-        default=None,
-        description="Thread ID for conversation state persistence"
-    )
-    conversation_id: Optional[str] = Field(
-        default=None,
-        description="Conversation ID for chat history persistence"
-    )
-    doctor_id: Optional[str] = Field(
-        default=None,
-        description="Doctor UUID for creating new conversations"
-    )
-
-
-class HITLResumeRequest(BaseModel):
-    """Request to resume HITL-paused conversation."""
-    thread_id: str
-    response: dict = Field(
-        ...,
-        description="Human response to HITL request (e.g., {'action': 'approve'})"
-    )
-
-
-class ChatRequest(BaseModel):
-    """Chat request model."""
-    patient_id: str
-    message: str
-    image_path: Optional[str] = None
-
-
-class ChatRequestV2(BaseModel):
-    """
-    Enhanced patient chat request with LangGraph.
-    """
-    patient_id: str
-    message: str
-    image_path: Optional[str] = None
-    output_format: Literal["plain", "structured", "markdown"] = Field(
-        default="structured",
-        description="Output format: plain text, structured JSON, or markdown"
-    )
-    conversation_id: Optional[str] = Field(
-        default=None,
-        description="Conversation ID for chat history persistence"
-    )
-
-
-class CreateConversationRequest(BaseModel):
-    """Request to create a new chat conversation."""
-    conversation_type: Literal["doctor", "patient"]
-    user_id: str
-    title: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    """Non-streaming chat response."""
-    response: str
-    patient_id: str
 
 
 @router.post("/", response_model=ChatResponse)

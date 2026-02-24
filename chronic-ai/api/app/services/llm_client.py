@@ -365,6 +365,88 @@ class LLMClient:
         return f"data:image/jpeg;base64,{image_base64}"
 
     @staticmethod
+    def _strip_thinking_tokens(text: str) -> str:
+        """
+        Remove chain-of-thought / scratchpad tokens from model output.
+
+        MedGemma 27B and similar reasoning models emit internal thinking
+        content that should NOT be shown to end users. Common patterns:
+
+        1. XML-style:  <think>...</think> (may be multi-line)
+        2. Inline scratchpad that starts with the literal word "thought" and
+           ends with a marker like "Strategizing complete." — the real answer
+           lives after the marker.
+        3. Standalone scratchpad sections (Mental Sandbox Simulation, etc.)
+           that appear anywhere in the text.
+
+        This method strips all such content and returns only the final answer.
+        """
+        if not text:
+            return text
+
+        # Pattern 1: <think>...</think> blocks (non-greedy, handles multi-line).
+        text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+
+        # Pattern 2: Full scratchpad block starting with "thought".
+        # The scratchpad ends at the LAST occurrence of known end-of-thinking
+        # markers. Everything after the marker is the real answer.
+        if re.match(r"^thought", text, flags=re.IGNORECASE):
+            # End-of-thinking markers (ordered from most to least specific).
+            end_markers = [
+                r"Strategizing complete\.?\s*",
+                r"Key Learnings:.*?\n\n",  # greedy to end of block
+                r"Mental Sandbox Simulation:.*?\n\n",
+            ]
+            stripped = None
+            for marker in end_markers:
+                # Find the LAST match so we skip the entire scratchpad.
+                matches = list(re.finditer(marker, text, flags=re.IGNORECASE | re.DOTALL))
+                if matches:
+                    end_pos = matches[-1].end()
+                    candidate = text[end_pos:].lstrip()
+                    if candidate:
+                        stripped = candidate
+                        break
+
+            if stripped:
+                text = stripped
+            else:
+                # Fallback: strip everything up to the first blank line.
+                first_break = re.search(r"\n\n", text)
+                if first_break:
+                    text = text[first_break.end():].lstrip()
+
+        # Pattern 3: Remove any remaining standalone scratchpad sections
+        # that might appear after an already-partial strip or in other positions.
+        text = re.sub(
+            r"Mental Sandbox Simulation:[\s\S]*?(?=\n\n|$)",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"Key Learnings:[\s\S]*?(?=\n\n|$)",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(
+            r"Strategizing complete\.?\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        # Remove "Constraint Checklist & Confidence Score" blocks
+        text = re.sub(
+            r"\*?\*?Constraint Checklist[\s\S]*?(?=\n\n|$)",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        return text.strip()
+
+    @staticmethod
     def _extract_vertex_text(payload: dict) -> str:
         if not isinstance(payload, dict):
             raise RuntimeError("Vertex AI response is not a JSON object")
@@ -378,7 +460,7 @@ class LLMClient:
                 if isinstance(message, dict):
                     content = message.get("content")
                     if isinstance(content, str):
-                        return content
+                        return LLMClient._strip_thinking_tokens(content)
                     if isinstance(content, list):
                         parts: list[str] = []
                         for item in content:
@@ -387,12 +469,12 @@ class LLMClient:
                                 if text:
                                     parts.append(str(text))
                         if parts:
-                            return "".join(parts)
+                            return LLMClient._strip_thinking_tokens("".join(parts))
 
         # Fallback for non-standard response wrappers.
         output_text = payload.get("output_text")
         if isinstance(output_text, str):
-            return output_text
+            return LLMClient._strip_thinking_tokens(output_text)
 
         raise RuntimeError("Vertex AI response did not include completion text")
 

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
         # Resolve .env relative to api/ directory so runtime cwd does not matter.
         env_file=str(Path(__file__).resolve().parents[1] / ".env"),
         case_sensitive=False,
+        extra="ignore",
     )
 
     # Supabase Configuration - defaults for testing
