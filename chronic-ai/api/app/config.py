@@ -11,6 +11,8 @@ except ModuleNotFoundError as e:  # pragma: no cover
         "  python3 -m uvicorn app.main:app --reload\n"
     ) from e
 from typing import List
+import json
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -52,6 +54,21 @@ class Settings(BaseSettings):
     fastapi_host: str = "0.0.0.0"
     fastapi_port: int = 8000
     cors_origins: List[str] = ["http://localhost:3000"]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> object:
+        """Accept a JSON array string or a plain comma-separated string."""
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # Treat as comma-separated list
+                return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
 
     # Model Configuration
     medical_model: str = "alibayram/medgemma"
