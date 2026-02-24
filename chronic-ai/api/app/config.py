@@ -12,7 +12,7 @@ except ModuleNotFoundError as e:  # pragma: no cover
     ) from e
 from typing import List, Union
 import json
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -39,8 +39,18 @@ class Settings(BaseSettings):
     vertex_ai_endpoint_id: str = ""
     vertex_ai_model: str = ""
     vertex_ai_chat_completions_path: str = ""
+    # Vertex auth mode:
+    # - auto (default): ADC/service-account first, then gcloud fallback
+    # - adc: ADC/service-account only
+    # - gcloud: gcloud CLI only (local/dev fallback)
+    vertex_ai_auth_method: str = "auto"
+    # Optional inline service account JSON (plain or base64) for environments
+    # where mounting credential files is not convenient (e.g. Render).
+    vertex_ai_service_account_json: str = ""
+    vertex_ai_service_account_json_base64: str = ""
     vertex_ai_gcloud_command: str = "gcloud"
     vertex_ai_token_ttl_seconds: int = 3300
+    vertex_ai_token_scopes: str = "https://www.googleapis.com/auth/cloud-platform"
     vertex_ai_temperature: float = 0.2
 
     # OpenAI-compatible endpoint configuration (for providers like Featherless)
@@ -49,6 +59,12 @@ class Settings(BaseSettings):
     openai_compatible_api_key: str = ""
     openai_compatible_model: str = ""
     openai_compatible_temperature: float = 0.2
+    # Request timeout controls for OpenAI-compatible providers.
+    # Some gateways time out around 60s; keep total timeout close to that.
+    openai_compatible_timeout_seconds: float = 70.0
+    openai_compatible_connect_timeout_seconds: float = 15.0
+    # If a long response fails (timeout/5xx), retry once with smaller max_tokens.
+    openai_compatible_fallback_max_tokens: int = 700
 
     # Legacy Ollama Configuration (optional fallback)
     ollama_host: str = "http://localhost:11434"
@@ -59,7 +75,11 @@ class Settings(BaseSettings):
 
     # Application Configuration
     fastapi_host: str = "0.0.0.0"
-    fastapi_port: int = 8000
+    # Render injects PORT, while local dev usually uses FASTAPI_PORT.
+    fastapi_port: int = Field(
+        default=8000,
+        validation_alias=AliasChoices("FASTAPI_PORT", "PORT"),
+    )
     cors_origins: Union[str, List[str]] = ["http://localhost:3000"]
 
     @field_validator("cors_origins", mode="before")

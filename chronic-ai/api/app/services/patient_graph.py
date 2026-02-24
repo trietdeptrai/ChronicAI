@@ -62,8 +62,8 @@ _db_breaker = get_circuit_breaker("database_patient", failure_threshold=5, recov
 
 # Retry configuration for LLM calls
 LLM_RETRY_CONFIG = RetryConfig(
-    max_attempts=3,
-    base_delay=1.0,
+    max_attempts=max(int(settings.llm_retry_max_attempts), 1),
+    base_delay=max(float(settings.llm_retry_base_delay), 0.0),
     max_delay=10.0,
     retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
 )

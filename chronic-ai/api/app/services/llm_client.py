@@ -8,6 +8,7 @@ Supports:
 - Embeddings via local hash vectors (default), Ollama, Gemini API, or Vertex Gemini
 """
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -122,56 +123,86 @@ class LLMClient:
         num_predict: int = 2048,
     ) -> str:
         url = self._openai_compatible_chat_completions_url()
-        payload = self._build_openai_compatible_payload(
-            model=model,
-            prompt=prompt,
-            system=system,
-            images=images,
-            num_predict=num_predict,
-            stream=False,
-            include_system_role=True,
-        )
         headers = self._openai_compatible_headers()
+        token_candidates = self._openai_compatible_token_candidates(num_predict)
+        fallback_mode = len(token_candidates) > 1
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                )
-                if response.status_code >= 400:
-                    error_text = self._extract_http_error(response)
-                    if response.status_code == 400 and self._is_role_alternation_error(error_text):
-                        logger.warning(
-                            "OpenAI-compatible endpoint rejected system role ordering; retrying without system role"
-                        )
-                        fallback_payload = self._build_openai_compatible_payload(
+            async with httpx.AsyncClient(timeout=self._openai_compatible_timeout()) as client:
+                for idx, max_tokens in enumerate(token_candidates):
+                    try:
+                        payload = self._build_openai_compatible_payload(
                             model=model,
                             prompt=prompt,
                             system=system,
                             images=images,
-                            num_predict=num_predict,
+                            num_predict=max_tokens,
                             stream=False,
-                            include_system_role=False,
+                            include_system_role=True,
                         )
                         response = await client.post(
                             url,
                             headers=headers,
-                            json=fallback_payload,
+                            json=payload,
                         )
-                    response.raise_for_status()
-                return self._extract_vertex_text(response.json())
+                        if response.status_code >= 400:
+                            error_text = self._extract_http_error(response)
+                            if response.status_code == 400 and self._is_role_alternation_error(error_text):
+                                logger.warning(
+                                    "OpenAI-compatible endpoint rejected system role ordering; retrying without system role"
+                                )
+                                fallback_payload = self._build_openai_compatible_payload(
+                                    model=model,
+                                    prompt=prompt,
+                                    system=system,
+                                    images=images,
+                                    num_predict=max_tokens,
+                                    stream=False,
+                                    include_system_role=False,
+                                )
+                                response = await client.post(
+                                    url,
+                                    headers=headers,
+                                    json=fallback_payload,
+                                )
+                            response.raise_for_status()
+                        return self._extract_vertex_text(response.json())
+                    except (httpx.TimeoutException, httpx.RemoteProtocolError) as e:
+                        if fallback_mode and idx + 1 < len(token_candidates):
+                            logger.warning(
+                                "OpenAI-compatible call failed with %s at max_tokens=%d; retrying with max_tokens=%d",
+                                type(e).__name__,
+                                max_tokens,
+                                token_candidates[idx + 1],
+                            )
+                            continue
+                        if isinstance(e, httpx.TimeoutException):
+                            raise RuntimeError("OpenAI-compatible request timed out")
+                        raise RuntimeError(
+                            f"OpenAI-compatible generation failed: {type(e).__name__}: {str(e) or 'Unknown error'}"
+                        )
+                    except httpx.HTTPStatusError as e:
+                        status_code = e.response.status_code
+                        if (
+                            fallback_mode
+                            and idx + 1 < len(token_candidates)
+                            and self._is_retryable_openai_status(status_code)
+                        ):
+                            logger.warning(
+                                "OpenAI-compatible call returned %d at max_tokens=%d; retrying with max_tokens=%d",
+                                status_code,
+                                max_tokens,
+                                token_candidates[idx + 1],
+                            )
+                            continue
+                        raise RuntimeError(
+                            f"OpenAI-compatible error ({status_code}): "
+                            f"{self._extract_http_error(e.response)}"
+                        )
+                raise RuntimeError("OpenAI-compatible generation failed before response parsing")
         except httpx.ConnectError:
             raise RuntimeError(
                 f"Cannot connect to OpenAI-compatible endpoint at {self._host_from_url(url)}"
-            )
-        except httpx.TimeoutException:
-            raise RuntimeError("OpenAI-compatible request timed out")
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(
-                f"OpenAI-compatible error ({e.response.status_code}): "
-                f"{self._extract_http_error(e.response)}"
             )
         except RuntimeError:
             raise
@@ -431,6 +462,26 @@ class LLMClient:
             path = f"/{path}"
         return f"{base}{path}"
 
+    @staticmethod
+    def _is_retryable_openai_status(status_code: int) -> bool:
+        return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+
+    @staticmethod
+    def _openai_compatible_timeout() -> httpx.Timeout:
+        total = max(float(settings.openai_compatible_timeout_seconds), 5.0)
+        connect = max(float(settings.openai_compatible_connect_timeout_seconds), 1.0)
+        connect = min(connect, total)
+        return httpx.Timeout(total, connect=connect)
+
+    @staticmethod
+    def _openai_compatible_token_candidates(num_predict: int) -> List[int]:
+        primary_tokens = max(int(num_predict), 128)
+        fallback_tokens = max(int(settings.openai_compatible_fallback_max_tokens), 128)
+        fallback_tokens = min(fallback_tokens, primary_tokens)
+        if fallback_tokens < primary_tokens:
+            return [primary_tokens, fallback_tokens]
+        return [primary_tokens]
+
     def _build_vertex_payload(
         self,
         *,
@@ -612,36 +663,135 @@ class LLMClient:
             if self._access_token and now < self._token_expires_at:
                 return self._access_token
 
-            command = (settings.vertex_ai_gcloud_command or "gcloud").strip() or "gcloud"
-            argv = self._resolve_gcloud_argv(command)
-            argv.extend(["auth", "print-access-token"])
+            auth_method = (settings.vertex_ai_auth_method or "auto").strip().lower()
+            if auth_method not in {"auto", "adc", "gcloud"}:
+                raise RuntimeError(
+                    f"Unsupported VERTEX_AI_AUTH_METHOD='{auth_method}'. Use: auto, adc, or gcloud."
+                )
 
+            adc_error: Optional[Exception] = None
+            if auth_method in {"auto", "adc"}:
+                try:
+                    token, expiry = await asyncio.to_thread(self._get_vertex_access_token_via_adc)
+                    self._access_token = token
+                    self._token_expires_at = expiry
+                    return token
+                except Exception as exc:
+                    adc_error = exc
+                    if auth_method == "adc":
+                        raise RuntimeError(f"Failed to get Vertex access token via ADC: {exc}") from exc
+                    logger.warning("Vertex ADC auth failed; falling back to gcloud. Details: %s", exc)
+
+            if auth_method in {"auto", "gcloud"}:
+                try:
+                    token, expiry = await asyncio.to_thread(self._get_vertex_access_token_via_gcloud)
+                    self._access_token = token
+                    self._token_expires_at = expiry
+                    return token
+                except Exception as exc:
+                    if auth_method == "gcloud":
+                        raise
+                    if adc_error:
+                        raise RuntimeError(
+                            "Failed to get Vertex access token via both ADC and gcloud. "
+                            f"ADC error: {adc_error}; gcloud error: {exc}"
+                        ) from exc
+                    raise
+
+            raise RuntimeError("Unable to acquire Vertex access token")
+
+    def _get_vertex_access_token_via_adc(self) -> tuple[str, float]:
+        """
+        Resolve ADC credentials and refresh an OAuth access token.
+
+        Credential lookup order:
+        1) VERTEX_AI_SERVICE_ACCOUNT_JSON_BASE64
+        2) VERTEX_AI_SERVICE_ACCOUNT_JSON
+        3) GOOGLE_APPLICATION_CREDENTIALS / application default credentials
+        """
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+            from google.oauth2 import service_account
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Missing dependency 'google-auth'. Add it to requirements to use Vertex ADC authentication."
+            ) from exc
+
+        scopes = self._vertex_token_scopes()
+        inline_sa = self._load_inline_service_account_info()
+        if inline_sa:
+            creds = service_account.Credentials.from_service_account_info(inline_sa, scopes=scopes)
+        else:
+            creds, _ = google.auth.default(scopes=scopes)
+
+        creds.refresh(Request())
+        token = (creds.token or "").strip()
+        if not token:
+            raise RuntimeError("ADC returned an empty access token")
+
+        expires_at = getattr(creds, "expiry", None)
+        if expires_at is not None:
+            expires_epoch = float(expires_at.timestamp())
+            return token, max(expires_epoch - 60.0, time.time() + 30.0)
+
+        ttl = max(int(settings.vertex_ai_token_ttl_seconds), 60)
+        return token, time.time() + max(ttl - 60, 30)
+
+    def _get_vertex_access_token_via_gcloud(self) -> tuple[str, float]:
+        command = (settings.vertex_ai_gcloud_command or "gcloud").strip() or "gcloud"
+        argv = self._resolve_gcloud_argv(command)
+        argv.extend(["auth", "print-access-token"])
+
+        try:
+            stdout, stderr, returncode = self._run_subprocess_capture(argv)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"gcloud CLI not found (command: {command}). "
+                "Install Google Cloud CLI and run: gcloud auth login"
+            ) from exc
+
+        if returncode != 0:
+            err = (stderr or "").strip()
+            raise RuntimeError(
+                f"Failed to get gcloud access token (exit {returncode}): {err or 'unknown error'}"
+            )
+
+        token = (stdout or "").strip()
+        if not token:
+            raise RuntimeError("gcloud returned an empty access token")
+
+        ttl = max(int(settings.vertex_ai_token_ttl_seconds), 60)
+        return token, time.time() + max(ttl - 60, 30)
+
+    @staticmethod
+    def _vertex_token_scopes() -> list[str]:
+        raw_scopes = (settings.vertex_ai_token_scopes or "").strip()
+        scopes = [s.strip() for s in raw_scopes.split(",") if s.strip()]
+        if scopes:
+            return scopes
+        return ["https://www.googleapis.com/auth/cloud-platform"]
+
+    @staticmethod
+    def _load_inline_service_account_info() -> Optional[dict]:
+        raw_base64 = (settings.vertex_ai_service_account_json_base64 or "").strip()
+        if raw_base64:
             try:
-                stdout, stderr, returncode = await asyncio.to_thread(
-                    self._run_subprocess_capture,
-                    argv,
-                )
-            except FileNotFoundError:
+                decoded = base64.b64decode(raw_base64).decode("utf-8")
+                return json.loads(decoded)
+            except Exception as exc:
                 raise RuntimeError(
-                    f"gcloud CLI not found (command: {command}). "
-                    "Install Google Cloud CLI and run: gcloud auth login"
-                )
+                    "VERTEX_AI_SERVICE_ACCOUNT_JSON_BASE64 is set but invalid base64/json."
+                ) from exc
 
-            if returncode != 0:
-                err = (stderr or "").strip()
-                raise RuntimeError(
-                    f"Failed to get gcloud access token (exit {returncode}): {err or 'unknown error'}"
-                )
+        raw_json = (settings.vertex_ai_service_account_json or "").strip()
+        if raw_json:
+            try:
+                return json.loads(raw_json)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("VERTEX_AI_SERVICE_ACCOUNT_JSON is not valid JSON.") from exc
 
-            token = (stdout or "").strip()
-            if not token:
-                raise RuntimeError("gcloud returned an empty access token")
-
-            ttl = max(int(settings.vertex_ai_token_ttl_seconds), 60)
-            # Refresh slightly before nominal expiry to avoid edge failures.
-            self._access_token = token
-            self._token_expires_at = time.time() + max(ttl - 60, 30)
-            return token
+        return None
 
     @staticmethod
     def _run_subprocess_capture(argv: List[str]) -> tuple[str, str, int]:
@@ -1108,7 +1258,11 @@ class LLMClient:
                         return str(val)[:300]
         except Exception:
             pass
-        return (response.text or "No response")[:300]
+        text = (response.text or "").strip()
+        content_type = (response.headers.get("content-type") or "").lower()
+        if "text/html" in content_type or text.lower().startswith("<!doctype html") or "<html" in text.lower()[:80]:
+            return "Upstream gateway returned an HTML error page"
+        return (text or "No response")[:300]
 
     @staticmethod
     def _is_role_alternation_error(error_text: str) -> bool:
