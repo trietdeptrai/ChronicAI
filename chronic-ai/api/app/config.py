@@ -121,12 +121,12 @@ class Settings(BaseSettings):
     hitl_safety_threshold: float = 0.8  # Below (1.0 - this), require safety review
 
     # Embedding settings:
-    # - embedding_provider=hash: local deterministic vectors (no external service needed)
-    # - embedding_provider=ollama: use Ollama embedding model from embedding_model
     # - embedding_provider=gemini: use Gemini embeddings API key route
     #   (falls back to Vertex Gemini route when GEMINI_API_KEY is not set)
-    embedding_model: str = "nomic-embed-text"
-    embedding_provider: str = "hash"  # hash | ollama | gemini
+    # - embedding_provider=ollama: use Ollama embedding model from embedding_model
+    # - embedding_provider=hash: local deterministic vectors (no external service needed)
+    embedding_model: str = "gemini-embedding-001"
+    embedding_provider: str = "gemini"  # gemini | ollama | hash
     embedding_dimensions: int = 768
     embedding_task_type_document: str = "RETRIEVAL_DOCUMENT"
     embedding_task_type_query: str = "RETRIEVAL_QUERY"
