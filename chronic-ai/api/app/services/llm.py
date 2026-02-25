@@ -52,6 +52,15 @@ You must return valid JSON only (no markdown or extra commentary)."""
 UPLOAD_ANALYSIS_CACHE_TYPE = "upload_analysis:v1"
 
 
+def _resolve_upload_analysis_model(*, has_image: bool) -> str:
+    """Choose model for upload analysis, preferring dedicated image-analysis model."""
+    if has_image:
+        configured = (settings.upload_analysis_model or "").strip()
+        if configured:
+            return configured
+    return settings.medical_model
+
+
 def _extract_json_object(raw_text: str) -> Optional[dict[str, Any]]:
     """Extract first JSON object from a model response."""
     if not raw_text:
@@ -404,6 +413,7 @@ async def _analyze_ecg_with_classifier(
     record_type: str,
     safe_title: str,
     image_base64: str,
+    analysis_model: str,
     base_result: dict[str, Any],
 ) -> dict[str, Any]:
     """
@@ -414,23 +424,22 @@ async def _analyze_ecg_with_classifier(
     logger.info(
         "[upload-analysis][ecg] start id=%s model=%s image_base64_len=%s",
         request_id,
-        settings.medical_model,
+        analysis_model,
         len(image_base64 or ""),
     )
 
-    model_available = await llm_client.check_model_available(settings.medical_model)
+    model_available = await llm_client.check_model_available(analysis_model)
     if not model_available:
         logger.error(
             "[upload-analysis][ecg] medical model unavailable id=%s model=%s",
             request_id,
-            settings.medical_model,
+            analysis_model,
         )
         raise RuntimeError(f"Model not available: {settings.medical_model}")
 
     logger.info("[upload-analysis][ecg] classifier inference start id=%s", request_id)
     start_classifier = time.perf_counter()
-    classifier_output = await asyncio.to_thread(
-        ecg_classifier_service.predict_from_base64,
+    classifier_output = await ecg_classifier_service.predict_from_base64(
         image_base64,
     )
     classifier_elapsed_ms = (time.perf_counter() - start_classifier) * 1000
@@ -512,7 +521,7 @@ Rules:
     logger.info("[upload-analysis][ecg] medgemma call start id=%s", request_id)
     start_llm = time.perf_counter()
     raw = await llm_client.generate(
-        model=settings.medical_model,
+        model=analysis_model,
         prompt=prompt,
         system=UPLOAD_ANALYSIS_SYSTEM,
         images=[image_base64],
@@ -588,7 +597,7 @@ async def analyze_uploaded_record(
     image_base64: Optional[str] = None
 ) -> dict[str, Any]:
     """
-    Analyze an uploaded medical record using the same medical model as doctor chat.
+    Analyze an uploaded medical record using configured upload-analysis model routing.
 
     Returns:
         JSON-serializable dict to store in medical_records.analysis_result
@@ -623,17 +632,18 @@ async def analyze_uploaded_record(
 
     timestamp = datetime.now(timezone.utc).isoformat()
     base_result = {
-        "model": settings.medical_model,
+        "model": _resolve_upload_analysis_model(has_image=bool(image_base64)),
         "record_type": record_type,
         "generated_at": timestamp,
         "request_id": request_id,
     }
+    analysis_model = str(base_result["model"])
 
     logger.info(
         "[upload-analysis] start id=%s provider=%s model=%s record_type=%s title=%s text_len=%s has_image=%s",
         request_id,
         settings.llm_provider,
-        settings.medical_model,
+        analysis_model,
         record_type,
         safe_title[:120],
         len(extracted),
@@ -649,6 +659,7 @@ async def analyze_uploaded_record(
                 record_type=record_type,
                 safe_title=safe_title,
                 image_base64=image_base64,
+                analysis_model=analysis_model,
                 base_result=base_result,
             )
             await _store_upload_analysis_cache(cache_key, result)
@@ -708,13 +719,13 @@ Rules:
 - Return valid JSON only.
 """
 
-    model_available = await llm_client.check_model_available(settings.medical_model)
+    model_available = await llm_client.check_model_available(analysis_model)
     if not model_available:
         logger.error(
             "[upload-analysis] model unavailable id=%s provider=%s model=%s",
             request_id,
             settings.llm_provider,
-            settings.medical_model
+            analysis_model
         )
         return {
             **base_result,
@@ -722,7 +733,7 @@ Rules:
             "summary": "AI analysis model is unavailable on this server.",
             "key_findings": [],
             "recommended_follow_up": [],
-            "limitations": [f"Model not available: {settings.medical_model}"],
+            "limitations": [f"Model not available: {analysis_model}"],
         }
 
     images = [image_base64] if image_base64 else None
@@ -734,7 +745,7 @@ Rules:
         if images:
             try:
                 raw = await llm_client.generate(
-                    model=settings.medical_model,
+                    model=analysis_model,
                     prompt=prompt,
                     system=UPLOAD_ANALYSIS_SYSTEM,
                     images=images,
@@ -752,12 +763,12 @@ Rules:
                     "[upload-analysis] multimodal failed id=%s provider=%s model=%s image_len=%s; falling back to text-only",
                     request_id,
                     settings.llm_provider,
-                    settings.medical_model,
+                    analysis_model,
                     len(image_base64 or ""),
                 )
         else:
             raw = await llm_client.generate(
-                model=settings.medical_model,
+                model=analysis_model,
                 prompt=prompt,
                 system=UPLOAD_ANALYSIS_SYSTEM,
                 images=None,
@@ -778,7 +789,7 @@ Rules:
                 "multimodal_error" if multimodal_error else "short_or_empty_response",
             )
             raw = await llm_client.generate(
-                model=settings.medical_model,
+                model=analysis_model,
                 prompt=prompt,
                 system=UPLOAD_ANALYSIS_SYSTEM,
                 images=None,
@@ -852,7 +863,7 @@ Rules:
             "[upload-analysis] failed id=%s provider=%s model=%s reason=%s error=%s has_image=%s text_len=%s title=%s elapsed_ms=%.1f",
             request_id,
             settings.llm_provider,
-            settings.medical_model,
+            analysis_model,
             reason,
             detail,
             bool(image_base64),
@@ -870,7 +881,7 @@ Rules:
         }
     finally:
         # Keep memory usage stable after one-shot upload analysis.
-        await llm_client.unload(settings.medical_model)
+        await llm_client.unload(analysis_model)
 
 
 async def translate_vi_to_en(text: str) -> str:
