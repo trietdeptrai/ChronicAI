@@ -8,7 +8,7 @@ matching the database schema defined in setup_db.sql.
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
@@ -642,3 +642,235 @@ class DoctorPatientAssignmentResponse(BaseModel):
     status: AssignmentStatus = AssignmentStatus.active
     notes: Optional[str] = None
     created_at: datetime
+
+
+# ============================================
+# APPOINTMENT SCHEMAS
+# ============================================
+
+class AppointmentRequestCreate(BaseModel):
+    """Request to create a new appointment."""
+    patient_id: UUID
+    doctor_id: Optional[UUID] = None
+    start_at: datetime
+    duration_minutes: int = Field(default=30, ge=10, le=240)
+    appointment_type: Literal[
+        "follow_up",
+        "routine_check",
+        "new_symptom",
+        "medication_review",
+        "lab_result_review",
+        "other",
+    ] = "follow_up"
+    chief_complaint: str = Field(..., min_length=3, max_length=2000)
+    symptoms: Optional[str] = Field(None, max_length=4000)
+    notes: Optional[str] = Field(None, max_length=4000)
+    contact_phone: Optional[str] = Field(None, max_length=20)
+    preferred_contact_method: Literal["phone", "sms", "app"] = "phone"
+    is_follow_up: Optional[bool] = None
+
+
+class AppointmentDecisionRequest(BaseModel):
+    """Doctor accepts or rejects a pending appointment."""
+    doctor_id: UUID
+    decision: Literal["accepted", "rejected"]
+    doctor_response_note: Optional[str] = Field(None, max_length=4000)
+    rejection_reason: Optional[str] = Field(None, max_length=4000)
+
+
+# ============================================
+# CHAT SCHEMAS
+# ============================================
+
+class DoctorChatRequest(BaseModel):
+    """Doctor orchestrator chat request - no patient_id required."""
+    message: str
+    image_path: Optional[str] = None
+
+
+class DoctorChatRequestV2(BaseModel):
+    """
+    Enhanced doctor chat request with LangGraph orchestration.
+
+    Supports human-in-the-loop (HITL) and formatted output.
+    """
+    message: str
+    image_path: Optional[str] = None
+    enable_hitl: bool = Field(
+        default=True,
+        description="Legacy global HITL toggle (fallback default for feature-specific toggles)"
+    )
+    enable_llm_hitl: Optional[bool] = Field(
+        default=None,
+        description="Enable LLM-based HITL (input verification + safety review)"
+    )
+    enable_patient_confirmation_hitl: Optional[bool] = Field(
+        default=None,
+        description="Enable non-LLM HITL for ambiguous patient matching confirmation"
+    )
+    output_format: Literal["plain", "structured", "markdown"] = Field(
+        default="structured",
+        description="Output format: plain text, structured JSON, or markdown"
+    )
+    thread_id: Optional[str] = Field(
+        default=None,
+        description="Thread ID for conversation state persistence"
+    )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation ID for chat history persistence"
+    )
+    doctor_id: Optional[str] = Field(
+        default=None,
+        description="Doctor UUID for creating new conversations"
+    )
+
+
+class HITLResumeRequest(BaseModel):
+    """Request to resume HITL-paused conversation."""
+    thread_id: str
+    response: dict = Field(
+        ...,
+        description="Human response to HITL request (e.g., {'action': 'approve'})"
+    )
+
+
+class ChatRequest(BaseModel):
+    """Chat request model."""
+    patient_id: str
+    message: str
+    image_path: Optional[str] = None
+
+
+class ChatRequestV2(BaseModel):
+    """Enhanced patient chat request with LangGraph."""
+    patient_id: str
+    message: str
+    image_path: Optional[str] = None
+    output_format: Literal["plain", "structured", "markdown"] = Field(
+        default="structured",
+        description="Output format: plain text, structured JSON, or markdown"
+    )
+    conversation_id: Optional[str] = Field(
+        default=None,
+        description="Conversation ID for chat history persistence"
+    )
+
+
+class CreateConversationRequest(BaseModel):
+    """Request to create a new chat conversation."""
+    conversation_type: Literal["doctor", "patient"]
+    user_id: str
+    title: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    """Non-streaming chat response."""
+    response: str
+    patient_id: str
+
+
+# ============================================
+# DOCTOR OPERATION SCHEMAS
+# ============================================
+
+class PatientTextExportFormat(str, Enum):
+    json = "json"
+    pdf = "pdf"
+
+
+class ExportLanguage(str, Enum):
+    vi = "vi"
+    en = "en"
+
+
+class ClinicalSummaryRequest(BaseModel):
+    """Request for clinical summary generation."""
+    consultation_id: str
+    patient_id: str
+
+
+class ClinicalSummaryResponse(BaseModel):
+    """Clinical summary response."""
+    consultation_id: str
+    patient_id: str
+    summary: str
+
+
+class VitalSignCreateRequest(BaseModel):
+    """Request to create a new vital sign entry."""
+    recorded_at: Optional[datetime] = None
+    recorded_by: Optional[str] = None
+    blood_pressure_systolic: Optional[int] = None
+    blood_pressure_diastolic: Optional[int] = None
+    heart_rate: Optional[int] = None
+    blood_glucose: Optional[float] = None
+    blood_glucose_timing: Optional[GlucoseTiming] = None
+    temperature: Optional[float] = None
+    oxygen_saturation: Optional[int] = None
+    weight_kg: Optional[float] = None
+    notes: Optional[str] = None
+    source: Optional[VitalSource] = None
+
+
+class PatientCreateRequest(BaseModel):
+    """Create payload for a patient profile (non-record data)."""
+    full_name: str = Field(..., min_length=1, max_length=255)
+    date_of_birth: date
+    gender: GenderType
+    national_id: Optional[str] = Field(None, max_length=20)
+    insurance_number: Optional[str] = Field(None, max_length=50)
+    phone_primary: str = Field(..., min_length=3, max_length=20)
+    phone_secondary: Optional[str] = Field(None, max_length=20)
+    email: Optional[EmailStr] = None
+    address_street: Optional[str] = None
+    address_ward: str = Field(..., min_length=1, max_length=100)
+    address_district: str = Field(..., min_length=1, max_length=100)
+    address_province: str = Field(..., min_length=1, max_length=100)
+    emergency_contact_name: str = Field(..., min_length=1, max_length=255)
+    emergency_contact_phone: str = Field(..., min_length=3, max_length=20)
+    emergency_contact_relationship: str = Field(..., min_length=1, max_length=50)
+    blood_type: BloodType = BloodType.UNKNOWN
+    primary_diagnosis: Optional[str] = Field(None, max_length=20)
+    triage_priority: TriagePriority = TriagePriority.low
+    profile_status: ProfileStatus = ProfileStatus.active
+    preferred_language: LanguagePref = LanguagePref.vi
+    assigned_doctor_id: Optional[UUID] = None
+
+
+class PatientUpdateRequest(BaseModel):
+    """Update payload for patient profile fields only."""
+    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    date_of_birth: Optional[date] = None
+    gender: Optional[GenderType] = None
+    national_id: Optional[str] = Field(None, max_length=20)
+    insurance_number: Optional[str] = Field(None, max_length=50)
+    phone_primary: Optional[str] = Field(None, min_length=3, max_length=20)
+    phone_secondary: Optional[str] = Field(None, max_length=20)
+    email: Optional[EmailStr] = None
+    address_street: Optional[str] = None
+    address_ward: Optional[str] = Field(None, min_length=1, max_length=100)
+    address_district: Optional[str] = Field(None, min_length=1, max_length=100)
+    address_province: Optional[str] = Field(None, min_length=1, max_length=100)
+    emergency_contact_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    emergency_contact_phone: Optional[str] = Field(None, min_length=3, max_length=20)
+    emergency_contact_relationship: Optional[str] = Field(None, min_length=1, max_length=50)
+    blood_type: Optional[BloodType] = None
+    primary_diagnosis: Optional[str] = Field(None, max_length=20)
+    triage_priority: Optional[TriagePriority] = None
+    profile_status: Optional[ProfileStatus] = None
+    preferred_language: Optional[LanguagePref] = None
+    assigned_doctor_id: Optional[UUID] = None
+    chronic_conditions: Optional[list[Any]] = None
+    surgical_history: Optional[list[Any]] = None
+    allergies: Optional[list[Any]] = None
+    family_medical_history: Optional[dict[str, Any]] = None
+    medical_history: Optional[dict[str, Any]] = None
+    immunization_records: Optional[dict[str, Any]] = None
+    treatment_history: Optional[dict[str, Any]] = None
+
+
+class PatientMetadataExportRequest(BaseModel):
+    """Request for patient metadata export."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+

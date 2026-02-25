@@ -395,7 +395,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
             replacementFileInvalid: "Tệp thay thế phải là ảnh hoặc PDF.",
             updateRecordFailed: "Cập nhật hồ sơ y khoa thất bại.",
             deleteRecordFailed: "Xóa hồ sơ y khoa thất bại.",
-            enterAtLeastOneVital: "Vui lòng nhập ít nhất một chỉ số",
+            enterAtLeastOneVital: "Vui lòng nhập ít nhất một chỉ số.",
         },
         success: {
             recordUploadSuccess: "Đã tải tệp thành công.",
@@ -450,7 +450,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
             bloodPressure: "HA",
             heartRate: "Mạch",
             bloodGlucose: "Đường huyết",
-            temperature: "Temperature",
+            temperature: "Nhiệt độ",
             oxygenSaturation: "SpO2",
             weight: "Cân nặng",
         },
@@ -477,7 +477,7 @@ const patientDetailUiText: Record<DashboardLanguage, PatientDetailUiText> = {
         vitalBpSystolicLabel: "Systolic blood pressure",
         vitalBpDiastolicLabel: "Diastolic blood pressure",
         vitalHeartRateLabel: "Heart rate (bpm)",
-        vitalSpo2Label: "SpO₂ (%)",
+        vitalSpo2Label: "SpO2 (%)",
         vitalTemperatureLabel: "Temperature (°C)",
         vitalWeightLabel: "Weight (kg)",
         vitalBloodGlucoseLabel: "Blood glucose (mmol/L)",
@@ -1439,7 +1439,7 @@ export default function PatientDetailPage() {
                     triggerFileDownload(result.blob, result.filename ?? fallbackName)
                     toast.success(
                         language === "vi"
-                            ? "Da xuat du lieu tien su y khoa."
+                            ? "Đã xuất dữ liệu tiền sử y khoa."
                             : "Medical-history data exported."
                     )
                 },
@@ -1448,7 +1448,7 @@ export default function PatientDetailPage() {
                         getErrorMessage(
                             err,
                             language === "vi"
-                                ? "Xuat du lieu tien su y khoa that bai."
+                                ? "Xuất dữ liệu tiền sử y khoa thất bại."
                                 : "Failed to export medical-history data."
                         )
                     )
@@ -1483,7 +1483,7 @@ export default function PatientDetailPage() {
         if (!lowerName.endsWith(".json") && !lowerName.endsWith(".pdf")) {
             toast.error(
                 language === "vi"
-                    ? "Tep nhap tien su y khoa khong hop le. Chi ho tro .json hoac .pdf."
+                    ? "Tệp nhập tiền sử y khoa không hợp lệ. Chỉ hỗ trợ .json hoặc .pdf."
                     : "Invalid medical-history import file. Only .json or .pdf is supported."
             )
             resetInput()
@@ -1498,7 +1498,7 @@ export default function PatientDetailPage() {
                     setMedicalHistoryError(null)
                     setMedicalHistorySuccess(
                         language === "vi"
-                            ? "Bieu mau da duoc dien san tu tep nhap. Vui long kiem tra truoc khi luu."
+                            ? "Biểu mẫu đã được điền sẵn từ tệp nhập. Vui lòng kiểm tra trước khi lưu."
                             : "Form prefilled from imported medical-history data. Review before saving."
                     )
                     setIsMedicalHistoryEditing(true)
@@ -1507,7 +1507,7 @@ export default function PatientDetailPage() {
                     } else {
                         toast.success(
                             language === "vi"
-                                ? "Da nhap du lieu tien su y khoa de dien san."
+                                ? "Đã nhập dữ liệu tiền sử y khoa để điền sẵn."
                                 : "Medical-history data imported for prefill."
                         )
                     }
@@ -1517,7 +1517,7 @@ export default function PatientDetailPage() {
                         getErrorMessage(
                             err,
                             language === "vi"
-                                ? "Nhap du lieu tien su y khoa that bai."
+                                ? "Nhập dữ liệu tiền sử y khoa thất bại."
                                 : "Failed to import medical-history data."
                         )
                     )
@@ -1724,7 +1724,7 @@ export default function PatientDetailPage() {
                     setVitalError(null)
                     setVitalSuccess(
                         language === "vi"
-                            ? "Da xoa lan kham."
+                            ? "Đã xóa lần khám."
                             : "Check-up deleted."
                     )
                 },
@@ -1733,7 +1733,7 @@ export default function PatientDetailPage() {
                         getErrorMessage(
                             err,
                             language === "vi"
-                                ? "Xoa lan kham that bai."
+                                ? "Xóa lần khám thất bại."
                                 : "Failed to delete check-up."
                         )
                     )
@@ -1775,7 +1775,7 @@ export default function PatientDetailPage() {
                     onSuccess: () => {
                         setVitalSuccess(
                             language === "vi"
-                                ? "Da cap nhat lan kham."
+                                ? "Đã cập nhật lần khám."
                                 : "Check-up updated."
                         )
                         setEditingVitalId(null)
@@ -1787,7 +1787,7 @@ export default function PatientDetailPage() {
                             getErrorMessage(
                                 err,
                                 language === "vi"
-                                    ? "Cap nhat lan kham that bai."
+                                    ? "Cập nhật lần khám thất bại."
                                     : "Failed to update check-up."
                             )
                         )
@@ -2248,7 +2248,7 @@ export default function PatientDetailPage() {
                             onClick={handleStartAddCheckup}
                             disabled={createVitalMutation.isPending || updateVitalMutation.isPending || deleteVitalMutation.isPending}
                         >
-                            {language === "vi" ? "Them lan kham" : "Add check-up"}
+                            {language === "vi" ? "Thêm lần khám" : "Add check-up"}
                         </Button>
                         <div className="flex w-full sm:w-auto">
                             <Button
@@ -2448,7 +2448,7 @@ export default function PatientDetailPage() {
                                 </div>
                                 <div className="grid gap-2 md:col-span-2">
                                     <Label htmlFor="vital-treatment-plan">
-                                        {language === "vi" ? "Ke hoach dieu tri" : "Treatment plan"}
+                                        {language === "vi" ? "Kế hoạch điều trị" : "Treatment plan"}
                                     </Label>
                                     <Textarea
                                         id="vital-treatment-plan"
@@ -2501,7 +2501,7 @@ export default function PatientDetailPage() {
                                     {(createVitalMutation.isPending || updateVitalMutation.isPending)
                                         ? uiText.savingLabel
                                         : (editingVitalId
-                                            ? (language === "vi" ? "Cap nhat lan kham" : "Update check-up")
+                                            ? (language === "vi" ? "Cập nhật lần khám" : "Update check-up")
                                             : uiText.vitalSaveButton)}
                                 </Button>
                                 {isCheckupFormVisible && (
@@ -2567,7 +2567,7 @@ export default function PatientDetailPage() {
                                         const metrics = formatVitalMetrics(vital, uiText)
                                         const checkupNotes = parseTreatmentCheckupNotes(vital.notes)
                                         const checkupTitle = language === "vi"
-                                            ? `Lan kham ${checkupRecordGroups.groups.length - index}`
+                                            ? `Lần khám ${checkupRecordGroups.groups.length - index}`
                                             : `Check-up ${checkupRecordGroups.groups.length - index}`
                                         return (
                                             <div key={vital.id} className="rounded-lg border p-4">
@@ -2943,13 +2943,13 @@ export default function PatientDetailPage() {
                     <div className="space-y-4">
                         <p className="text-sm text-muted-foreground">
                             {language === "vi"
-                                ? "Dien thong tin va tai anh can lam sang vao ket qua xet nghiem."
+                                ? "Điền thông tin và tải ảnh cận lâm sàng vào kết quả xét nghiệm."
                                 : "Fill in details below to add a new clinical image to medical test results."}
                         </p>
                         {selectedCheckupForUpload && (
                             <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
                                 {language === "vi"
-                                    ? `Tep nay se duoc lien ket voi lan kham: ${formatDateTime(selectedCheckupForUpload.recorded_at, uiText.locale)}.`
+                                    ? `Tệp này sẽ được liên kết với lần khám: ${formatDateTime(selectedCheckupForUpload.recorded_at, uiText.locale)}.`
                                     : `This file will be linked to check-up at ${formatDateTime(selectedCheckupForUpload.recorded_at, uiText.locale)}.`}
                             </p>
                         )}
@@ -3247,11 +3247,11 @@ export default function PatientDetailPage() {
                 <AlertDialogContent>
                     <AlertDialogHeader>
                         <AlertDialogTitle>
-                            {language === "vi" ? "Xoa lan kham?" : "Delete check-up?"}
+                            {language === "vi" ? "Xóa lần khám?" : "Delete check-up?"}
                         </AlertDialogTitle>
                         <AlertDialogDescription>
                             {language === "vi"
-                                ? "Ban ghi lan kham va lien ket hien thi cua no se bi xoa."
+                                ? "Bản ghi lần khám và liên kết hiển thị của nó sẽ bị xóa."
                                 : "This check-up entry and its linked display context will be removed."}
                         </AlertDialogDescription>
                     </AlertDialogHeader>

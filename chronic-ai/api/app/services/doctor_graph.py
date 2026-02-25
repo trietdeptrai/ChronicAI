@@ -1165,10 +1165,9 @@ def _add_paragraph_breaks(text: str) -> str:
     if not text or len(text) < 100:
         return text
 
-    # If the text already has reasonable formatting, leave it alone
-    if text.count("\n\n") >= 3:
-        return text
     section_keywords = r"(?:Đánh giá|Phân tích|Đề xuất|Cảnh báo|Lưu ý|Kết luận|Theo dõi|Khuyến nghị)"
+
+    # ---- Section header fixes (always applied, even if text is well-formatted) ----
 
     # Fix missing space after sentence-ending punctuation.
     # Keep single-letter abbreviation chains intact (e.g., "H.A.T.T", "U.S.A.").
@@ -1192,7 +1191,7 @@ def _add_paragraph_breaks(text: str) -> str:
     # e.g., "Phân tích*Tăng huyết áp" → "Phân tích: Tăng huyết áp"
     # e.g., "Đề xuất1. Điều chỉnh thuốc" → "Đề xuất: 1. Điều chỉnh thuốc"
     text = re.sub(
-        rf'(?:(?<=^)|(?<=[\n.!?]))\s*({section_keywords})'
+        rf'({section_keywords})'
         r'(?![\s:：\-])'
         r'(?:\*{1,2}\s*)?'
         r'([A-ZÀ-Ỵa-zà-ỵ0-9])',
@@ -1206,6 +1205,10 @@ def _add_paragraph_breaks(text: str) -> str:
         'Phân tích : ',
         text
     )
+
+    # ---- Early return if text already has reasonable paragraph formatting ----
+    if text.count("\n\n") >= 3:
+        return text
 
 
     # ---- Step 1: Normalize inline markdown and list markers ----

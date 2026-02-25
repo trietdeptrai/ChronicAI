@@ -21,18 +21,26 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.db.database import get_supabase
 from app.models.schemas import (
     BloodType,
+    ClinicalSummaryRequest,
+    ClinicalSummaryResponse,
+    ExportLanguage,
     GenderType,
     GlucoseTiming,
     LanguagePref,
+    PatientCreateRequest,
+    PatientMetadataExportRequest,
+    PatientTextExportFormat,
+    PatientUpdateRequest,
     ProfileStatus,
     RecordType,
     TriagePriority,
+    VitalSignCreateRequest,
     VitalSource,
 )
 from app.services.ocr import OCRDependencyError, extract_text
@@ -77,14 +85,8 @@ TREATMENT_HISTORY_FAMILY_FALLBACK_KEYS = {
 _HISTORY_VALUE_MISSING = object()
 
 
-class PatientTextExportFormat(str, Enum):
-    json = "json"
-    pdf = "pdf"
 
 
-class ExportLanguage(str, Enum):
-    vi = "vi"
-    en = "en"
 
 
 GLOBAL_IMPORT_ALLOWED_EXTENSIONS = {".zip"}
@@ -4053,99 +4055,6 @@ def _unique_zip_name(base_name: str, used_names: set[str]) -> str:
     return candidate
 
 
-class ClinicalSummaryRequest(BaseModel):
-    """Request for clinical summary generation."""
-
-    consultation_id: str
-    patient_id: str
-
-
-class ClinicalSummaryResponse(BaseModel):
-    """Clinical summary response."""
-
-    consultation_id: str
-    patient_id: str
-    summary: str
-
-
-class VitalSignCreateRequest(BaseModel):
-    """Request to create a new vital sign entry."""
-
-    recorded_at: Optional[datetime] = None
-    recorded_by: Optional[str] = None
-    blood_pressure_systolic: Optional[int] = None
-    blood_pressure_diastolic: Optional[int] = None
-    heart_rate: Optional[int] = None
-    blood_glucose: Optional[float] = None
-    blood_glucose_timing: Optional[GlucoseTiming] = None
-    temperature: Optional[float] = None
-    oxygen_saturation: Optional[int] = None
-    weight_kg: Optional[float] = None
-    notes: Optional[str] = None
-    source: Optional[VitalSource] = None
-
-
-class PatientCreateRequest(BaseModel):
-    """Create payload for a patient profile (non-record data)."""
-
-    full_name: str = Field(..., min_length=1, max_length=255)
-    date_of_birth: date
-    gender: GenderType
-    national_id: Optional[str] = Field(None, max_length=20)
-    insurance_number: Optional[str] = Field(None, max_length=50)
-    phone_primary: str = Field(..., min_length=3, max_length=20)
-    phone_secondary: Optional[str] = Field(None, max_length=20)
-    email: Optional[EmailStr] = None
-    address_street: Optional[str] = None
-    address_ward: str = Field(..., min_length=1, max_length=100)
-    address_district: str = Field(..., min_length=1, max_length=100)
-    address_province: str = Field(..., min_length=1, max_length=100)
-    emergency_contact_name: str = Field(..., min_length=1, max_length=255)
-    emergency_contact_phone: str = Field(..., min_length=3, max_length=20)
-    emergency_contact_relationship: str = Field(..., min_length=1, max_length=50)
-    blood_type: BloodType = BloodType.UNKNOWN
-    primary_diagnosis: Optional[str] = Field(None, max_length=20)
-    triage_priority: TriagePriority = TriagePriority.low
-    profile_status: ProfileStatus = ProfileStatus.active
-    preferred_language: LanguagePref = LanguagePref.vi
-    assigned_doctor_id: Optional[UUID] = None
-
-
-class PatientUpdateRequest(BaseModel):
-    """Update payload for patient profile fields only."""
-
-    full_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    date_of_birth: Optional[date] = None
-    gender: Optional[GenderType] = None
-    national_id: Optional[str] = Field(None, max_length=20)
-    insurance_number: Optional[str] = Field(None, max_length=50)
-    phone_primary: Optional[str] = Field(None, min_length=3, max_length=20)
-    phone_secondary: Optional[str] = Field(None, max_length=20)
-    email: Optional[EmailStr] = None
-    address_street: Optional[str] = None
-    address_ward: Optional[str] = Field(None, min_length=1, max_length=100)
-    address_district: Optional[str] = Field(None, min_length=1, max_length=100)
-    address_province: Optional[str] = Field(None, min_length=1, max_length=100)
-    emergency_contact_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    emergency_contact_phone: Optional[str] = Field(None, min_length=3, max_length=20)
-    emergency_contact_relationship: Optional[str] = Field(None, min_length=1, max_length=50)
-    blood_type: Optional[BloodType] = None
-    primary_diagnosis: Optional[str] = Field(None, max_length=20)
-    triage_priority: Optional[TriagePriority] = None
-    profile_status: Optional[ProfileStatus] = None
-    preferred_language: Optional[LanguagePref] = None
-    assigned_doctor_id: Optional[UUID] = None
-    chronic_conditions: Optional[list[Any]] = None
-    surgical_history: Optional[list[Any]] = None
-    allergies: Optional[list[Any]] = None
-    family_medical_history: Optional[dict[str, Any]] = None
-    medical_history: Optional[dict[str, Any]] = None
-    immunization_records: Optional[dict[str, Any]] = None
-    treatment_history: Optional[dict[str, Any]] = None
-
-
-class PatientMetadataExportRequest(BaseModel):
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/summary", response_model=ClinicalSummaryResponse)
