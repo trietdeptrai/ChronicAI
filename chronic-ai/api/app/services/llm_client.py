@@ -26,6 +26,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+OPENAI_COMPATIBLE_PROVIDER_ALIASES = {"openai_compatible", "openai", "featherless"}
+
+
+def is_openai_compatible_provider(provider: Optional[str] = None) -> bool:
+    """Return True when provider should use the OpenAI-compatible route."""
+    selected = (provider or settings.llm_provider or "vertex").strip().lower()
+    return selected in OPENAI_COMPATIBLE_PROVIDER_ALIASES
+
 
 class LLMClient:
     """
@@ -79,7 +87,7 @@ class LLMClient:
                 num_predict=num_predict,
             )
 
-        if self._provider in {"openai_compatible", "openai", "featherless"}:
+        if is_openai_compatible_provider(self._provider):
             if stream:
                 return self._stream_openai_compatible_response(
                     model=model,
@@ -1321,7 +1329,7 @@ class LLMClient:
                 response.raise_for_status()
                 return response.json().get("models", [])
 
-        if self._provider in {"openai_compatible", "openai", "featherless"}:
+        if is_openai_compatible_provider(self._provider):
             model_name = settings.openai_compatible_model or settings.medical_model
             return [{"name": model_name}] if model_name else []
 
@@ -1400,7 +1408,7 @@ class LLMClient:
                 except Exception:
                     return False
 
-        if self._provider in {"openai_compatible", "openai", "featherless"}:
+        if is_openai_compatible_provider(self._provider):
             requested_model = (model or "").strip()
             configured_model = (settings.openai_compatible_model or settings.medical_model or "").strip()
             effective_model = requested_model or configured_model
@@ -1448,7 +1456,7 @@ class LLMClient:
                 return False
 
         try:
-            if self._provider in {"openai_compatible", "openai", "featherless"}:
+            if is_openai_compatible_provider(self._provider):
                 _ = await self._generate_openai_compatible(
                     model=settings.medical_model,
                     prompt="Reply with: ok",
