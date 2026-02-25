@@ -168,7 +168,7 @@ const translations: Record<DashboardLanguage, Translation> = {
             gender: "Giới tính *",
             nric: "Số CCCD",
             insuranceNumber: "Mã số BHYT",
-            diagnosis: "Chẩn đoán",
+            diagnosis: "Chuẩn đoán",
             primaryPhone: "Số điện thoại *",
             email: "Email",
             ward: "Phường/Xã *",

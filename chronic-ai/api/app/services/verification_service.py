@@ -13,7 +13,7 @@ import json
 import logging
 from typing import List, Optional, Tuple
 
-from app.services.llm_client import llm_client, is_openai_compatible_provider
+from app.services.llm_client import llm_client
 from app.services.json_utils import strip_markdown_code_fence
 from app.services.graph_state import VerificationResult
 from app.services.resilience import (
@@ -31,17 +31,13 @@ logger = logging.getLogger(__name__)
 # Circuit breaker for verification model
 _verification_breaker = get_circuit_breaker("verification", failure_threshold=5, recovery_timeout=30.0)
 
-def _verification_retry_config() -> RetryConfig:
-    # Avoid nested retries: OpenAI-compatible providers already retry/fallback in llm_client.
-    max_attempts = 2
-    if is_openai_compatible_provider():
-        max_attempts = 1
-    return RetryConfig(
-        max_attempts=max_attempts,
-        base_delay=0.5,
-        max_delay=5.0,
-        retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
-    )
+# Retry config for verification calls (faster than main reasoning)
+VERIFICATION_RETRY_CONFIG = RetryConfig(
+    max_attempts=2,
+    base_delay=0.5,
+    max_delay=5.0,
+    retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
+)
 
 
 # ============================================================================
@@ -123,7 +119,7 @@ async def verify_input(query_en: str) -> VerificationResult:
             _verification_breaker,
             retry_async,
             _verify_call,
-            config=_verification_retry_config(),
+            config=VERIFICATION_RETRY_CONFIG,
             operation_name="verify_input"
         )
 
@@ -186,7 +182,7 @@ async def check_response_safety(response_en: str) -> Tuple[float, List[str], boo
             _verification_breaker,
             retry_async,
             _safety_call,
-            config=_verification_retry_config(),
+            config=VERIFICATION_RETRY_CONFIG,
             operation_name="check_response_safety"
         )
 

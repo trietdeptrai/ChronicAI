@@ -35,7 +35,7 @@ from app.services.graph_state import (
     PatientMatch,
     HITLRequest,
 )
-from app.services.llm_client import llm_client, is_openai_compatible_provider
+from app.services.llm_client import llm_client
 from app.services.json_utils import strip_markdown_code_fence
 from app.services.rag import (
     get_patient_context,
@@ -73,17 +73,13 @@ logger = logging.getLogger(__name__)
 _llm_breaker = get_circuit_breaker("llm_doctor", failure_threshold=3, recovery_timeout=60.0)
 _db_breaker = get_circuit_breaker("database_doctor", failure_threshold=5, recovery_timeout=30.0)
 
-def _llm_retry_config() -> RetryConfig:
-    # Avoid nested retries: OpenAI-compatible providers already retry/fallback in llm_client.
-    max_attempts = max(int(settings.llm_retry_max_attempts), 1)
-    if is_openai_compatible_provider():
-        max_attempts = 1
-    return RetryConfig(
-        max_attempts=max_attempts,
-        base_delay=max(float(settings.llm_retry_base_delay), 0.0),
-        max_delay=10.0,
-        retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
-    )
+# Retry configuration for LLM calls
+LLM_RETRY_CONFIG = RetryConfig(
+    max_attempts=3,
+    base_delay=1.0,
+    max_delay=10.0,
+    retryable_exceptions=(RuntimeError, TimeoutError, ConnectionError)
+)
 
 
 # ============================================================================
@@ -797,7 +793,7 @@ Examples:
             _llm_breaker,
             retry_async,
             _extraction_call,
-            config=_llm_retry_config(),
+            config=LLM_RETRY_CONFIG,
             operation_name="extract_patients"
         )
 
@@ -1474,7 +1470,7 @@ async def medical_reasoning_node(state: DoctorOrchestratorState) -> dict:
             _llm_breaker,
             retry_async,
             _reasoning_call,
-            config=_llm_retry_config(),
+            config=LLM_RETRY_CONFIG,
             operation_name="medical_reasoning"
         )
 

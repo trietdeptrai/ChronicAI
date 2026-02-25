@@ -365,7 +365,7 @@ CREATE TABLE record_embeddings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     record_id UUID REFERENCES medical_records(id) ON DELETE CASCADE,
     chunk_content TEXT NOT NULL,
-    embedding vector(768),  -- Must match EMBEDDING_DIMENSIONS
+    embedding vector(768),  -- 768 dimensions for nomic-embed-text
     chunk_index INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
