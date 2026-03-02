@@ -6,6 +6,8 @@ This is happening while clinicians are under intensifying pressure. In Vietnam, 
 
 ChronicAI is built to close that continuity gap. It centralizes scattered records into a longitudinal patient view and adds conversational AI support, so clinicians spend less time hunting for context and more time making treatment decisions with the full history in front of them.
 
+**Note: The interactive demo may load slowly due to limited server resources and occasional cold starts on our current hosting tier.**
+
 ## Key Features
 
 - Context-driven medical chat for doctors and patients, powered by MedGemma for clearer communication and better between-visit support.
