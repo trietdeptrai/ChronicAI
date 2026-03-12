@@ -162,7 +162,3 @@ For deployment/setup and environment configuration, refer to:
 - Root setup guide: `README.md`
 - API docs (when backend is running): `http://localhost:8000/docs`
 
-Recommended additions to this guide:
-1. Add screenshots for each main page (Dashboard, Patients, Patient Detail, Calendar, AI Chat).
-2. Add a short SOP for clinic onboarding (doctor and patient account provisioning).
-3. Add organization-specific escalation protocol for high-risk AI chat responses.
