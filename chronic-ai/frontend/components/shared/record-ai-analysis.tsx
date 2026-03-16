@@ -24,6 +24,8 @@ const UI_TEXT: Record<
         urgencyHigh: string
         urgencyMedium: string
         urgencyLow: string
+        keyFindings: string
+        clinicalSignificance: string
         recommendedFollowUp: string
         ecgScores: string
         limitations: string
@@ -35,6 +37,8 @@ const UI_TEXT: Record<
         urgencyHigh: "Mức độ khẩn: Cao",
         urgencyMedium: "Mức độ khẩn: Trung bình",
         urgencyLow: "Mức độ khẩn: Thấp",
+        keyFindings: "Điểm chính",
+        clinicalSignificance: "Ý nghĩa lâm sàng",
         recommendedFollowUp: "Đề xuất theo dõi",
         ecgScores: "Điểm dự đoán ECG",
         limitations: "Giới hạn",
@@ -45,6 +49,8 @@ const UI_TEXT: Record<
         urgencyHigh: "Urgency: High",
         urgencyMedium: "Urgency: Medium",
         urgencyLow: "Urgency: Low",
+        keyFindings: "Key findings",
+        clinicalSignificance: "Clinical significance",
         recommendedFollowUp: "Recommended Follow-up",
         ecgScores: "ECG classifier scores",
         limitations: "Limitations",
@@ -81,13 +87,107 @@ function normalizeList(value: unknown, maxItems = 5): string[] {
     return []
 }
 
+function normalizeText(value: unknown): string {
+    if (typeof value !== "string") return ""
+    return value
+        .replace(/\r\n?/g, "\n")
+        .replace(/\u00a0/g, " ")
+        .trim()
+}
+
+function stripMarkdownCodeFence(value: string): string {
+    const trimmed = normalizeText(value)
+    if (!trimmed.startsWith("```")) return trimmed
+
+    return trimmed
+        .replace(/^```[a-zA-Z0-9_-]*\s*/, "")
+        .replace(/\s*```$/, "")
+        .trim()
+}
+
+function extractJsonObject(value: string): Record<string, unknown> | null {
+    const cleaned = stripMarkdownCodeFence(value)
+    if (!cleaned) return null
+
+    const candidates = [cleaned]
+    const objectStart = cleaned.indexOf("{")
+    const objectEnd = cleaned.lastIndexOf("}")
+    if (objectStart !== -1 && objectEnd > objectStart) {
+        candidates.push(cleaned.slice(objectStart, objectEnd + 1))
+    }
+
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(candidate)
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                return parsed as Record<string, unknown>
+            }
+        } catch {
+            continue
+        }
+    }
+
+    return null
+}
+
+function hasStructuredAnalysisFields(value: Record<string, unknown>): boolean {
+    return [
+        "summary",
+        "key_findings",
+        "clinical_significance",
+        "recommended_follow_up",
+        "prediction_scores",
+        "ecg_classifier",
+    ].some((key) => key in value)
+}
+
+function normalizeAnalysisObject(value: Record<string, unknown>): MedicalRecordAIAnalysis | null {
+    const rawSummary = normalizeText(value.summary)
+    const parsedSummaryPayload = rawSummary ? extractJsonObject(rawSummary) : null
+    const source =
+        parsedSummaryPayload && hasStructuredAnalysisFields(parsedSummaryPayload)
+            ? { ...value, ...parsedSummaryPayload }
+            : value
+
+    const summary = stripMarkdownCodeFence(String(source.summary ?? ""))
+    const clinicalSignificance = stripMarkdownCodeFence(String(source.clinical_significance ?? ""))
+
+    return {
+        ...source,
+        status:
+            source.status === "completed" || source.status === "skipped" || source.status === "error"
+                ? source.status
+                : undefined,
+        summary: summary || undefined,
+        key_findings: normalizeList(source.key_findings),
+        clinical_significance: clinicalSignificance || undefined,
+        recommended_follow_up: normalizeList(source.recommended_follow_up),
+        limitations: normalizeList(source.limitations),
+        urgency:
+            source.urgency === "low" || source.urgency === "medium" || source.urgency === "high"
+                ? source.urgency
+                : undefined,
+        confidence:
+            source.confidence === "low" || source.confidence === "medium" || source.confidence === "high"
+                ? source.confidence
+                : undefined,
+    }
+}
+
 function normalizeAnalysis(analysis?: MedicalRecordAIAnalysis | string | null): MedicalRecordAIAnalysis | null {
     if (!analysis) return null
+
     if (typeof analysis === "string") {
-        const summary = analysis.trim()
+        const parsed = extractJsonObject(analysis)
+        if (parsed && hasStructuredAnalysisFields(parsed)) {
+            return normalizeAnalysisObject(parsed)
+        }
+
+        const summary = stripMarkdownCodeFence(analysis)
         return summary ? { summary, status: "completed" } : null
     }
-    return analysis
+
+    return normalizeAnalysisObject(analysis)
 }
 
 function normalizePredictionScores(
@@ -167,6 +267,26 @@ function getUrgencyBadgeVariant(urgency?: string): "outline" | "secondary" | "de
     return "outline"
 }
 
+function isProbabilityScore(score: number): boolean {
+    return score >= 0 && score <= 1
+}
+
+function formatPredictionScore(score: number): string {
+    if (isProbabilityScore(score)) {
+        return `${(score * 100).toFixed(1)}%`
+    }
+
+    if (Math.abs(score) >= 100) {
+        return score.toFixed(0)
+    }
+
+    if (Math.abs(score) >= 10) {
+        return score.toFixed(1)
+    }
+
+    return score.toFixed(3).replace(/\.?0+$/, "")
+}
+
 export function RecordDoctorComment({ doctorComment }: RecordDoctorCommentProps) {
     const { language } = useDashboardLanguage()
     const t = UI_TEXT[language]
@@ -192,6 +312,10 @@ export function RecordAIAnalysis({ analysis }: RecordAIAnalysisProps) {
 
     const summary = parsed && typeof parsed.summary === "string" ? parsed.summary.trim() : ""
     const keyFindings = parsed ? normalizeList(parsed.key_findings) : []
+    const clinicalSignificance =
+        parsed && typeof parsed.clinical_significance === "string"
+            ? parsed.clinical_significance.trim()
+            : ""
     const followUp = parsed ? normalizeList(parsed.recommended_follow_up) : []
     const limitations = parsed ? normalizeList(parsed.limitations) : []
     const predictionScores = parsed ? normalizePredictionScores(parsed, language) : []
@@ -199,6 +323,7 @@ export function RecordAIAnalysis({ analysis }: RecordAIAnalysisProps) {
     if (
         !summary
         && keyFindings.length === 0
+        && !clinicalSignificance
         && followUp.length === 0
         && limitations.length === 0
         && predictionScores.length === 0
@@ -214,30 +339,48 @@ export function RecordAIAnalysis({ analysis }: RecordAIAnalysisProps) {
         : null
 
     return (
-        <div className="mt-3 rounded-lg border bg-muted/30 p-3">
+        <div className="mt-3 rounded-xl border bg-muted/30 p-4 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-semibold text-foreground">{t.aiAnalysis}</p>
                 {urgencyLabel && <Badge variant={getUrgencyBadgeVariant(urgency)}>{urgencyLabel}</Badge>}
             </div>
 
             {summary && (
-                <p className="mt-2 text-sm text-muted-foreground whitespace-pre-line">
+                <p className="mt-3 text-sm leading-6 text-muted-foreground whitespace-pre-line">
                     {summary}
                 </p>
             )}
 
             {keyFindings.length > 0 && (
-                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                    {keyFindings.map((item, index) => (
-                        <li key={`${item}-${index}`}>{item}</li>
-                    ))}
-                </ul>
+                <div className="mt-4 rounded-lg border bg-background/80 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        {t.keyFindings}
+                    </p>
+                    <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-6 text-muted-foreground">
+                        {keyFindings.map((item, index) => (
+                            <li key={`${item}-${index}`}>{item}</li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {clinicalSignificance && (
+                <div className="mt-4 rounded-lg border bg-background/80 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        {t.clinicalSignificance}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground whitespace-pre-line">
+                        {clinicalSignificance}
+                    </p>
+                </div>
             )}
 
             {followUp.length > 0 && (
-                <div className="mt-3 rounded-md border border-dashed bg-background/80 p-2">
-                    <p className="text-xs font-medium text-foreground">{t.recommendedFollowUp}</p>
-                    <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                <div className="mt-4 rounded-lg border border-dashed bg-background/80 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        {t.recommendedFollowUp}
+                    </p>
+                    <ul className="mt-2 list-disc space-y-1.5 pl-5 text-sm leading-6 text-muted-foreground">
                         {followUp.map((item, index) => (
                             <li key={`${item}-${index}`}>{item}</li>
                         ))}
@@ -246,17 +389,26 @@ export function RecordAIAnalysis({ analysis }: RecordAIAnalysisProps) {
             )}
 
             {predictionScores.length > 0 && (
-                <div className="mt-3 rounded-md border border-dashed bg-background/80 p-2">
-                    <p className="text-xs font-medium text-foreground">{t.ecgScores}</p>
-                    <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
+                <div className="mt-4 rounded-lg border border-dashed bg-background/80 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        {t.ecgScores}
+                    </p>
+                    <ul className="mt-3 space-y-2">
                         {predictionScores.map((row) => (
-                            <li key={row.class} className="flex items-start justify-between gap-3">
-                                <span>
+                            <li
+                                key={row.class}
+                                className="flex items-center justify-between gap-4 rounded-md border border-border/60 px-3 py-2"
+                            >
+                                <span className="min-w-0">
                                     <span className="font-medium text-foreground">{row.class}</span>
-                                    {row.description ? ` - ${row.description}` : ""}
+                                    {row.description ? (
+                                        <span className="block text-xs leading-5 text-muted-foreground">
+                                            {row.description}
+                                        </span>
+                                    ) : null}
                                 </span>
-                                <span className="font-medium text-foreground">
-                                    {(row.score * 100).toFixed(1)}%
+                                <span className="shrink-0 font-semibold text-foreground">
+                                    {formatPredictionScore(row.score)}
                                 </span>
                             </li>
                         ))}
@@ -265,7 +417,7 @@ export function RecordAIAnalysis({ analysis }: RecordAIAnalysisProps) {
             )}
 
             {limitations.length > 0 && (
-                <p className="mt-2 text-xs text-muted-foreground">
+                <p className="mt-4 text-xs leading-5 text-muted-foreground">
                     <span className="font-medium">{t.limitations}:</span> {limitations.join("; ")}
                 </p>
             )}
