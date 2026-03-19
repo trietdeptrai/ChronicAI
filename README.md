@@ -8,6 +8,11 @@ ChronicAI is built to close that continuity gap. It centralizes scattered record
 
 **Note: The interactive demo may load slowly due to limited server resources and occasional cold starts on our current hosting tier.**
 
+## Demo Videos
+
+ <iframe width="560" height="315" src="https://www.youtube.com/embed/AzW6ZY6zvEo?si=q2qPnTy3PwTUAqnx" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+
 ## Key Features
 
 - Context-driven medical chat for doctors and patients, powered by MedGemma for clearer communication and better between-visit support.
