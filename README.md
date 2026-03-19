@@ -10,7 +10,13 @@ ChronicAI is built to close that continuity gap. It centralizes scattered record
 
 ## Demo Videos
 
+**The full demo**
+
 [![Watch the demo](https://img.youtube.com/vi/AzW6ZY6zvEo/maxresdefault.jpg)](https://www.youtube.com/watch?v=AzW6ZY6zvEo)
+
+**ECG Image analysis demo**
+
+[![ECG image analysis demo](https://img.youtube.com/vi/S5wa8IextOw/0.jpg)](https://www.youtube.com/watch?v=S5wa8IextOw)
 
 ## Key Features
 
